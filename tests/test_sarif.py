@@ -7,6 +7,7 @@ from pathlib import Path
 
 from actionscope.models import (
     AwsCredentialSource,
+    GitHubTokenPermission,
     IamAction,
     PolicyFinding,
     RiskLevel,
@@ -184,3 +185,20 @@ def test_unpinned_action_produces_as006_result() -> None:
     data = _sarif_data(result)
 
     assert "AS006" in {result["ruleId"] for result in _results(data)}
+
+
+def test_github_token_permission_produces_as004_result() -> None:
+    result = ScanResult(
+        github_token_permissions=[
+            GitHubTokenPermission(
+                workflow_file=".github/workflows/release.yml",
+                job_name="release",
+                scope="pull-requests",
+                access="write",
+                risk_level=RiskLevel.HIGH,
+            )
+        ]
+    )
+    data = _sarif_data(result)
+
+    assert "AS004" in {result["ruleId"] for result in _results(data)}
