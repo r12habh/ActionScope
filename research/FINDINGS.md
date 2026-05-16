@@ -1,7 +1,7 @@
-# We Scanned [STAT_TOTAL_REPOS] Public GitHub Repos That Use AWS.
+# We Scanned 493 Public GitHub Repos That Use AWS.
 # Here's What Their CI/CD Can Do.
 
-**Posted [DATE] by Rishabh Singh — AWS Security Engineer**
+**Posted May 2026 by Rishabh Singh — AWS Security Engineer**
 
 ---
 
@@ -10,7 +10,7 @@ We built ActionScope to answer a question we kept asking internally:
 actually do in our AWS environment?"
 
 Before scanning your own repos, we wanted to understand how the public
-ecosystem looks. So we used the GitHub API to analyze [STAT_TOTAL_REPOS]
+ecosystem looks. So we used the GitHub API to analyze 493
 public repositories that use `aws-actions/configure-aws-credentials`.
 
 **Important:** We only analyzed public workflow YAML files. We did not
@@ -25,7 +25,7 @@ ActionScope does on your own infrastructure.
 
 GitHub's code search API finds files containing specific strings.
 We searched for `aws-actions/configure-aws-credentials path:.github/workflows`
-and collected the top [STAT_TOTAL_REPOS] unique repositories.
+and collected the top 493 unique repositories.
 
 We did not filter by repo size, stars, or organization type.
 These are random public repos that happen to use AWS.
@@ -34,11 +34,11 @@ These are random public repos that happen to use AWS.
 
 ## Auth Method: Who's Using OIDC vs Static Keys?
 
-[STAT_OIDC_PCT]% use OIDC (recommended — no long-lived credentials)
-[STAT_KEYS_PCT]% use static access keys stored as GitHub secrets
+41.8% use OIDC (recommended — no long-lived credentials)
+58.2% use static access keys stored as GitHub secrets
 
 AWS has recommended migrating to OIDC since 2023. GitHub's own docs
-recommend it. And yet, [STAT_KEYS_PCT]% of AWS-connected repos in our
+recommend it. And yet, 58.2% of AWS-connected repos in our
 sample still use static credentials.
 
 Static keys stored in GitHub secrets are higher risk because:
@@ -53,12 +53,12 @@ Static keys stored in GitHub secrets are higher risk because:
 The GITHUB_TOKEN is the built-in credential every workflow gets.
 Its permissions determine what the workflow can do to the repository itself.
 
-[STAT_WRITE_ALL_PCT]% use `permissions: write-all`
+2.0% use `permissions: write-all`
 
 That grants every permission GitHub supports: code writes, PR writes,
 package publishing, deployment writes, and more.
 
-[STAT_PR_WRITE_PCT]% grant `pull-requests: write` explicitly
+23.5% grant `pull-requests: write` explicitly
 
 This matters because of a specific attack pattern: pull_request_target
 workflows with write access can be manipulated via malicious PR content.
@@ -68,28 +68,28 @@ The April 2026 prt-scan campaign exploited exactly this.
 
 ## The Dangerous Pattern: pull_request_target + Write Access
 
-[STAT_PRT_PCT]% use the `pull_request_target` trigger
-[STAT_DANGEROUS_PRT_PCT]% use it WITH write permissions
+15.0% use the `pull_request_target` trigger
+8.1% use it WITH write permissions
 
 `pull_request_target` runs in the context of the target repo (with its
 secrets and permissions) but against code from a fork. A malicious PR
 can include content that exfiltrates those permissions.
 
 In April 2026, the prt-scan campaign opened over 475 malicious PRs in
-26 hours exploiting exactly this trigger. [STAT_DANGEROUS_PRT_PCT]% of
+26 hours exploiting exactly this trigger. 8.1% of
 repos in our sample have this configuration today.
 
 ---
 
 ## Unpinned Actions: The Supply Chain Risk
 
-[STAT_UNPINNED_PCT]% use at least one unpinned action (floating tag, not SHA)
+95.5% use at least one unpinned action (floating tag, not SHA)
 
 The tj-actions/changed-files compromise in March 2025 compromised 23,000+
 repos through a single action with a floating tag. The Trivy compromise in
 March 2026 followed the same pattern.
 
-SHA-pinning is the recommended mitigation. [STAT_UNPINNED_PCT]% of repos
+SHA-pinning is the recommended mitigation. 95.5% of repos
 in our sample have not adopted it.
 
 ---

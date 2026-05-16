@@ -2,7 +2,7 @@
 
 All notable changes to ActionScope are documented here.
 
-## [0.1.0] - 2026-XX-XX
+## [0.1.0] - 2026-05-16
 
 ### Added
 - GitHub Actions workflow parser: detects AWS credential configurations

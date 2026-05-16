@@ -29,10 +29,10 @@ them with Terraform or JSON policy files in your repo, and outputs a
 plain-English blast radius report. With --aws-verify, it calls the AWS IAM
 API (read-only) to fetch the actual attached policies.
 
-To validate the problem, we scanned [STAT_TOTAL_REPOS] public repos. Results:
+To validate the problem, we scanned 493 public repos. Results:
 research/FINDINGS.md in the repo.
 
-Most surprising finding: [STAT_DANGEROUS_PRT_PCT]% have pull_request_target
+Most surprising finding: 8.1% have pull_request_target
 with write permissions — the pattern the April 2026 prt-scan campaign exploited.
 
 GitHub: https://github.com/r12habh/ActionScope
@@ -72,10 +72,10 @@ So I built ActionScope. It:
 With --aws-verify it calls the AWS IAM API read-only and fetches the
 real attached policies.
 
-To understand the problem scope, I also scanned [STAT_TOTAL_REPOS] public
+To understand the problem scope, I also scanned 493 public
 repos with AWS-connected workflows. Findings document is in the repo.
 
-Most interesting finding: [STAT_DANGEROUS_PRT_PCT]% use pull_request_target
+Most interesting finding: 8.1% use pull_request_target
 with write permissions — the exact pattern exploited in April's prt-scan attack.
 
 Repo: https://github.com/r12habh/ActionScope
@@ -115,7 +115,7 @@ Install: pip install actionscope
 Required IAM perms for --aws-verify: just read-only IAM actions (policy in docs/)
 
 Repo: https://github.com/r12habh/ActionScope
-Research findings from [STAT_TOTAL_REPOS] public repos: research/FINDINGS.md
+Research findings from 493 public repos: research/FINDINGS.md
 
 Curious if this fills a gap people have been feeling or if there are
 existing tools I'm not aware of.
@@ -145,10 +145,10 @@ report showing what each workflow can do in AWS.
 With --aws-verify, it calls the IAM API (read-only) and shows you the real
 effective permissions — not just what's in your repo.
 
-To understand how widespread the problem is, I scanned [STAT_TOTAL_REPOS]
-public repositories. [STAT_DANGEROUS_PRT_PCT]% had pull_request_target with
+To understand how widespread the problem is, I scanned 493
+public repositories. 8.1% had pull_request_target with
 write permissions — the pattern that prt-scan exploited in April.
-[STAT_KEYS_PCT]% still use static access keys instead of OIDC. Full findings
+58.2% still use static access keys instead of OIDC. Full findings
 in the repo.
 
 It's open source, one command to install, and the --aws-verify analysis takes
