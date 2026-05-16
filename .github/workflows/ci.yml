@@ -72,7 +72,7 @@ jobs:
           "
 
       - name: Upload self-scan results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: self-scan-results
           path: self-scan.json

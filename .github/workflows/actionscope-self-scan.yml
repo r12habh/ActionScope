@@ -30,7 +30,7 @@ jobs:
           actionscope scan . --output-format json --output-file /tmp/self-scan.json
 
       - name: Upload scan results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: actionscope-self-scan
           path: /tmp/self-scan.json
