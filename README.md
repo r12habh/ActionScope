@@ -3,6 +3,7 @@
 > Map the AWS blast radius of your GitHub Actions workflows.
 
 [![PyPI](https://img.shields.io/pypi/v/actionscope)](https://pypi.org/project/actionscope/)
+[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-ActionScope-blue?logo=github)](https://github.com/marketplace/actions/actionscope)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ActionScope reads your `.github/workflows/` files, Terraform IAM resources,
@@ -56,8 +57,8 @@ deploy.yml → deploy → Configure AWS credentials
 
 ## How It Works
 
-ActionScope performs **static analysis only** — it never sends your code to
-any external service.
+ActionScope performs **static analysis by default** — it never sends your code
+to any external service unless you explicitly enable live AWS verification.
 
 1. Finds all `.github/workflows/*.yml` files
 2. Extracts AWS role ARNs and GITHUB_TOKEN permission declarations
@@ -70,18 +71,20 @@ any external service.
 
 ```
 ℹ️  Policy not found in repo for role: arn:aws:iam::123456:role/ci-deploy
-💡  Run with --aws-verify to fetch live policies from AWS (coming in v1.0)
+💡  Run with --aws-verify to fetch live policies from AWS
 ```
 
-In v1.0, `--aws-verify` will use read-only AWS API calls to fetch the real
-attached policies for any role ARN found in your workflows.
+`--aws-verify` uses read-only IAM API calls to fetch the real attached
+policies for any role ARN found in your workflows. See
+[`docs/aws-verify-permissions.md`](docs/aws-verify-permissions.md) for the
+exact AWS permissions required.
 
 ## Public Research
 
-ActionScope includes a reproducible public-data research scaffold for analyzing
-workflow-level AWS security patterns across public GitHub repositories. See
-[`research/`](research/) for the scanner, methodology, and anonymized findings
-template.
+ActionScope includes reproducible public-data research from 493 public GitHub
+repositories and 3,981 workflow files that use AWS from GitHub Actions. See
+[`research/FINDINGS.md`](research/FINDINGS.md) for the findings and
+[`research/`](research/) for the scanner and methodology.
 
 ## Built By
 
