@@ -124,7 +124,7 @@ export GITHUB_TOKEN=your_pat_here
 python research/scan_public_repos.py --limit 500
 ```
 
-Raw data (anonymized — no repo names): research/findings.json
+Raw data (anonymized — no repo names): [research/findings_may2026.json](findings_may2026.json)
 
 ---
 

@@ -17,6 +17,7 @@ from actionscope.models import (
     PolicyFinding,
     RiskLevel,
     ScanResult,
+    UnpinnedActionFinding,
     WorkflowCredentialBinding,
     get_unmatched_findings,
 )
@@ -166,6 +167,8 @@ def _render_scan_result_impl(
     for binding in result.bindings:
         _render_binding(c, binding)
 
+    _render_unpinned_actions_section(c, result.unpinned_actions)
+
     _render_github_token_section(c, result)
 
     unmatched = get_unmatched_findings(result.bindings, result.policy_findings)
@@ -295,6 +298,46 @@ def _render_github_token_section(c: Console, result: ScanResult) -> None:
         )
 
 
+def _render_unpinned_actions_section(
+    c: Console,
+    findings: list[UnpinnedActionFinding],
+) -> None:
+    if not findings:
+        return
+
+    c.print()
+    c.rule(f"[bold]Unpinned Actions ({len(findings)} found)[/]", style="dim")
+    c.print()
+
+    displayed = findings[:10]
+    for finding in displayed:
+        wf = _workflow_basename(finding.workflow_file)
+        pin_label = {
+            "tag": "version tag",
+            "branch": "branch",
+            "unresolvable": "missing ref",
+        }.get(finding.pin_type, finding.pin_type)
+        c.print(
+            f"🟡 [bold]{wf}[/] [dim]→[/] {finding.job_name} "
+            f"[dim]→[/] {finding.step_name}"
+        )
+        c.print(f"   {finding.uses} ({pin_label} — not SHA-pinned)")
+
+    remaining = len(findings) - len(displayed)
+    if remaining > 0:
+        c.print(f"[dim]... and {remaining} more[/]")
+
+    c.print()
+    c.print(
+        "[dim]ℹ️  SHA-pinned actions prevent supply-chain attacks like the "
+        "March 2025 tj-actions compromise (23,000+ repos affected).[/]"
+    )
+    c.print(
+        "[dim]💡  Use https://github.com/mheap/pin-github-action to automate "
+        "pinning.[/]"
+    )
+
+
 def _render_unmatched_policies(c: Console, findings: list[PolicyFinding]) -> None:
     if not findings:
         return
@@ -392,3 +435,64 @@ def render_error(message: str, console: Optional[Console] = None) -> None:
         c.print(f"[bold red]{message}[/]")
     except Exception:
         return
+
+
+def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
+    """Render a saved ActionScope JSON payload without re-scanning."""
+    try:
+        c = console if console is not None else Console()
+        risk = str(data.get("overall_risk", "info")).lower()
+        risk_label = risk.upper()
+        summary = data.get("summary", {})
+        body = Text.assemble(
+            ("ActionScope — Blast Radius Report\n", "bold"),
+            (f"Path: {data.get('scan_path', '(unknown)')}\n", ""),
+            (
+                f"Workflows: {data.get('workflow_count', 0)} | "
+                f"Credential Sources: {summary.get('credential_sources', 0)}\n",
+                "",
+            ),
+            (f"Overall Risk: {risk_label}", ""),
+        )
+        c.print(Panel(body, box=box.ROUNDED, padding=(0, 2)))
+
+        findings = data.get("findings", [])
+        for finding in findings:
+            c.print()
+            c.print(
+                f"[bold]Workflow:[/] "
+                f"{_workflow_basename(str(finding.get('workflow_file', '')))} "
+                f"[dim]→[/] [bold]Job:[/] {finding.get('job_name', '')}"
+            )
+            c.print(f"[bold]AWS Role:[/] {finding.get('role_arn') or '(none)'}")
+            c.print(f"[bold]Policy Source:[/] {finding.get('policy_source')}")
+            actions = finding.get("actions", [])
+            if actions:
+                table = Table(box=box.SQUARE, show_header=True)
+                table.add_column("Action")
+                table.add_column("Access")
+                table.add_column("Risk")
+                for action in actions:
+                    table.add_row(
+                        str(action.get("action", "")),
+                        str(action.get("access_level", "")),
+                        str(action.get("risk_level", "")).upper(),
+                    )
+                c.print(table)
+
+        unpinned = data.get("unpinned_actions", [])
+        if unpinned:
+            c.print()
+            c.rule(f"[bold]Unpinned Actions ({len(unpinned)} found)[/]")
+            for finding in unpinned[:10]:
+                c.print(
+                    f"🟡 {_workflow_basename(str(finding.get('workflow_file', '')))} "
+                    f"→ {finding.get('job_name', '')} → "
+                    f"{finding.get('step_name', '')}"
+                )
+                c.print(
+                    f"   {finding.get('uses', '')} "
+                    f"({finding.get('pin_type', '')} — not SHA-pinned)"
+                )
+    except Exception as exc:
+        render_error(f"Could not render ActionScope JSON report: {exc}", console)

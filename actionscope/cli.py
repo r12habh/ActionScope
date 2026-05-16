@@ -44,7 +44,7 @@ def version_command() -> None:
     "--output-format",
     "-f",
     default="terminal",
-    type=click.Choice(["terminal", "json", "markdown"]),
+    type=click.Choice(["terminal", "json", "markdown", "sarif"]),
     help="Output format",
 )
 @click.option(
@@ -87,11 +87,14 @@ def scan(
     )
 
     try:
-        credential_sources, github_token_perms, workflow_errors = scan_workflows(
-            repo_path
-        )
+        (
+            credential_sources,
+            github_token_perms,
+            unpinned_actions,
+            workflow_errors,
+        ) = scan_workflows(repo_path)
     except Exception as exc:
-        credential_sources, github_token_perms = [], []
+        credential_sources, github_token_perms, unpinned_actions = [], [], []
         workflow_errors = [f"Fatal error scanning workflows: {exc}"]
 
     try:
@@ -151,6 +154,7 @@ def scan(
             credential_sources=credential_sources,
             github_token_perms=github_token_perms,
             policy_findings=all_policy_findings,
+            unpinned_actions=unpinned_actions,
             errors=all_errors,
         )
     except Exception as exc:
@@ -159,6 +163,7 @@ def scan(
             workflow_count=0,
             credential_sources=credential_sources,
             github_token_permissions=github_token_perms,
+            unpinned_actions=unpinned_actions,
             policy_findings=all_policy_findings,
             errors=all_errors + [f"Could not correlate scan results: {exc}"],
         )
@@ -182,6 +187,18 @@ def scan(
                 write_markdown(result, output_file)
             else:
                 print(md)
+        elif output_format == "sarif":
+            from actionscope.reporters.sarif import to_sarif, write_sarif
+
+            output = to_sarif(result)
+            if output_file:
+                write_sarif(result, output_file)
+                if not quiet:
+                    status_console.print(
+                        f"[dim]SARIF report written to {output_file}[/dim]"
+                    )
+            else:
+                print(output)
         _exit_with_fail_on(result, fail_on)
 
     # Step 6: Render output
@@ -202,8 +219,69 @@ def scan(
             write_markdown(result, output_file)
         else:
             print(md)
+    elif output_format == "sarif":
+        from actionscope.reporters.sarif import to_sarif, write_sarif
+
+        output = to_sarif(result)
+        if output_file:
+            write_sarif(result, output_file)
+            if not quiet:
+                status_console.print(
+                    f"[dim]SARIF report written to {output_file}[/dim]"
+                )
+        else:
+            print(output)
 
     _exit_with_fail_on(result, fail_on)
+
+
+@main.command()
+@click.argument("json_file", required=False, type=click.Path(exists=True))
+@click.option(
+    "--from-json",
+    "from_json",
+    type=click.Path(exists=True),
+    default=None,
+    help="Saved ActionScope JSON scan result to render",
+)
+@click.option(
+    "--format",
+    "-f",
+    "fmt",
+    default="markdown",
+    type=click.Choice(["markdown", "terminal", "json", "sarif"]),
+    help="Output format",
+)
+def report(json_file: str | None, from_json: str | None, fmt: str) -> None:
+    """Render a previously saved ActionScope JSON scan result."""
+    import json as json_lib
+
+    source = from_json or json_file
+    if source is None:
+        click.echo("Error: provide JSON_FILE or --from-json", err=True)
+        sys.exit(2)
+
+    try:
+        with open(source, encoding="utf-8") as f:
+            data = json_lib.load(f)
+    except Exception as exc:
+        click.echo(f"Error reading {source}: {exc}", err=True)
+        sys.exit(2)
+
+    if fmt == "json":
+        click.echo(json_lib.dumps(data, indent=2))
+    elif fmt == "markdown":
+        from actionscope.reporters.markdown import to_markdown_from_dict
+
+        click.echo(to_markdown_from_dict(data))
+    elif fmt == "terminal":
+        from actionscope.reporters.terminal import render_from_dict
+
+        render_from_dict(data, Console())
+    elif fmt == "sarif":
+        from actionscope.reporters.sarif import to_sarif_from_dict
+
+        click.echo(to_sarif_from_dict(data))
 
 
 def _exit_with_fail_on(result: ScanResult, fail_on: str | None) -> None:

@@ -5,6 +5,8 @@
 [![PyPI](https://img.shields.io/pypi/v/actionscope)](https://pypi.org/project/actionscope/)
 [![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-ActionScope-blue?logo=github)](https://github.com/marketplace/actions/actionscope)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/r12habh/ActionScope/actions/workflows/ci.yml/badge.svg)](https://github.com/r12habh/ActionScope/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/r12habh/ActionScope/branch/main/graph/badge.svg)](https://codecov.io/gh/r12habh/ActionScope)
 
 ActionScope reads your `.github/workflows/` files, Terraform IAM resources,
 and inline JSON IAM policies, then tells you — in plain English — what your
@@ -55,6 +57,19 @@ deploy.yml → deploy → Configure AWS credentials
     comment-pr: true
 ```
 
+## What ActionScope Adds Beyond Existing Tools
+
+| Capability | actionlint | zizmor | Scorecard | ActionScope |
+|-----------|-----------|--------|-----------|-------------|
+| Workflow syntax validation | ✅ | Partial | ❌ | Partial |
+| Security pattern detection | ❌ | ✅ | ✅ | ✅ |
+| GITHUB_TOKEN review | ❌ | ✅ | ✅ | ✅ |
+| Unpinned actions detection | ❌ | ✅ | ✅ | ✅ |
+| AWS credential source detection | ❌ | ❌ | ❌ | ✅ |
+| Workflow → IAM role correlation | ❌ | ❌ | ❌ | ✅ |
+| Blast-radius plain-English report | ❌ | ❌ | ❌ | ✅ |
+| SARIF / GitHub Security tab | ❌ | ✅ | ✅ | ✅ |
+
 ## How It Works
 
 ActionScope performs **static analysis by default** — it never sends your code
@@ -79,12 +94,18 @@ policies for any role ARN found in your workflows. See
 [`docs/aws-verify-permissions.md`](docs/aws-verify-permissions.md) for the
 exact AWS permissions required.
 
-## Public Research
+## Research
 
-ActionScope includes reproducible public-data research from 493 public GitHub
-repositories and 3,981 workflow files that use AWS from GitHub Actions. See
-[`research/FINDINGS.md`](research/FINDINGS.md) for the findings and
-[`research/`](research/) for the scanner and methodology.
+ActionScope is backed by a public measurement study of 493 GitHub repositories
+and 3,981 workflow files that use AWS via GitHub Actions.
+
+Key findings from May 2026:
+- **95.5%** use at least one unpinned action (the supply-chain attack surface)
+- **58.2%** use static AWS access keys instead of OIDC
+- **44.0%** expose role ARNs directly in workflow files
+- **8.1%** use `pull_request_target` with write-capable permissions
+
+→ [Full research findings](research/FINDINGS.md) | [Scanner and data](research/)
 
 ## Built By
 

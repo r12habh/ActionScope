@@ -88,3 +88,47 @@ def test_scan_markdown_output(runner: CliRunner, cli_repo_safe: Path) -> None:
     )
     assert result.exit_code == 0
     assert "## 🔍 ActionScope" in result.output
+
+
+def test_scan_sarif_output_valid(runner: CliRunner, cli_repo_safe: Path) -> None:
+    result = runner.invoke(
+        main,
+        ["scan", str(cli_repo_safe), "--output-format", "sarif"],
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["version"] == "2.1.0"
+
+
+def test_report_help_exists(runner: CliRunner) -> None:
+    result = runner.invoke(main, ["report", "--help"])
+    assert result.exit_code == 0
+    assert "Render a previously saved ActionScope JSON scan result" in result.output
+
+
+def test_report_from_json_renders_markdown(
+    runner: CliRunner,
+    cli_repo_safe: Path,
+    tmp_path: Path,
+) -> None:
+    output_file = tmp_path / "actionscope.json"
+    scan_result = runner.invoke(
+        main,
+        [
+            "scan",
+            str(cli_repo_safe),
+            "--output-format",
+            "json",
+            "--output-file",
+            str(output_file),
+        ],
+    )
+    assert scan_result.exit_code == 0
+
+    report_result = runner.invoke(
+        main,
+        ["report", "--from-json", str(output_file), "--format", "markdown"],
+    )
+
+    assert report_result.exit_code == 0
+    assert "## 🔍 ActionScope" in report_result.output

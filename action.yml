@@ -16,9 +16,13 @@ inputs:
     required: false
     default: 'high'
   output-format:
-    description: 'Output format: terminal, json, or markdown'
+    description: 'Output format: terminal, json, markdown, or sarif'
     required: false
     default: 'terminal'
+  upload-sarif:
+    description: 'Upload SARIF results to GitHub Code Scanning'
+    required: false
+    default: 'false'
   comment-pr:
     description: 'Post findings as a PR comment (requires pull-requests: write permission)'
     required: false
@@ -66,7 +70,11 @@ runs:
       run: |
         actionscope scan ${{ inputs.path }} \
           --output-format json \
-          --output-file /tmp/actionscope-results.json || true
+          --output-file /tmp/actionscope-results.json \
+          --no-color 2>/tmp/actionscope-stderr.txt || {
+            echo "ActionScope scan failed. See stderr:"
+            cat /tmp/actionscope-stderr.txt || true
+          }
 
         if [ -f /tmp/actionscope-results.json ]; then
           RISK=$(python3 -c "
@@ -86,8 +94,26 @@ runs:
             echo JSON_EOF
           } >> "$GITHUB_OUTPUT"
           echo "credential-sources-count=$COUNT" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ inputs.output-format }}" != "json" ]; then
+            actionscope report \
+              --from-json /tmp/actionscope-results.json \
+              --format "${{ inputs.output-format }}" || true
+          fi
+
+          if [ "${{ inputs.upload-sarif }}" = "true" ]; then
+            actionscope report \
+              --from-json /tmp/actionscope-results.json \
+              --format sarif > /tmp/actionscope-results.sarif || true
+          fi
         fi
 
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: /tmp/actionscope-results.sarif
+        category: actionscope
 
     - name: Post PR comment
       if: inputs.comment-pr == 'true' && github.event_name == 'pull_request'
@@ -95,15 +121,39 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
-        MARKDOWN=$(actionscope scan ${{ inputs.path }} --output-format markdown 2>/dev/null || echo "ActionScope scan failed")
+        MARKDOWN=$(actionscope report \
+          --from-json /tmp/actionscope-results.json \
+          --format markdown 2>/dev/null || \
+          echo "ActionScope scan complete. See workflow run for details.")
         gh pr comment ${{ github.event.pull_request.number }} \
           --body "$MARKDOWN" \
           --edit-last 2>/dev/null || \
         gh pr comment ${{ github.event.pull_request.number }} \
           --body "$MARKDOWN"
 
-    - name: Fail on risk level
+    - name: Evaluate risk threshold
       if: inputs.fail-on != ''
       shell: bash
       run: |
-        actionscope scan ${{ inputs.path }} --fail-on ${{ inputs.fail-on }}
+        python3 - <<'EOF'
+        import json, sys
+
+        RISK_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+        fail_on = "${{ inputs.fail-on }}".strip().lower()
+
+        try:
+            with open("/tmp/actionscope-results.json") as f:
+                data = json.load(f)
+            overall = data.get("overall_risk", "info").lower()
+        except Exception:
+            sys.exit(0)
+
+        if RISK_ORDER.get(overall, 0) >= RISK_ORDER.get(fail_on, 99):
+            print(f"ActionScope: overall risk '{overall}' meets or exceeds "
+                  f"fail-on threshold '{fail_on}'. Failing.")
+            sys.exit(1)
+        else:
+            print(f"ActionScope: overall risk '{overall}' is below "
+                  f"fail-on threshold '{fail_on}'. Passing.")
+            sys.exit(0)
+        EOF
