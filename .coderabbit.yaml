@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+early_access: false
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  review_details: false
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!dist/**"
+    - "!build/**"
+    - "!*.egg-info/**"
+    - "!htmlcov/**"
+    - "!coverage.xml"
+    - "!research/findings*.json"
+    - "!research/*.csv"
+  path_instructions:
+    - path: "actionscope/**/*.py"
+      instructions: |
+        Prioritize correctness, security boundaries, error handling, and tests.
+        ActionScope is a security CLI, so flag false confidence, unsafe parsing,
+        broad exception swallowing, untrusted file reads, and incorrect IAM risk
+        classifications before style nits.
+    - path: "actionscope/parsers/**/*.py"
+      instructions: |
+        Pay extra attention to malformed YAML, JSON, and HCL inputs. Parsers
+        should degrade gracefully with warnings rather than crashing scans.
+    - path: "actionscope/analyzers/**/*.py"
+      instructions: |
+        Check risk-level comparisons and privilege-escalation logic carefully.
+        False negatives in security findings matter more than cosmetic cleanup.
+    - path: ".github/workflows/**"
+      instructions: |
+        Review for least-privilege GitHub permissions, pinned or trusted actions,
+        release safety, and accidental credential exposure.
+    - path: "action.yml"
+      instructions: |
+        This composite action should scan once where possible, avoid hiding
+        actionable failures, and not introduce write-capable permissions.
+    - path: "research/**"
+      instructions: |
+        Review research scripts for privacy, anonymization, rate limiting, and
+        reproducibility. The scanner must remain read-only and must not call AWS.
+
+chat:
+  auto_reply: true
+  allow_non_org_members: false
+
+knowledge_base:
+  web_search:
+    enabled: true
