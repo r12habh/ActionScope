@@ -62,6 +62,8 @@ def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, An
         "role_arn": src.role_arn,
         "auth_type": _auth_type_for_binding(binding),
         "policy_source": binding.policy_source,
+        "match_confidence": binding.match_confidence,
+        "match_reason": binding.match_reason,
     }
 
     if pf is not None:

@@ -109,6 +109,7 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
     lines.append(f"| AWS Role | {role_cell} |")
     lines.append(f"| Auth Type | {_auth_display(src)} |")
     lines.append(f"| Policy Source | {binding.policy_source} |")
+    lines.append(f"| Match Confidence | {binding.match_confidence} |")
 
     if binding.policy_source == "not_found":
         lines.append(
@@ -307,6 +308,7 @@ def to_markdown_from_dict(data: dict) -> str:
             role = finding.get("role_arn") or "(none)"
             auth_type = str(finding.get("auth_type", "unknown"))
             policy_source = str(finding.get("policy_source", "unknown"))
+            match_confidence = str(finding.get("match_confidence", "none"))
             finding_risk = str(finding.get("overall_risk", "info")).lower()
             finding_risk_display = {
                 "critical": "🔴 CRITICAL",
@@ -325,6 +327,7 @@ def to_markdown_from_dict(data: dict) -> str:
                     f"| AWS Role | `{role}` |",
                     f"| Auth Type | {auth_type} |",
                     f"| Policy Source | {policy_source} |",
+                    f"| Match Confidence | {match_confidence} |",
                     f"| Risk | {finding_risk_display} |",
                     "",
                 ]

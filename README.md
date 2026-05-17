@@ -94,6 +94,9 @@ policies for any role ARN found in your workflows. See
 [`docs/aws-verify-permissions.md`](docs/aws-verify-permissions.md) for the
 exact AWS permissions required.
 
+Release and Marketplace publishing steps are documented in
+[`docs/release-runbook.md`](docs/release-runbook.md).
+
 ## Research
 
 ActionScope is backed by a public measurement study of 493 GitHub repositories

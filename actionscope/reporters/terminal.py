@@ -202,6 +202,9 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
     c.print(f"[bold]AWS Role:[/] {role_arn}")
     if binding.policy_source == "aws_verified":
         c.print("[green]✅ Verified via AWS API (live)[/]")
+    if binding.policy_finding is not None:
+        confidence = binding.match_confidence or "unknown"
+        c.print(f"[bold]Policy Match:[/] {binding.policy_source} ({confidence})")
     c.print(_format_auth_line(src))
 
     if binding.policy_finding is not None and binding.policy_finding.actions:
@@ -466,6 +469,11 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
             )
             c.print(f"[bold]AWS Role:[/] {finding.get('role_arn') or '(none)'}")
             c.print(f"[bold]Policy Source:[/] {finding.get('policy_source')}")
+            if finding.get("match_confidence"):
+                c.print(
+                    f"[bold]Match Confidence:[/] "
+                    f"{finding.get('match_confidence')}"
+                )
             actions = finding.get("actions", [])
             if actions:
                 table = Table(box=box.SQUARE, show_header=True)

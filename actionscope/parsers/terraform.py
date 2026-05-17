@@ -55,39 +55,103 @@ def extract_iam_policies_from_terraform(
     source_file: str,
 ) -> list[PolicyFinding]:
     """Extract IAM policy definitions from parsed Terraform data."""
-    findings: list[PolicyFinding] = []
+    return _extract_iam_policies_from_parsed_files([(source_file, tf_data)])
 
-    for resource_type, _resource_name, body in _iter_blocks(tf_data.get("resource")):
-        if resource_type == "aws_iam_policy":
-            findings.append(
-                _finding_from_policy_value(body.get("policy"), source_file)
+
+def _extract_iam_policies_from_parsed_files(
+    parsed_files: list[tuple[str, dict]],
+) -> list[PolicyFinding]:
+    """Extract IAM findings and resolve simple Terraform IAM relationships."""
+    findings: list[PolicyFinding] = []
+    data_documents: dict[str, PolicyFinding] = {}
+    managed_policies: dict[str, PolicyFinding] = {}
+    role_names: dict[str, str] = {}
+    attachments: list[tuple[str, str, dict]] = []
+
+    for source_file, tf_data in parsed_files:
+        for data_type, data_name, body in _iter_blocks(tf_data.get("data")):
+            if data_type != "aws_iam_policy_document":
+                continue
+
+            address = f"{data_type}.{data_name}"
+            finding = _finding_from_policy_document(
+                body,
+                source_file,
+                policy_name=data_name,
+                metadata={"terraform_address": address},
             )
-        elif resource_type == "aws_iam_role_policy":
-            findings.append(
-                _finding_from_policy_value(
+            data_documents[address] = finding
+            findings.append(finding)
+
+    for source_file, tf_data in parsed_files:
+        for resource_type, resource_name, body in _iter_blocks(tf_data.get("resource")):
+            address = f"{resource_type}.{resource_name}"
+
+            if resource_type == "aws_iam_role":
+                role_name = _role_name_from_role_resource(resource_name, body)
+                if role_name:
+                    role_names[address] = role_name
+                continue
+
+            if resource_type == "aws_iam_policy":
+                policy_name = _clean_optional_string(body.get("name")) or resource_name
+                finding = _finding_from_policy_value(
                     body.get("policy"),
                     source_file,
-                    role_arn=_clean_string(body.get("role")),
+                    policy_name=policy_name,
+                    metadata={"terraform_address": address},
+                    data_documents=data_documents,
                 )
-            )
-        elif resource_type == "aws_iam_role":
-            assume_role_policy = body.get("assume_role_policy")
-            if assume_role_policy is not None:
-                findings.append(
-                    _finding_from_policy_value(assume_role_policy, source_file)
-                )
+                managed_policies[address] = finding
+                findings.append(finding)
+                continue
 
-    for data_type, _data_name, body in _iter_blocks(tf_data.get("data")):
-        if data_type == "aws_iam_policy_document":
-            findings.append(_finding_from_policy_document(body, source_file))
+            if resource_type == "aws_iam_role_policy":
+                role_reference = _clean_optional_string(body.get("role"))
+                role_name = _resolve_role_reference(role_reference, role_names)
+                finding = _finding_from_policy_value(
+                    body.get("policy"),
+                    source_file,
+                    role_arn=_role_arn_if_literal(role_reference),
+                    role_name=role_name,
+                    policy_name=_clean_optional_string(body.get("name"))
+                    or resource_name,
+                    metadata={
+                        "terraform_address": address,
+                        "terraform_role_reference": role_reference or "",
+                    },
+                    data_documents=data_documents,
+                )
+                findings.append(finding)
+                continue
+
+            if resource_type == "aws_iam_role_policy_attachment":
+                attachments.append((source_file, address, body))
+
+    for _source_file, attachment_address, body in attachments:
+        role_reference = _clean_optional_string(body.get("role"))
+        policy_reference = _clean_optional_string(body.get("policy_arn"))
+        role_name = _resolve_role_reference(role_reference, role_names)
+        policy_address = _resolve_policy_reference(policy_reference)
+
+        if not role_name or not policy_address:
+            continue
+
+        finding = managed_policies.get(policy_address)
+        if finding is None:
+            continue
+
+        finding.role_name = role_name
+        finding.metadata["terraform_attachment"] = attachment_address
+        finding.metadata["terraform_role_reference"] = role_reference or ""
 
     return findings
 
 
 def scan_terraform_files(repo_path: str) -> tuple[list[PolicyFinding], list[str]]:
     """Find and parse all Terraform files in a repository."""
-    findings: list[PolicyFinding] = []
     errors: list[str] = []
+    parsed_files: list[tuple[str, dict]] = []
 
     for terraform_file in find_terraform_files(repo_path):
         tf_data = parse_terraform_file(terraform_file)
@@ -95,8 +159,9 @@ def scan_terraform_files(repo_path: str) -> tuple[list[PolicyFinding], list[str]
             errors.append(f"Could not parse Terraform file: {terraform_file}")
             continue
 
-        findings.extend(extract_iam_policies_from_terraform(tf_data, terraform_file))
+        parsed_files.append((terraform_file, tf_data))
 
+    findings = _extract_iam_policies_from_parsed_files(parsed_files)
     return findings, errors
 
 
@@ -138,18 +203,61 @@ def _finding_from_policy_value(
     policy_value: Any,
     source_file: str,
     role_arn: str | None = None,
+    role_name: str | None = None,
+    policy_name: str | None = None,
+    metadata: dict[str, object] | None = None,
+    data_documents: dict[str, PolicyFinding] | None = None,
 ) -> PolicyFinding:
-    policy_data = _parse_policy_value(policy_value)
+    referenced_document = _referenced_policy_document(
+        policy_value,
+        data_documents or {},
+    )
+    if referenced_document is not None:
+        finding = _clone_policy_finding(
+            referenced_document,
+            source_file=source_file,
+            role_arn=role_arn,
+            role_name=role_name,
+            policy_name=policy_name,
+            metadata=metadata,
+        )
+        return finding
+
+    policy_data = _parse_policy_value(policy_value, source_file)
     if policy_data is None:
-        return _empty_finding(source_file, role_arn=role_arn)
+        return _empty_finding(
+            source_file,
+            role_arn=role_arn,
+            role_name=role_name,
+            policy_name=policy_name,
+            metadata=metadata,
+        )
 
     statements = policy_data.get("Statement", [])
-    return _finding_from_statements(statements, source_file, role_arn=role_arn)
+    return _finding_from_statements(
+        statements,
+        source_file,
+        role_arn=role_arn,
+        role_name=role_name,
+        policy_name=policy_name,
+        metadata=metadata,
+    )
 
 
-def _finding_from_policy_document(body: dict, source_file: str) -> PolicyFinding:
+def _finding_from_policy_document(
+    body: dict,
+    source_file: str,
+    policy_name: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> PolicyFinding:
     statements = body.get("statement", [])
-    return _finding_from_statements(statements, source_file, terraform_document=True)
+    return _finding_from_statements(
+        statements,
+        source_file,
+        terraform_document=True,
+        policy_name=policy_name,
+        metadata=metadata,
+    )
 
 
 def _finding_from_statements(
@@ -157,6 +265,9 @@ def _finding_from_statements(
     source_file: str,
     terraform_document: bool = False,
     role_arn: str | None = None,
+    role_name: str | None = None,
+    policy_name: str | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> PolicyFinding:
     if isinstance(statements, dict):
         statements = [statements]
@@ -233,10 +344,16 @@ def _finding_from_statements(
         has_passrole=has_passrole,
         has_privilege_escalation=has_privilege_escalation,
         overall_risk=get_overall_risk(actions),
+        role_name=role_name,
+        policy_name=policy_name,
+        metadata=metadata or {},
     )
 
 
-def _parse_policy_value(policy_value: Any) -> dict | None:
+def _parse_policy_value(
+    policy_value: Any,
+    source_file: str | None = None,
+) -> dict | None:
     if isinstance(policy_value, dict):
         return _normalize_terraform_value(policy_value)
 
@@ -253,6 +370,10 @@ def _parse_policy_value(policy_value: Any) -> dict | None:
         policy = parsed.get("policy")
         return _normalize_terraform_value(policy) if isinstance(policy, dict) else None
 
+    file_arg = _extract_file_argument(value)
+    if file_arg is not None and source_file is not None:
+        return _parse_policy_file(file_arg, source_file)
+
     if value.startswith("${") and value.endswith("}"):
         return None
 
@@ -262,6 +383,52 @@ def _parse_policy_value(policy_value: Any) -> dict | None:
         return None
 
     return data if isinstance(data, dict) else None
+
+
+def _referenced_policy_document(
+    policy_value: Any,
+    data_documents: dict[str, PolicyFinding],
+) -> PolicyFinding | None:
+    if not isinstance(policy_value, str):
+        return None
+
+    reference = _terraform_reference_body(policy_value)
+    if reference is None or not reference.endswith(".json"):
+        return None
+
+    address = reference.removesuffix(".json")
+    return data_documents.get(address)
+
+
+def _clone_policy_finding(
+    finding: PolicyFinding,
+    source_file: str,
+    role_arn: str | None = None,
+    role_name: str | None = None,
+    policy_name: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> PolicyFinding:
+    merged_metadata = dict(finding.metadata)
+    merged_metadata.update(metadata or {})
+    merged_metadata["referenced_policy_document"] = (
+        finding.metadata.get("terraform_address") or finding.policy_name or ""
+    )
+
+    return PolicyFinding(
+        source_file=source_file,
+        source_type=finding.source_type,
+        role_arn=role_arn,
+        actions=list(finding.actions),
+        has_star_action=finding.has_star_action,
+        has_star_resource=finding.has_star_resource,
+        has_passrole=finding.has_passrole,
+        has_privilege_escalation=finding.has_privilege_escalation,
+        overall_risk=finding.overall_risk,
+        privesc_paths=list(finding.privesc_paths),
+        role_name=role_name or finding.role_name,
+        policy_name=policy_name or finding.policy_name,
+        metadata=merged_metadata,
+    )
 
 
 def _extract_jsonencode_argument(value: str) -> str | None:
@@ -296,6 +463,47 @@ def _extract_jsonencode_argument(value: str) -> str | None:
                 return value[start:index]
 
     return None
+
+
+def _extract_file_argument(value: str) -> str | None:
+    marker = "file("
+    start = value.find(marker)
+    if start == -1:
+        return None
+
+    start += len(marker)
+    end = value.find(")", start)
+    if end == -1:
+        return None
+
+    raw_arg = value[start:end].strip()
+    if not raw_arg:
+        return None
+    if raw_arg[0] in {"'", '"'} and raw_arg[-1:] == raw_arg[0]:
+        raw_arg = raw_arg[1:-1]
+
+    if any(marker in raw_arg for marker in ("${", "var.", "local.", "path.")):
+        return None
+    return raw_arg
+
+
+def _parse_policy_file(policy_path: str, source_file: str) -> dict | None:
+    base_dir = Path(source_file).resolve().parent
+    candidate = (base_dir / policy_path).resolve()
+    try:
+        if not candidate.is_relative_to(base_dir):
+            _warn(f"Skipping Terraform file() outside module directory: {policy_path}")
+            return None
+        with candidate.open("r", encoding="utf-8") as policy_file:
+            data = json.load(policy_file)
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError, OSError) as exc:
+        _warn(f"Could not read Terraform policy file {candidate}: {exc}")
+        return None
+    except json.JSONDecodeError as exc:
+        _warn(f"Could not parse Terraform policy file {candidate}: {exc}")
+        return None
+
+    return data if isinstance(data, dict) else None
 
 
 def _normalize_terraform_value(value: Any) -> Any:
@@ -362,14 +570,98 @@ def _is_write_or_permissions_action(action: IamAction) -> bool:
     )
 
 
-def _empty_finding(source_file: str, role_arn: str | None = None) -> PolicyFinding:
+def _role_name_from_role_resource(resource_name: str, body: dict) -> str | None:
+    explicit_name = _clean_optional_string(body.get("name"))
+    if explicit_name and not _looks_variable_like(explicit_name):
+        return explicit_name.strip("/").rsplit("/", 1)[-1]
+    return resource_name
+
+
+def _resolve_role_reference(
+    role_reference: str | None,
+    role_names: dict[str, str],
+) -> str | None:
+    if not role_reference:
+        return None
+
+    reference = _terraform_reference_body(role_reference)
+    if reference:
+        if reference.startswith("aws_iam_role."):
+            address = ".".join(reference.split(".")[:2])
+            return role_names.get(address)
+        return None
+
+    if role_reference.startswith("arn:"):
+        marker = ":role/"
+        if marker not in role_reference:
+            return None
+        return role_reference.split(marker, 1)[1].strip("/").rsplit("/", 1)[-1]
+
+    if _looks_variable_like(role_reference):
+        return None
+
+    return role_reference.strip("/").rsplit("/", 1)[-1]
+
+
+def _resolve_policy_reference(policy_reference: str | None) -> str | None:
+    if not policy_reference:
+        return None
+
+    reference = _terraform_reference_body(policy_reference)
+    if reference is None:
+        return None
+
+    if reference.startswith("aws_iam_policy."):
+        parts = reference.split(".")
+        if len(parts) >= 2:
+            return ".".join(parts[:2])
+    return None
+
+
+def _role_arn_if_literal(role_reference: str | None) -> str | None:
+    if role_reference and role_reference.startswith("arn:aws:iam::"):
+        return role_reference
+    return None
+
+
+def _terraform_reference_body(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    clean = _clean_string(value)
+    if clean.startswith("${") and clean.endswith("}"):
+        clean = clean[2:-1].strip()
+
+    if clean.startswith(("aws_iam_", "data.aws_iam_")):
+        if clean.startswith("data."):
+            clean = clean.removeprefix("data.")
+        return clean
+    return None
+
+
+def _empty_finding(
+    source_file: str,
+    role_arn: str | None = None,
+    role_name: str | None = None,
+    policy_name: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> PolicyFinding:
     return PolicyFinding(
         source_file=source_file,
         source_type="terraform",
         role_arn=role_arn,
         actions=[],
         overall_risk=RiskLevel.INFO,
+        role_name=role_name,
+        policy_name=policy_name,
+        metadata=metadata or {},
     )
+
+
+def _clean_optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    return _clean_string(value)
 
 
 def _clean_string(value: Any) -> str:
