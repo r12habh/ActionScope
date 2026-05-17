@@ -228,6 +228,78 @@ def test_role_policy_attachment_sets_role_name() -> None:
     )
 
 
+def test_role_without_explicit_name_does_not_use_resource_label() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "generated": {
+                        "assume_role_policy": "{}",
+                    }
+                }
+            },
+            {
+                "aws_iam_policy": {
+                    "deploy": {
+                        "name": "DeployPolicy",
+                        "policy": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "s3:PutObject",
+                                    "Resource": "*",
+                                }
+                            ],
+                        },
+                    }
+                }
+            },
+            {
+                "aws_iam_role_policy_attachment": {
+                    "attach": {
+                        "role": "${aws_iam_role.generated.name}",
+                        "policy_arn": "${aws_iam_policy.deploy.arn}",
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "generated.tf")
+    deploy = next(f for f in findings if f.policy_name == "DeployPolicy")
+
+    assert deploy.role_name is None
+
+
+def test_literal_role_arn_preserved_for_non_standard_partition() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role_policy": {
+                    "govcloud": {
+                        "role": "arn:aws-us-gov:iam::123456789012:role/deploy",
+                        "policy": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": "*",
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "govcloud.tf")
+
+    assert findings[0].role_arn == "arn:aws-us-gov:iam::123456789012:role/deploy"
+
+
 def test_scan_terraform_files_reports_parse_errors(tmp_path: Path) -> None:
     (tmp_path / "broken.tf").write_text("resource \"broken\" {\n", encoding="utf-8")
 

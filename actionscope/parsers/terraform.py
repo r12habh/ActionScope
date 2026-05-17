@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ PRIVILEGE_ESCALATION_ACTIONS = {
     "iam:attachrolepolicy",
     "iam:createpolicyversion",
 }
+IAM_ROLE_ARN_RE = re.compile(r"^arn:[^:]+:iam::\d{12}:role/.+")
 
 
 def find_terraform_files(repo_path: str) -> list[str]:
@@ -571,10 +573,11 @@ def _is_write_or_permissions_action(action: IamAction) -> bool:
 
 
 def _role_name_from_role_resource(resource_name: str, body: dict) -> str | None:
+    _ = resource_name
     explicit_name = _clean_optional_string(body.get("name"))
     if explicit_name and not _looks_variable_like(explicit_name):
         return explicit_name.strip("/").rsplit("/", 1)[-1]
-    return resource_name
+    return None
 
 
 def _resolve_role_reference(
@@ -619,7 +622,7 @@ def _resolve_policy_reference(policy_reference: str | None) -> str | None:
 
 
 def _role_arn_if_literal(role_reference: str | None) -> str | None:
-    if role_reference and role_reference.startswith("arn:aws:iam::"):
+    if role_reference and IAM_ROLE_ARN_RE.match(role_reference):
         return role_reference
     return None
 
