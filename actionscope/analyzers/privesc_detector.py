@@ -107,6 +107,82 @@ ESCALATION_PATHS: list[dict[str, Any]] = [
         "severity": RiskLevel.CRITICAL,
         "example_attack": "Create stack with admin role to create IAM admin user",
     },
+    {
+        "id": "create_login_profile",
+        "name": "Create IAM User Login Profile",
+        "required_actions": ["iam:CreateLoginProfile"],
+        "required_resource_pattern": "*",
+        "description": (
+            "Can create a login profile (password) for any IAM user, enabling "
+            "AWS console access with that user's permissions"
+        ),
+        "severity": RiskLevel.CRITICAL,
+        "example_attack": (
+            "Create a login profile for an admin IAM user, then sign in to the "
+            "AWS console as that user"
+        ),
+    },
+    {
+        "id": "add_user_to_group",
+        "name": "Add IAM User to Group",
+        "required_actions": ["iam:AddUserToGroup"],
+        "required_resource_pattern": "*",
+        "description": (
+            "Can add any IAM user to any group, granting the user all "
+            "permissions attached to that group"
+        ),
+        "severity": RiskLevel.CRITICAL,
+        "example_attack": (
+            "Add the current user to the Administrators group to inherit "
+            "admin permissions"
+        ),
+    },
+    {
+        "id": "update_login_profile",
+        "name": "Update IAM User Login Profile",
+        "required_actions": ["iam:UpdateLoginProfile"],
+        "required_resource_pattern": "*",
+        "description": (
+            "Can reset the console password for any IAM user, potentially "
+            "enabling takeover of higher-privileged accounts"
+        ),
+        "severity": RiskLevel.CRITICAL,
+        "example_attack": (
+            "Reset the password for an admin IAM user and sign in to the "
+            "AWS console as that user"
+        ),
+    },
+    {
+        "id": "set_default_policy_version",
+        "name": "Set Default IAM Policy Version",
+        "required_actions": ["iam:SetDefaultPolicyVersion"],
+        "required_resource_pattern": "*",
+        "description": (
+            "Can change which version of a managed policy is the default "
+            "(active) version, potentially activating a version that grants "
+            "broader permissions"
+        ),
+        "severity": RiskLevel.CRITICAL,
+        "example_attack": (
+            "Create a new policy version that grants admin access, then set "
+            "it as the default version"
+        ),
+    },
+    {
+        "id": "glue_create_dev_endpoint",
+        "name": "Glue CreateDevEndpoint + PassRole",
+        "required_actions": ["glue:CreateDevEndpoint", "iam:PassRole"],
+        "required_resource_pattern": "*",
+        "description": (
+            "Can create a Glue development endpoint with a more privileged "
+            "role and execute arbitrary code as that role via SSH"
+        ),
+        "severity": RiskLevel.CRITICAL,
+        "example_attack": (
+            "Create a Glue dev endpoint with an admin role, SSH into the "
+            "endpoint, and exfiltrate AWS credentials from instance metadata"
+        ),
+    },
 ]
 
 
