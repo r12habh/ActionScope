@@ -28,6 +28,14 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+## AI Code Review
+
+ActionScope uses CodeRabbit as an additional AI pull request reviewer for this
+public open-source repository. The repository-local configuration lives in
+`.coderabbit.yaml`.
+
+See `docs/ai-code-review.md` for setup notes and the Marketplace install link.
+
 ## Development with uv
 
 You can use `uv` for faster local setup while keeping `pyproject.toml` as the
