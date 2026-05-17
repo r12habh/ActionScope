@@ -4,9 +4,12 @@ from pathlib import Path
 from shutil import copyfile
 
 from actionscope.parsers.workflow import (
+    classify_action_ref,
     extract_aws_credential_sources,
     extract_env_var_references,
+    find_unpinned_action_uses,
     find_workflow_files,
+    is_pinned_to_sha,
     parse_workflow_file,
     scan_workflows,
 )
@@ -155,10 +158,11 @@ def test_scan_workflows_works_end_to_end_on_fixtures_dir(tmp_path: Path) -> None
         "no_aws.yml",
     )
 
-    sources, token_permissions, errors = scan_workflows(str(repo))
+    sources, token_permissions, unpinned_actions, errors = scan_workflows(str(repo))
 
     assert len(sources) == 4
     assert len(token_permissions) == 17
+    assert len(unpinned_actions) == 4
     assert errors == []
 
 
@@ -191,7 +195,7 @@ def test_workflow_without_permissions_block_has_empty_token_permissions(
 ) -> None:
     repo = make_repo(tmp_path, "no_aws.yml")
 
-    _, token_permissions, errors = scan_workflows(str(repo))
+    _, token_permissions, _, errors = scan_workflows(str(repo))
 
     assert token_permissions == []
     assert errors == []
@@ -248,10 +252,11 @@ def test_scan_workflows_records_parse_errors(tmp_path: Path) -> None:
     workflow_dir.mkdir(parents=True)
     (workflow_dir / "broken.yml").write_text("jobs:\n  deploy: [", encoding="utf-8")
 
-    sources, token_permissions, errors = scan_workflows(str(tmp_path))
+    sources, token_permissions, unpinned_actions, errors = scan_workflows(str(tmp_path))
 
     assert sources == []
     assert token_permissions == []
+    assert unpinned_actions == []
     assert len(errors) == 1
 
 
@@ -261,3 +266,81 @@ def test_job_level_id_token_permission_sets_uses_oidc_true() -> None:
     sources = extract_aws_credential_sources(workflow_data, "multi_env.yml")
 
     assert all(source.uses_oidc is True for source in sources)
+
+
+def test_is_pinned_to_sha_returns_true_for_full_sha() -> None:
+    assert is_pinned_to_sha(
+        "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+    )
+
+
+def test_is_pinned_to_sha_returns_false_for_tag() -> None:
+    assert is_pinned_to_sha("actions/checkout@v4") is False
+
+
+def test_is_pinned_to_sha_returns_false_for_branch() -> None:
+    assert is_pinned_to_sha("actions/checkout@main") is False
+
+
+def test_is_pinned_to_sha_returns_true_for_local_action() -> None:
+    assert is_pinned_to_sha("./.github/actions/setup")
+
+
+def test_classify_action_ref_returns_tag_for_version_tag() -> None:
+    assert classify_action_ref("actions/checkout@v4") == "tag"
+
+
+def test_classify_action_ref_returns_branch_for_main() -> None:
+    assert classify_action_ref("actions/checkout@main") == "branch"
+
+
+def test_classify_action_ref_returns_sha_for_full_sha() -> None:
+    assert (
+        classify_action_ref(
+            "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+        )
+        == "sha"
+    )
+
+
+def test_classify_action_ref_returns_local_for_relative_path() -> None:
+    assert classify_action_ref("./action") == "local"
+
+
+def test_find_unpinned_action_uses_returns_empty_for_sha_pinned_workflow() -> None:
+    workflow_data = {
+        "jobs": {
+            "test": {
+                "steps": [
+                    {
+                        "name": "Checkout",
+                        "uses": (
+                            "actions/checkout@"
+                            "11bd71901bbe5b1630ceea73d27597364c9af683"
+                        ),
+                    },
+                    {"uses": "./.github/actions/local"},
+                ]
+            }
+        }
+    }
+
+    assert find_unpinned_action_uses(workflow_data, "ci.yml") == []
+
+
+def test_find_unpinned_action_uses_finds_v4_tags_as_unpinned() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {"name": "Checkout", "uses": "actions/checkout@v4"}
+                ]
+            }
+        }
+    }
+
+    findings = find_unpinned_action_uses(workflow_data, "deploy.yml")
+
+    assert len(findings) == 1
+    assert findings[0]["uses"] == "actions/checkout@v4"
+    assert findings[0]["pin_type"] == "tag"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,13 @@ from typing import Any
 import yaml
 
 from actionscope.analyzers.github_token import analyze_workflow_permissions
-from actionscope.models import AwsCredentialSource, GitHubTokenPermission
+from actionscope.models import (
+    AwsCredentialSource,
+    GitHubTokenPermission,
+    UnpinnedActionFinding,
+)
+
+SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 
 
 class GitHubWorkflowLoader(yaml.SafeLoader):
@@ -136,12 +143,103 @@ def extract_env_var_references(step: dict) -> dict[str, str]:
     return {str(name): str(value) for name, value in env_block.items()}
 
 
+def is_pinned_to_sha(uses_ref: str) -> bool:
+    """
+    Return True if a ``uses`` reference is pinned to a full commit SHA.
+
+    Local actions are considered pinned because they are part of the checked-out
+    repository. Docker actions are considered pinned only when they use an image
+    digest.
+    """
+    if uses_ref.startswith(("./", "../")):
+        return True
+    if uses_ref.startswith("docker://"):
+        return "@sha256:" in uses_ref
+    if "@" not in uses_ref:
+        return False
+
+    ref = uses_ref.rsplit("@", 1)[1]
+    return bool(SHA_PATTERN.fullmatch(ref))
+
+
+def classify_action_ref(uses_ref: str) -> str:
+    """
+    Classify how an action reference is pinned.
+
+    Returns one of: ``sha``, ``tag``, ``branch``, ``local``, or
+    ``unresolvable``.
+    """
+    if uses_ref.startswith(("./", "../")):
+        return "local"
+    if uses_ref.startswith("docker://"):
+        return "sha" if "@sha256:" in uses_ref else "tag"
+    if "@" not in uses_ref:
+        return "unresolvable"
+
+    ref = uses_ref.rsplit("@", 1)[1]
+    if SHA_PATTERN.fullmatch(ref):
+        return "sha"
+    if ref.startswith("v") or "." in ref:
+        return "tag"
+    return "branch"
+
+
+def find_unpinned_action_uses(
+    workflow_data: dict,
+    workflow_file: str,
+) -> list[dict]:
+    """Find external action references that are not pinned to a commit SHA."""
+    unpinned: list[dict] = []
+    jobs = workflow_data.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return unpinned
+
+    for job_name, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+
+        steps = job.get("steps") or []
+        if not isinstance(steps, list):
+            continue
+
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+
+            uses = step.get("uses")
+            if not isinstance(uses, str):
+                continue
+
+            uses = uses.strip()
+            pin_type = classify_action_ref(uses)
+            if pin_type in ("sha", "local"):
+                continue
+
+            unpinned.append(
+                {
+                    "uses": uses,
+                    "job_name": str(job_name),
+                    "step_name": str(step.get("name", uses)),
+                    "pin_type": pin_type,
+                    "workflow_file": workflow_file,
+                }
+            )
+
+    return unpinned
+
+
 def scan_workflows(
     repo_path: str,
-) -> tuple[list[AwsCredentialSource], list[GitHubTokenPermission], list[str]]:
+) -> tuple[
+    list[AwsCredentialSource],
+    list[GitHubTokenPermission],
+    list[UnpinnedActionFinding],
+    list[str],
+]:
     """Scan GitHub Actions workflows for AWS credential and token findings."""
     credential_sources: list[AwsCredentialSource] = []
     token_permissions: list[GitHubTokenPermission] = []
+    unpinned_actions: list[UnpinnedActionFinding] = []
     errors: list[str] = []
 
     for workflow_file in find_workflow_files(repo_path):
@@ -156,8 +254,12 @@ def scan_workflows(
         token_permissions.extend(
             analyze_workflow_permissions(workflow_data, workflow_file)
         )
+        unpinned_actions.extend(
+            UnpinnedActionFinding(**finding)
+            for finding in find_unpinned_action_uses(workflow_data, workflow_file)
+        )
 
-    return credential_sources, token_permissions, errors
+    return credential_sources, token_permissions, unpinned_actions, errors
 
 
 def _permissions_have_id_token_write(permissions: Any) -> bool:

@@ -13,6 +13,7 @@ from actionscope.models import (
     PolicyFinding,
     RiskLevel,
     ScanResult,
+    UnpinnedActionFinding,
     WorkflowCredentialBinding,
     get_unmatched_findings,
 )
@@ -129,9 +130,25 @@ def build_scan_result(
     credential_sources: list[AwsCredentialSource],
     github_token_perms: list[GitHubTokenPermission],
     policy_findings: list[PolicyFinding],
-    errors: list[str],
+    unpinned_actions: list[UnpinnedActionFinding] | list[str] | None = None,
+    errors: list[str] | None = None,
 ) -> ScanResult:
     """Build the final correlated scan result."""
+    if errors is None:
+        if unpinned_actions and all(
+            isinstance(item, str) for item in unpinned_actions
+        ):
+            errors = list(unpinned_actions)
+            unpinned_actions = []
+        else:
+            errors = []
+
+    normalized_unpinned = [
+        finding
+        for finding in (unpinned_actions or [])
+        if isinstance(finding, UnpinnedActionFinding)
+    ]
+
     for finding in policy_findings:
         finding.privesc_paths = detect_privesc_paths(finding, finding.source_file)
 
@@ -152,6 +169,7 @@ def build_scan_result(
         workflow_count=workflow_count,
         credential_sources=credential_sources,
         github_token_permissions=github_token_perms,
+        unpinned_actions=normalized_unpinned,
         policy_findings=policy_findings,
         bindings=bindings,
         errors=errors,

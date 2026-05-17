@@ -102,6 +102,7 @@ def _summary_dict(result: ScanResult) -> dict[str, Any]:
         "policies_found": policies_found,
         "policies_not_found": policies_not_found,
         "github_token_risks": github_token_risks,
+        "unpinned_actions": len(result.unpinned_actions),
     }
 
 
@@ -121,6 +122,10 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         "github_token_permissions": [
             _serialize_for_json(asdict(p))
             for p in result.github_token_permissions
+        ],
+        "unpinned_actions": [
+            _serialize_for_json(asdict(finding))
+            for finding in result.unpinned_actions
         ],
         "unmatched_policies": [
             _policy_finding_to_report_dict(p) for p in unmatched

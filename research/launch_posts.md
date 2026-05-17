@@ -7,9 +7,9 @@ Title: "Show HN: ActionScope – map what your GitHub Actions can do in AWS"
 Body:
 
 ```text
-I work on AWS Security and kept running into the same question: "We know
-what our CI/CD workflows are supposed to do in AWS. But what can they
-actually do if compromised?"
+While building cloud security tooling, I kept running into the same question:
+"We know what our CI/CD workflows are supposed to do in AWS. But what can
+they actually do if compromised?"
 
 Existing tools answer adjacent questions:
 - actionlint: is this workflow YAML valid?
@@ -47,7 +47,7 @@ Title: "I built an open-source tool that maps what your GitHub Actions workflows
 Body:
 
 ```text
-Background: I work in AWS Security and got tired of asking "what can this
+Background: I got tired of asking "what can this
 CI/CD role actually do if someone compromises the workflow?"
 
 Existing scanners check your workflow files for security patterns. Nobody
@@ -91,8 +91,8 @@ Title: "Open source tool that maps what your GitHub Actions workflows can actual
 Body:
 
 ```text
-Quick background: I work on AWS Security. One pattern I kept seeing was
-teams thinking their CI/CD roles were scoped correctly, but nobody had
+Quick background: one pattern I kept seeing was teams thinking their CI/CD
+roles were scoped correctly, but nobody had
 actually verified what the role could do given its attached policies.
 
 Built ActionScope to automate this:

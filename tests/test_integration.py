@@ -101,6 +101,33 @@ class TestDemoRepoScan:
         data = json.loads(result.output)
         assert len(data["github_token_permissions"]) > 0
 
+    def test_unpinned_actions_detected(self) -> None:
+        """demo_repo uses floating action tags, which should be reported."""
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["scan", self.DEMO_REPO, "--output-format", "json"],
+        )
+        data = json.loads(result.output)
+
+        assert data["summary"]["unpinned_actions"] >= 1
+        assert any(
+            finding["uses"] == "actions/checkout@v4"
+            for finding in data["unpinned_actions"]
+        )
+
+    def test_sarif_output_is_valid_and_has_results(self) -> None:
+        """SARIF output should be consumable by GitHub Code Scanning."""
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["scan", self.DEMO_REPO, "--output-format", "sarif"],
+        )
+        data = json.loads(result.output)
+
+        assert data["version"] == "2.1.0"
+        assert len(data["runs"][0]["results"]) > 0
+
     def test_no_aws_repo_exits_cleanly(self) -> None:
         """A repo with no workflows should exit 0 with no-AWS message."""
         with tempfile.TemporaryDirectory() as tmpdir:

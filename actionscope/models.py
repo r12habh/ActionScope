@@ -92,6 +92,17 @@ class GitHubTokenPermission:
 
 
 @dataclass
+class UnpinnedActionFinding:
+    """A GitHub Actions step that references an external action without a SHA."""
+
+    workflow_file: str
+    job_name: str
+    step_name: str
+    uses: str
+    pin_type: str
+
+
+@dataclass
 class PolicyFinding:
     """IAM policy analysis results from a supported policy source."""
 
@@ -126,6 +137,7 @@ class ScanResult:
     github_token_permissions: list[GitHubTokenPermission] = field(
         default_factory=list
     )
+    unpinned_actions: list[UnpinnedActionFinding] = field(default_factory=list)
     policy_findings: list[PolicyFinding] = field(default_factory=list)
     bindings: list[WorkflowCredentialBinding] = field(default_factory=list)
     overall_risk: RiskLevel = RiskLevel.INFO

@@ -28,6 +28,28 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+## Development with uv
+
+You can use `uv` for faster local setup while keeping `pyproject.toml` as the
+source of truth:
+
+```bash
+uv venv
+uv pip install -e ".[dev]"
+uv run pytest tests/ -v
+uv run actionscope scan tests/fixtures/demo_repo
+```
+
+To generate a reproducible development lockfile:
+
+```bash
+uv lock --extra dev --extra aws --extra research
+```
+
+Commit `uv.lock` only when it is intentionally refreshed. The published package
+and GitHub Action should continue to use standard `pip install actionscope` for
+maximum compatibility.
+
 ## Self-Scan
 
 ActionScope scans itself in CI. This repo intentionally uses minimal
