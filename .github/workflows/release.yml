@@ -50,7 +50,7 @@ jobs:
 
             ### Install
             ```bash
-            pip install actionscope==${{ github.ref_name }}
+            pip install actionscope==0.1.1
             ```
 
             ### What's New

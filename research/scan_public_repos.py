@@ -33,7 +33,7 @@ from tqdm import tqdm
 
 GITHUB_API = "https://api.github.com"
 SEARCH_QUERY = "aws-actions/configure-aws-credentials path:.github/workflows"
-ACTIONSCOPE_VERSION = "0.1.0"
+ACTIONSCOPE_VERSION = "0.1.1"
 FULL_SHA_RE = re.compile(r"^[a-f0-9]{40}$", re.IGNORECASE)
 ROLE_ARN_RE = re.compile(r"arn:aws:iam::\d{12}:role/")
 USES_RE = re.compile(r"^\s*uses\s*:\s*['\"]?([^'\"\s#]+)", re.MULTILINE)

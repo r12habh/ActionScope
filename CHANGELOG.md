@@ -2,6 +2,12 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.1.1] - 2026-05-17
+
+### Changed
+- Removed employment-title language from packaged README and research copy.
+- Updated package metadata version for a PyPI description-only patch release.
+
 ## [0.1.0] - 2026-05-16
 
 ### Added

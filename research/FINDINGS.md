@@ -1,7 +1,7 @@
 # We Scanned 493 Public GitHub Repos That Use AWS.
 # Here's What Their CI/CD Can Do.
 
-**Posted May 2026 by Rishabh Singh — AWS Security Engineer**
+**Posted May 2026 by Rishabh Singh**
 
 ---
 
