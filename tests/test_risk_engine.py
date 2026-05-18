@@ -36,6 +36,7 @@ def policy_finding(
     risk: RiskLevel,
     source_file: str = "/repo/terraform/github-deploy-role.tf",
     source_type: str = "terraform",
+    role_name: str | None = None,
 ) -> PolicyFinding:
     """Create a policy finding for risk-engine tests."""
     return PolicyFinding(
@@ -43,6 +44,7 @@ def policy_finding(
         source_type=source_type,
         role_arn=None,
         overall_risk=risk,
+        role_name=role_name,
     )
 
 
@@ -85,12 +87,37 @@ def test_match_role_to_policies_finds_match_by_role_name_in_file_path() -> None:
     assert match_role_to_policies(credential_source(), [finding]) is finding
 
 
+def test_match_role_to_policies_prefers_explicit_role_name_metadata() -> None:
+    finding = policy_finding(
+        RiskLevel.HIGH,
+        source_file="/repo/terraform/iam.tf",
+        role_name="github-deploy-role",
+    )
+
+    assert match_role_to_policies(credential_source(), [finding]) is finding
+
+
 def test_build_bindings_creates_not_found_when_no_policy_matches() -> None:
     bindings = build_bindings([credential_source()], [], "/repo")
 
     assert len(bindings) == 1
     assert bindings[0].policy_finding is None
     assert bindings[0].policy_source == "not_found"
+    assert bindings[0].match_confidence == "none"
+
+
+def test_build_bindings_reports_high_confidence_for_role_relationship() -> None:
+    finding = policy_finding(
+        RiskLevel.HIGH,
+        source_file="/repo/terraform/iam.tf",
+        role_name="github-deploy-role",
+    )
+
+    bindings = build_bindings([credential_source()], [finding], "/repo")
+
+    assert bindings[0].policy_finding is finding
+    assert bindings[0].match_confidence == "high"
+    assert "Terraform role relationship" in bindings[0].match_reason
 
 
 def test_build_bindings_creates_dynamic_reference_for_secret_refs() -> None:

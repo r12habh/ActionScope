@@ -300,6 +300,9 @@ def _finding_matches_verified_role(
     if finding.role_arn in verified_role_arns:
         return True
 
+    if finding.role_name and finding.role_name.lower() in verified_role_names:
+        return True
+
     if finding.role_arn:
         role_tail = finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
         if role_tail in verified_role_names:

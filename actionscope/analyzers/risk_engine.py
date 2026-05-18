@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -19,49 +20,70 @@ from actionscope.models import (
 )
 
 
+@dataclass(frozen=True)
+class _PolicyMatch:
+    finding: PolicyFinding | None
+    confidence: str
+    reason: str
+
+
 def match_role_to_policies(
     credential_source: AwsCredentialSource,
     policy_findings: list[PolicyFinding],
 ) -> Optional[PolicyFinding]:
     """Find a policy finding that appears to belong to an AWS role."""
+    return _match_role_to_policy_with_confidence(
+        credential_source,
+        policy_findings,
+    ).finding
+
+
+def _match_role_to_policy_with_confidence(
+    credential_source: AwsCredentialSource,
+    policy_findings: list[PolicyFinding],
+) -> _PolicyMatch:
+    """Find the best policy match plus confidence metadata."""
     role_arn = credential_source.role_arn
     if role_arn is None:
-        return None
+        return _PolicyMatch(None, "none", "credential source does not declare a role")
 
     if _is_dynamic_reference(role_arn):
-        return None
+        return _PolicyMatch(None, "none", "role ARN is a dynamic reference")
 
     for finding in policy_findings:
         if finding.role_arn == role_arn:
-            return finding
+            return _PolicyMatch(finding, "high", "exact role ARN match")
 
     role_name = _role_name_from_arn(role_arn)
     if role_name is None:
-        return None
+        return _PolicyMatch(None, "none", "role ARN is not a static IAM role ARN")
 
     normalized_role_name = role_name.lower()
     for finding in _aws_verified_findings(policy_findings):
         if _finding_matches_role_name(finding, normalized_role_name):
-            return finding
+            return _PolicyMatch(finding, "high", "AWS-verified role name match")
 
     for finding in policy_findings:
         if finding.source_type == "aws_verified":
             continue
+
+        if finding.role_name and normalized_role_name == finding.role_name.lower():
+            return _PolicyMatch(finding, "high", "Terraform role relationship match")
 
         if (
             finding.role_arn
             and normalized_role_name
             == finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
         ):
-            return finding
+            return _PolicyMatch(finding, "high", "role name extracted from finding")
 
         if normalized_role_name in finding.source_file.lower():
-            return finding
+            return _PolicyMatch(finding, "medium", "role name appears in policy path")
 
         if _file_contains(finding.source_file, role_name):
-            return finding
+            return _PolicyMatch(finding, "low", "role name appears in policy file")
 
-    return None
+    return _PolicyMatch(None, "none", "no matching policy found")
 
 
 def build_bindings(
@@ -74,10 +96,11 @@ def build_bindings(
     bindings: list[WorkflowCredentialBinding] = []
 
     for credential_source in credential_sources:
-        policy_finding = match_role_to_policies(
+        match = _match_role_to_policy_with_confidence(
             credential_source,
             policy_findings,
         )
+        policy_finding = match.finding
 
         if policy_finding is not None:
             policy_source = _policy_source_for(policy_finding)
@@ -93,6 +116,8 @@ def build_bindings(
                 credential_source=credential_source,
                 policy_finding=policy_finding,
                 policy_source=policy_source,
+                match_confidence=match.confidence,
+                match_reason=match.reason,
             )
         )
 
@@ -216,6 +241,8 @@ def _finding_matches_role_name(
     finding: PolicyFinding,
     normalized_role_name: str,
 ) -> bool:
+    if finding.role_name and normalized_role_name == finding.role_name.lower():
+        return True
     if not finding.role_arn:
         return False
     return normalized_role_name == finding.role_arn.strip("/").rsplit("/", 1)[

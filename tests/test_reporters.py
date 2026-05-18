@@ -60,6 +60,8 @@ def _sample_binding() -> WorkflowCredentialBinding:
         credential_source=credential,
         policy_finding=policy,
         policy_source="terraform",
+        match_confidence="high",
+        match_reason="exact role ARN match",
     )
 
 
@@ -109,6 +111,7 @@ def test_json_findings_structure() -> None:
     assert f0["role_arn"].endswith("ci-deploy")
     assert f0["auth_type"] == "oidc"
     assert f0["policy_source"] == "terraform"
+    assert f0["match_confidence"] == "high"
     assert f0["overall_risk"] == "critical"
     assert f0["has_passrole"] is True
     assert f0["has_privilege_escalation"] is True
@@ -161,6 +164,15 @@ def test_to_markdown_has_collapsible_details() -> None:
     assert "<details>" in md
     assert "<summary>All IAM Actions (click to expand)</summary>" in md
     assert "</details>" in md
+
+
+def test_to_markdown_includes_match_confidence() -> None:
+    result = ScanResult(bindings=[_sample_binding()])
+    result.overall_risk = RiskLevel.CRITICAL
+
+    md = to_markdown(result)
+    assert "Match Confidence" in md
+    assert "| Match Confidence | high |" in md
 
 
 def test_to_markdown_empty_findings_no_crash() -> None:
