@@ -184,3 +184,66 @@ def test_analyze_single_statement_api() -> None:
     findings = analyze_oidc_trust_conditions(statement, "iam.tf", "role")
 
     assert findings[0].role_name == "role"
+
+
+def test_policy_document_data_source_conditions_are_unquoted() -> None:
+    tf_data = hcl2.loads(
+        """
+data "aws_iam_policy_document" "trust" {
+  statement {
+    effect = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type = "Federated"
+      identifiers = [
+        "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      ]
+    }
+    condition {
+      test = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = ["repo:acme-corp/app:ref:refs/heads/main"]
+    }
+    condition {
+      test = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values = ["sts.amazonaws.com"]
+    }
+  }
+}
+"""
+    )
+
+    findings = analyze_terraform_oidc_trust(tf_data, "iam.tf")
+
+    assert findings == []
+
+
+def test_policy_document_data_source_detects_wildcard_subject() -> None:
+    tf_data = hcl2.loads(
+        """
+data "aws_iam_policy_document" "trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type = "Federated"
+      identifiers = ["token.actions.githubusercontent.com"]
+    }
+    condition {
+      test = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = ["repo:acme-corp/*"]
+    }
+    condition {
+      test = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values = ["sts.amazonaws.com"]
+    }
+  }
+}
+"""
+    )
+
+    findings = analyze_terraform_oidc_trust(tf_data, "iam.tf")
+
+    assert [finding.issue_id for finding in findings] == ["wildcard_repo"]

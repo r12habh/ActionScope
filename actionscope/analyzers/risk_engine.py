@@ -225,6 +225,10 @@ def build_scan_result(
     workflow_count = len(
         {source.workflow_file for source in credential_sources}
         | {perm.workflow_file for perm in github_token_perms}
+        | {finding.workflow_file for finding in normalized_unpinned}
+        | {finding.workflow_file for finding in script_injection_findings}
+        | {finding.workflow_file for finding in artifact_poisoning_findings}
+        | {finding.workflow_file for finding in ai_agent_injection_findings}
     )
 
     result = ScanResult(

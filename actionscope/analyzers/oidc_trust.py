@@ -370,6 +370,7 @@ def _extract_call_arg(value: str, call_name: str) -> str | None:
 
 
 def _policy_from_terraform_document(body: dict) -> dict:
+    body = _normalize(body)
     statements = []
     raw_statements = body.get("statement") or []
     if isinstance(raw_statements, dict):
@@ -398,6 +399,7 @@ def _policy_from_terraform_document(body: dict) -> dict:
 
 def _terraform_conditions(raw_conditions: Any) -> dict[str, dict[str, Any]]:
     conditions: dict[str, dict[str, Any]] = {}
+    raw_conditions = _normalize(raw_conditions)
     if isinstance(raw_conditions, dict):
         raw_conditions = [raw_conditions]
     if not isinstance(raw_conditions, list):

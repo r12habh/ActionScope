@@ -1,5 +1,8 @@
 """Tests for the ActionScope risk correlation engine."""
 
+from pathlib import Path
+from shutil import copyfile
+
 from actionscope.analyzers.risk_engine import (
     build_bindings,
     build_scan_result,
@@ -194,3 +197,20 @@ def test_github_token_critical_risk_propagates_to_overall_scan_result() -> None:
     )
 
     assert result.overall_risk is RiskLevel.CRITICAL
+
+
+def test_build_scan_result_counts_workflow_layer_findings(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    fixture = (
+        Path(__file__).parent
+        / "fixtures"
+        / "workflows"
+        / "injection_test.yml"
+    )
+    copyfile(fixture, workflow_dir / "injection_test.yml")
+
+    result = build_scan_result(str(tmp_path), [], [], [], [])
+
+    assert result.workflow_count == 1
+    assert len(result.script_injection_findings) == 2
