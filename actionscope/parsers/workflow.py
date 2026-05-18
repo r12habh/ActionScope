@@ -199,7 +199,7 @@ def classify_action_ref(uses_ref: str) -> str:
     """
     Classify how an action reference is pinned.
 
-    Returns one of: ``sha``, ``tag``, ``branch``, ``local``, or
+    Returns one of: ``sha``, ``tag``, ``branch``, ``short_sha``, ``local``, or
     ``unresolvable``.
     """
     if uses_ref.startswith(("./", "../")):
@@ -212,7 +212,9 @@ def classify_action_ref(uses_ref: str) -> str:
     ref = uses_ref.rsplit("@", 1)[1]
     if SHA_PATTERN.fullmatch(ref):
         return "sha"
-    if ref.startswith("v") or "." in ref:
+    if re.fullmatch(r"[0-9a-f]{7,39}", ref, re.IGNORECASE):
+        return "short_sha"
+    if ref.startswith("v") or re.search(r"\d+\.\d+", ref):
         return "tag"
     return "branch"
 

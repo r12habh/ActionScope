@@ -1,8 +1,12 @@
 """Tests for the GitHub Actions workflow parser."""
 
+import io
 from pathlib import Path
 from shutil import copyfile
 
+from rich.console import Console
+
+from actionscope.models import ScanResult, UnpinnedActionFinding
 from actionscope.parsers.workflow import (
     classify_action_ref,
     extract_aws_credential_sources,
@@ -14,6 +18,7 @@ from actionscope.parsers.workflow import (
     parse_workflow_file,
     scan_workflows,
 )
+from actionscope.reporters.terminal import render_scan_result
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "workflows"
 
@@ -295,6 +300,14 @@ def test_classify_action_ref_returns_branch_for_main() -> None:
     assert classify_action_ref("actions/checkout@main") == "branch"
 
 
+def test_classify_action_ref_returns_short_sha_for_7_char_hex() -> None:
+    assert classify_action_ref("actions/checkout@a5b3abf") == "short_sha"
+
+
+def test_classify_action_ref_returns_short_sha_for_abc123f() -> None:
+    assert classify_action_ref("actions/checkout@abc123f") == "short_sha"
+
+
 def test_classify_action_ref_returns_sha_for_full_sha() -> None:
     assert (
         classify_action_ref(
@@ -345,6 +358,53 @@ def test_find_unpinned_action_uses_finds_v4_tags_as_unpinned() -> None:
     assert len(findings) == 1
     assert findings[0]["uses"] == "actions/checkout@v4"
     assert findings[0]["pin_type"] == "tag"
+
+
+def test_find_unpinned_action_uses_marks_short_sha() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {"name": "Checkout", "uses": "actions/checkout@a5b3abf"}
+                ]
+            }
+        }
+    }
+
+    findings = find_unpinned_action_uses(workflow_data, "deploy.yml")
+
+    assert findings[0]["pin_type"] == "short_sha"
+
+
+def test_unpinned_action_finding_pin_type_short_sha() -> None:
+    finding = UnpinnedActionFinding(
+        workflow_file="deploy.yml",
+        job_name="deploy",
+        step_name="Checkout",
+        uses="actions/checkout@a5b3abf",
+        pin_type="short_sha",
+    )
+
+    assert finding.pin_type == "short_sha"
+
+
+def test_terminal_output_contains_short_sha_text() -> None:
+    result = ScanResult(
+        unpinned_actions=[
+            UnpinnedActionFinding(
+                workflow_file="deploy.yml",
+                job_name="deploy",
+                step_name="Checkout",
+                uses="actions/checkout@a5b3abf",
+                pin_type="short_sha",
+            )
+        ]
+    )
+    stream = io.StringIO()
+
+    render_scan_result(result, Console(file=stream, force_terminal=False))
+
+    assert "Short SHA" in stream.getvalue()
 
 
 def test_local_composite_action_wrapper_is_inspected(tmp_path: Path) -> None:

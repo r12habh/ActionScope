@@ -120,16 +120,76 @@ def to_sarif(result: ScanResult) -> str:
             )
 
     for finding in result.unpinned_actions:
+        short_sha = finding.pin_type == "short_sha"
         results.append(
             _make_result(
                 rule_id="AS006",
                 message=(
                     f"External action '{finding.uses}' is not pinned to a full "
-                    "commit SHA. Version tags and branches are mutable; pin to "
-                    "a SHA to reduce supply-chain risk."
+                    "40-character commit SHA. "
+                    + (
+                        "Short SHA-like refs are still mutable or ambiguous. "
+                        if short_sha
+                        else "Version tags and branches are mutable. "
+                    )
+                    + "Pin to a full SHA to reduce supply-chain risk."
                 ),
                 level="warning",
                 security_severity="4.0",
+                location_path=finding.workflow_file,
+                location_line=1,
+            )
+        )
+
+    for finding in result.oidc_trust_findings:
+        results.append(
+            _make_result(
+                rule_id="AS008" if finding.issue_id == "missing_sub" else "AS007",
+                message=f"{finding.issue_description}. Evidence: {finding.evidence}",
+                level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
+                security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
+                location_path=finding.source_file,
+                location_line=1,
+            )
+        )
+
+    for finding in result.script_injection_findings:
+        results.append(
+            _make_result(
+                rule_id="AS009",
+                message=(
+                    f"Direct script injection risk: {finding.untrusted_expression}. "
+                    f"{finding.description}"
+                ),
+                level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
+                security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
+                location_path=finding.workflow_file,
+                location_line=1,
+            )
+        )
+
+    for finding in result.artifact_poisoning_findings:
+        results.append(
+            _make_result(
+                rule_id="AS010",
+                message=f"Artifact poisoning risk: {finding.description}",
+                level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
+                security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
+                location_path=finding.workflow_file,
+                location_line=1,
+            )
+        )
+
+    for finding in result.ai_agent_injection_findings:
+        results.append(
+            _make_result(
+                rule_id="AS012" if finding.has_aws_secret_access else "AS011",
+                message=(
+                    f"AI agent prompt injection surface ({finding.agent_type}): "
+                    f"{finding.description}"
+                ),
+                level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
+                security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=finding.workflow_file,
                 location_line=1,
             )
@@ -241,15 +301,79 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
             )
 
     for finding in data.get("unpinned_actions", []):
+        short_sha = finding.get("pin_type") == "short_sha"
         results.append(
             _make_result(
                 rule_id="AS006",
                 message=(
                     f"External action '{finding.get('uses')}' is not pinned "
-                    "to a full commit SHA."
+                    "to a full 40-character commit SHA. "
+                    + (
+                        "Short SHA-like refs are still mutable or ambiguous."
+                        if short_sha
+                        else ""
+                    )
                 ),
                 level="warning",
                 security_severity="4.0",
+                location_path=str(finding.get("workflow_file", "")),
+                location_line=1,
+            )
+        )
+
+    for finding in data.get("oidc_trust_findings", []):
+        risk = _risk_from_string(str(finding.get("risk_level", "info")))
+        results.append(
+            _make_result(
+                rule_id=(
+                    "AS008"
+                    if finding.get("issue_id") == "missing_sub"
+                    else "AS007"
+                ),
+                message=str(finding.get("issue_description", "OIDC trust issue")),
+                level=RISK_TO_SARIF_SEVERITY[risk],
+                security_severity=RISK_TO_SECURITY_SEVERITY[risk],
+                location_path=str(finding.get("source_file", "")),
+                location_line=1,
+            )
+        )
+
+    for finding in data.get("script_injection_findings", []):
+        risk = _risk_from_string(str(finding.get("risk_level", "info")))
+        results.append(
+            _make_result(
+                rule_id="AS009",
+                message=str(finding.get("description", "Script injection risk")),
+                level=RISK_TO_SARIF_SEVERITY[risk],
+                security_severity=RISK_TO_SECURITY_SEVERITY[risk],
+                location_path=str(finding.get("workflow_file", "")),
+                location_line=1,
+            )
+        )
+
+    for finding in data.get("artifact_poisoning_findings", []):
+        risk = _risk_from_string(str(finding.get("risk_level", "info")))
+        results.append(
+            _make_result(
+                rule_id="AS010",
+                message=str(finding.get("description", "Artifact poisoning risk")),
+                level=RISK_TO_SARIF_SEVERITY[risk],
+                security_severity=RISK_TO_SECURITY_SEVERITY[risk],
+                location_path=str(finding.get("workflow_file", "")),
+                location_line=1,
+            )
+        )
+
+    for finding in data.get("ai_agent_injection_findings", []):
+        risk = _risk_from_string(str(finding.get("risk_level", "info")))
+        results.append(
+            _make_result(
+                rule_id="AS012" if finding.get("has_aws_secret_access") else "AS011",
+                message=str(
+                    finding.get("description", "AI agent prompt injection surface")
+                ),
+                level=RISK_TO_SARIF_SEVERITY[risk],
+                security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                 location_path=str(finding.get("workflow_file", "")),
                 location_line=1,
             )
@@ -440,6 +564,108 @@ def _build_rules() -> list[dict[str, Any]]:
             "helpUri": "https://github.com/r12habh/ActionScope#readme",
             "properties": {
                 "tags": ["security", "github-actions", "supply-chain"]
+            },
+        },
+        {
+            "id": "AS007",
+            "name": "OIDCWildcardSubject",
+            "shortDescription": {
+                "text": "GitHub OIDC trust policy is too broadly scoped"
+            },
+            "fullDescription": {
+                "text": (
+                    "The AWS trust policy for a GitHub Actions OIDC role uses "
+                    "wildcards or insufficient branch/environment scoping, "
+                    "allowing more workflows to assume the role than intended."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {"tags": ["security", "aws", "oidc", "iam"]},
+        },
+        {
+            "id": "AS008",
+            "name": "OIDCMissingSubCondition",
+            "shortDescription": {
+                "text": "GitHub OIDC trust policy is missing a sub condition"
+            },
+            "fullDescription": {
+                "text": (
+                    "The AWS trust policy does not constrain the GitHub OIDC "
+                    "subject claim. Older roles with this condition missing can "
+                    "allow unintended GitHub workflows to assume the role."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {"tags": ["security", "aws", "oidc", "iam"]},
+        },
+        {
+            "id": "AS009",
+            "name": "ScriptInjectionRisk",
+            "shortDescription": {
+                "text": "Untrusted GitHub context is interpolated into run"
+            },
+            "fullDescription": {
+                "text": (
+                    "A workflow run block directly interpolates attacker-"
+                    "controlled GitHub event content, which can lead to shell "
+                    "command injection."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": ["security", "github-actions", "script-injection"]
+            },
+        },
+        {
+            "id": "AS010",
+            "name": "ArtifactPoisoningRisk",
+            "shortDescription": {
+                "text": "workflow_run downloads and executes artifacts"
+            },
+            "fullDescription": {
+                "text": (
+                    "A privileged workflow_run workflow downloads artifacts "
+                    "from another workflow and executes content after download."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": ["security", "github-actions", "artifact-poisoning"]
+            },
+        },
+        {
+            "id": "AS011",
+            "name": "AiAgentInjectionSurface",
+            "shortDescription": {
+                "text": "AI coding agent may process untrusted GitHub content"
+            },
+            "fullDescription": {
+                "text": (
+                    "An AI coding agent runs in a workflow triggered by "
+                    "untrusted GitHub content and may be prompt-injected by "
+                    "PR, issue, or comment text."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": ["security", "github-actions", "ai-agent"]
+            },
+        },
+        {
+            "id": "AS012",
+            "name": "AiAgentWithAws",
+            "shortDescription": {
+                "text": "AI coding agent runs alongside AWS credentials"
+            },
+            "fullDescription": {
+                "text": (
+                    "An AI coding agent runs in a workflow that also configures "
+                    "AWS credentials, increasing the impact of prompt injection."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": ["security", "github-actions", "ai-agent", "aws"]
             },
         },
     ]

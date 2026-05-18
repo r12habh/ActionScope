@@ -168,8 +168,9 @@ def scan(
             errors=all_errors + [f"Could not correlate scan results: {exc}"],
         )
 
-    # Step 5: Handle case of no AWS usage
-    if not credential_sources:
+    # Step 5: Handle a truly empty scan. Repos can have useful non-credential
+    # findings such as OIDC trust-policy issues or script injection risks.
+    if not credential_sources and not _has_reportable_findings(result):
         if output_format == "terminal":
             if not quiet:
                 render_no_aws_found(console)
@@ -290,6 +291,20 @@ def _exit_with_fail_on(result: ScanResult, fail_on: str | None) -> None:
         if result.overall_risk >= fail_risk:
             sys.exit(1)
     sys.exit(0)
+
+
+def _has_reportable_findings(result: ScanResult) -> bool:
+    return any(
+        (
+            result.github_token_permissions,
+            result.unpinned_actions,
+            result.policy_findings,
+            result.oidc_trust_findings,
+            result.script_injection_findings,
+            result.artifact_poisoning_findings,
+            result.ai_agent_injection_findings,
+        )
+    )
 
 
 def _finding_matches_verified_role(

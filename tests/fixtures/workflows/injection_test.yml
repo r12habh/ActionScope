@@ -1,0 +1,20 @@
+name: Injection Test
+
+on:
+  pull_request_target:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Direct PR title injection
+        run: echo "${{ github.event.pull_request.title }}"
+
+      - name: Safe PR title handling
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$PR_TITLE"
+
+      - name: Issue body injection
+        run: |
+          echo "Issue body: ${{ github.event.issue.body }}"

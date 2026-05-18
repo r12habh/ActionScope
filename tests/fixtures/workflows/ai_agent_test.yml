@@ -1,0 +1,25 @@
+name: AI Agent Review
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/ai-review-role
+          aws-region: us-east-1
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: "Review this PR: ${{ github.event.pull_request.body }}"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

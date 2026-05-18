@@ -1,0 +1,24 @@
+name: Artifact Publish
+
+on:
+  workflow_run:
+    workflows: ["Test"]
+    types: [completed]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: ./dist
+
+      - name: Make deploy script executable
+        run: chmod +x ./dist/deploy.sh
+
+      - name: Run deploy script
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: ./dist/deploy.sh

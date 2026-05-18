@@ -2,6 +2,29 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.2.0] - 2026-05-17
+
+### Added
+- OIDC trust policy analyzer: detects wildcard org subjects, missing sub/aud
+  conditions, and insufficient branch scoping in GitHub Actions OIDC trust
+  policies
+- Script injection detector: finds direct interpolation of attacker-controlled
+  GitHub context values (PR titles, issue bodies, branch names) into run blocks
+- Artifact poisoning detector: identifies workflow_run workflows that download
+  and execute potentially untrusted artifacts from fork PR workflows
+- AI agent prompt injection surface detector: identifies Claude Code, Copilot
+  Agent, and other AI coding agent workflows that may be vulnerable to prompt
+  injection via PR/issue content
+- Short SHA detection: distinguishes partial (7-character) SHAs from full
+  immutable 40-character commit SHAs in action references
+- SARIF rules AS007-AS012 for all new finding types
+- All new finding types included in terminal, JSON, SARIF, and PR comment
+  markdown output
+
+### Changed
+- ScanResult now includes oidc_trust_findings, script_injection_findings,
+  artifact_poisoning_findings, and ai_agent_injection_findings.
+
 ## [0.1.1] - 2026-05-17
 
 ### Changed

@@ -12,11 +12,15 @@ from rich.table import Table
 from rich.text import Text
 
 from actionscope.models import (
+    AiAgentInjectionFinding,
+    ArtifactPoisoningFinding,
     AwsCredentialSource,
     GitHubTokenPermission,
+    OidcTrustFinding,
     PolicyFinding,
     RiskLevel,
     ScanResult,
+    ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
     get_unmatched_findings,
@@ -167,6 +171,10 @@ def _render_scan_result_impl(
     for binding in result.bindings:
         _render_binding(c, binding)
 
+    _render_oidc_trust_section(c, result.oidc_trust_findings)
+    _render_script_injection_section(c, result.script_injection_findings)
+    _render_artifact_poisoning_section(c, result.artifact_poisoning_findings)
+    _render_ai_agent_section(c, result.ai_agent_injection_findings)
     _render_unpinned_actions_section(c, result.unpinned_actions)
 
     _render_github_token_section(c, result)
@@ -301,6 +309,105 @@ def _render_github_token_section(c: Console, result: ScanResult) -> None:
         )
 
 
+def _render_oidc_trust_section(
+    c: Console,
+    findings: list[OidcTrustFinding],
+) -> None:
+    if not findings:
+        return
+
+    c.print()
+    c.rule(f"[bold]OIDC Trust Policy Issues ({len(findings)} found)[/]", style="dim")
+    c.print()
+    for finding in findings:
+        icon = RISK_ICONS[finding.risk_level]
+        c.print(
+            f"{icon} [bold]{finding.risk_level.name}:[/] "
+            f"{finding.issue_description}"
+        )
+        c.print(
+            f"   Role: {finding.role_name} "
+            f"([dim]{_workflow_basename(finding.source_file)}[/])"
+        )
+        c.print(f"   Condition: {finding.evidence}")
+        c.print(f"   Risk: {finding.issue_description}")
+        c.print(f"   Fix: {finding.recommendation}")
+
+
+def _render_script_injection_section(
+    c: Console,
+    findings: list[ScriptInjectionFinding],
+) -> None:
+    if not findings:
+        return
+
+    c.print()
+    c.rule(f"[bold]Script Injection Risks ({len(findings)} found)[/]", style="dim")
+    c.print()
+    for finding in findings:
+        icon = RISK_ICONS[finding.risk_level]
+        wf = _workflow_basename(finding.workflow_file)
+        c.print(
+            f"{icon} [bold]{finding.risk_level.name}:[/] Direct script injection "
+            f"in {wf} → {finding.job_name} → {finding.step_name}"
+        )
+        c.print(f"   Expression: {finding.untrusted_expression}")
+        c.print("   Method: Direct interpolation in run: block")
+        c.print(f"   Risk: {finding.description}")
+        c.print(f"   Fix: {finding.recommendation}")
+
+
+def _render_artifact_poisoning_section(
+    c: Console,
+    findings: list[ArtifactPoisoningFinding],
+) -> None:
+    if not findings:
+        return
+
+    c.print()
+    c.rule(f"[bold]Artifact Poisoning Risks ({len(findings)} found)[/]", style="dim")
+    c.print()
+    for finding in findings:
+        icon = RISK_ICONS[finding.risk_level]
+        wf = _workflow_basename(finding.workflow_file)
+        c.print(
+            f"{icon} [bold]{finding.risk_level.name}:[/] workflow_run artifact "
+            f"execution in {wf} → {finding.job_name}"
+        )
+        c.print(f"   Risk: {finding.description}")
+        c.print(f"   Fix: {finding.recommendation}")
+
+
+def _render_ai_agent_section(
+    c: Console,
+    findings: list[AiAgentInjectionFinding],
+) -> None:
+    if not findings:
+        return
+
+    c.print()
+    c.rule(
+        f"[bold]AI Agent Prompt Injection Surfaces ({len(findings)} found)[/]",
+        style="dim",
+    )
+    c.print()
+    for finding in findings:
+        icon = RISK_ICONS[finding.risk_level]
+        wf = _workflow_basename(finding.workflow_file)
+        c.print(
+            f"{icon} [bold]{finding.risk_level.name}:[/] AI Agent Prompt "
+            f"Injection Surface — {wf} → {finding.step_name}"
+        )
+        c.print(
+            f"   {finding.agent_type} is configured with "
+            f"{_agent_permission_label(finding)} "
+            f"and trigger risk={finding.untrusted_trigger}."
+        )
+        if finding.untrusted_inputs:
+            c.print(f"   Inputs: {', '.join(finding.untrusted_inputs)}")
+        c.print(f"   Fix: {finding.recommendation}")
+
+
 def _render_unpinned_actions_section(
     c: Console,
     findings: list[UnpinnedActionFinding],
@@ -318,6 +425,7 @@ def _render_unpinned_actions_section(
         pin_label = {
             "tag": "version tag",
             "branch": "branch",
+            "short_sha": "Short SHA",
             "unresolvable": "missing ref",
         }.get(finding.pin_type, finding.pin_type)
         c.print(
@@ -325,6 +433,11 @@ def _render_unpinned_actions_section(
             f"[dim]→[/] {finding.step_name}"
         )
         c.print(f"   {finding.uses} ({pin_label} — not SHA-pinned)")
+        if finding.pin_type == "short_sha":
+            c.print(
+                "   [yellow]A short SHA is still mutable or ambiguous. Only a "
+                "full 40-character commit SHA is immutable.[/]"
+            )
 
     remaining = len(findings) - len(displayed)
     if remaining > 0:
@@ -339,6 +452,12 @@ def _render_unpinned_actions_section(
         "[dim]💡  Use https://github.com/mheap/pin-github-action to automate "
         "pinning.[/]"
     )
+
+
+def _agent_permission_label(finding: AiAgentInjectionFinding) -> str:
+    if finding.has_write_permissions:
+        return "write permissions"
+    return "limited permissions"
 
 
 def _render_unmatched_policies(c: Console, findings: list[PolicyFinding]) -> None:
@@ -389,12 +508,23 @@ def _render_summary_panel(c: Console, result: ScanResult) -> None:
     if counts[RiskLevel.INFO]:
         risk_line += f" | Info: {counts[RiskLevel.INFO]}"
 
+    workflow_injection_count = (
+        len(result.script_injection_findings)
+        + len(result.artifact_poisoning_findings)
+        + len(result.ai_agent_injection_findings)
+    )
+
     summary_lines = Text.assemble(
         ("Summary\n", "bold"),
         (f"Workflows scanned: {result.workflow_count}\n", ""),
         (f"AWS credential sources: {len(result.credential_sources)}\n", ""),
         (f"Policies analyzed: {policies_analyzed}\n", ""),
         (f"Policies not found: {policies_not_found}\n", ""),
+        (f"OIDC trust issues: {len(result.oidc_trust_findings)}\n", ""),
+        (
+            f"Workflow injection risks: {workflow_injection_count}\n",
+            "",
+        ),
         ("\n", ""),
         (risk_line, ""),
     )
@@ -502,5 +632,20 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                     f"   {finding.get('uses', '')} "
                     f"({finding.get('pin_type', '')} — not SHA-pinned)"
                 )
+        for key, title in (
+            ("oidc_trust_findings", "OIDC Trust Policy Issues"),
+            ("script_injection_findings", "Script Injection Risks"),
+            ("artifact_poisoning_findings", "Artifact Poisoning Risks"),
+            ("ai_agent_injection_findings", "AI Agent Prompt Injection Surfaces"),
+        ):
+            items = data.get(key, [])
+            if items:
+                c.print()
+                c.rule(f"[bold]{title} ({len(items)} found)[/]")
+                for item in items[:10]:
+                    c.print(
+                        f"{str(item.get('risk_level', 'info')).upper()}: "
+                        f"{item.get('issue_description') or item.get('description')}"
+                    )
     except Exception as exc:
         render_error(f"Could not render ActionScope JSON report: {exc}", console)

@@ -6,12 +6,16 @@ import json
 from pathlib import Path
 
 from actionscope.models import (
+    AiAgentInjectionFinding,
+    ArtifactPoisoningFinding,
     AwsCredentialSource,
     GitHubTokenPermission,
     IamAction,
+    OidcTrustFinding,
     PolicyFinding,
     RiskLevel,
     ScanResult,
+    ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
 )
@@ -160,6 +164,12 @@ def test_all_rule_ids_are_present_in_rules_list() -> None:
         "AS004",
         "AS005",
         "AS006",
+        "AS007",
+        "AS008",
+        "AS009",
+        "AS010",
+        "AS011",
+        "AS012",
     }
 
 
@@ -202,3 +212,69 @@ def test_github_token_permission_produces_as004_result() -> None:
     data = _sarif_data(result)
 
     assert "AS004" in {result["ruleId"] for result in _results(data)}
+
+
+def test_v020_detector_findings_produce_sarif_results() -> None:
+    result = ScanResult(
+        oidc_trust_findings=[
+            OidcTrustFinding(
+                source_file="terraform/oidc.tf",
+                role_name="deploy",
+                role_arn=None,
+                issue_id="missing_sub",
+                issue_description="Missing sub",
+                risk_level=RiskLevel.CRITICAL,
+                evidence="{}",
+                recommendation="Add sub",
+            )
+        ],
+        script_injection_findings=[
+            ScriptInjectionFinding(
+                workflow_file=".github/workflows/ci.yml",
+                job_name="test",
+                step_name="Run",
+                run_snippet="echo",
+                untrusted_expression="${{ github.head_ref }}",
+                injection_method="direct",
+                risk_level=RiskLevel.HIGH,
+                description="Direct injection",
+                recommendation="Use env",
+            )
+        ],
+        artifact_poisoning_findings=[
+            ArtifactPoisoningFinding(
+                workflow_file=".github/workflows/release.yml",
+                job_name="publish",
+                risk_level=RiskLevel.HIGH,
+                has_workflow_run_trigger=True,
+                downloads_artifacts=True,
+                executes_artifacts=True,
+                has_secret_access=False,
+                description="Artifact execution",
+                recommendation="Verify artifact",
+            )
+        ],
+        ai_agent_injection_findings=[
+            AiAgentInjectionFinding(
+                workflow_file=".github/workflows/ai.yml",
+                job_name="review",
+                step_name="Claude",
+                agent_type="claude_code",
+                agent_action="anthropics/claude-code-action@v1",
+                has_api_key_secret=True,
+                has_aws_secret_access=True,
+                has_write_permissions=True,
+                untrusted_trigger=True,
+                untrusted_inputs=["github.event.pull_request.body"],
+                risk_level=RiskLevel.CRITICAL,
+                description="AI risk",
+                recommendation="Gate execution",
+            )
+        ],
+    )
+
+    data = _sarif_data(result)
+
+    assert {"AS008", "AS009", "AS010", "AS012"} <= {
+        result["ruleId"] for result in _results(data)
+    }

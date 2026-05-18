@@ -103,6 +103,69 @@ class UnpinnedActionFinding:
 
 
 @dataclass
+class OidcTrustFinding:
+    """A GitHub Actions OIDC trust-policy misconfiguration."""
+
+    source_file: str
+    role_name: str
+    role_arn: Optional[str]
+    issue_id: str
+    issue_description: str
+    risk_level: RiskLevel
+    evidence: str
+    recommendation: str
+
+
+@dataclass
+class ScriptInjectionFinding:
+    """Direct interpolation of untrusted GitHub context into a run block."""
+
+    workflow_file: str
+    job_name: str
+    step_name: str
+    run_snippet: str
+    untrusted_expression: str
+    injection_method: str
+    risk_level: RiskLevel
+    description: str
+    recommendation: str
+
+
+@dataclass
+class ArtifactPoisoningFinding:
+    """A workflow_run artifact download/execution pattern."""
+
+    workflow_file: str
+    job_name: str
+    risk_level: RiskLevel
+    has_workflow_run_trigger: bool
+    downloads_artifacts: bool
+    executes_artifacts: bool
+    has_secret_access: bool
+    description: str
+    recommendation: str
+
+
+@dataclass
+class AiAgentInjectionFinding:
+    """AI coding agent prompt-injection exposure in GitHub Actions."""
+
+    workflow_file: str
+    job_name: str
+    step_name: str
+    agent_type: str
+    agent_action: str
+    has_api_key_secret: bool
+    has_aws_secret_access: bool
+    has_write_permissions: bool
+    untrusted_trigger: bool
+    untrusted_inputs: list = field(default_factory=list)
+    risk_level: RiskLevel = RiskLevel.INFO
+    description: str = ""
+    recommendation: str = ""
+
+
+@dataclass
 class PolicyFinding:
     """IAM policy analysis results from a supported policy source."""
 
@@ -143,6 +206,16 @@ class ScanResult:
         default_factory=list
     )
     unpinned_actions: list[UnpinnedActionFinding] = field(default_factory=list)
+    oidc_trust_findings: list[OidcTrustFinding] = field(default_factory=list)
+    script_injection_findings: list[ScriptInjectionFinding] = field(
+        default_factory=list
+    )
+    artifact_poisoning_findings: list[ArtifactPoisoningFinding] = field(
+        default_factory=list
+    )
+    ai_agent_injection_findings: list[AiAgentInjectionFinding] = field(
+        default_factory=list
+    )
     policy_findings: list[PolicyFinding] = field(default_factory=list)
     bindings: list[WorkflowCredentialBinding] = field(default_factory=list)
     overall_risk: RiskLevel = RiskLevel.INFO
@@ -158,7 +231,20 @@ class ScanResult:
         token_risks = [
             permission.risk_level for permission in self.github_token_permissions
         ]
-        self.overall_risk = max(binding_risks + token_risks, default=RiskLevel.INFO)
+        detector_risks = [
+            finding.risk_level
+            for findings in (
+                self.oidc_trust_findings,
+                self.script_injection_findings,
+                self.artifact_poisoning_findings,
+                self.ai_agent_injection_findings,
+            )
+            for finding in findings
+        ]
+        self.overall_risk = max(
+            binding_risks + token_risks + detector_risks,
+            default=RiskLevel.INFO,
+        )
 
     def has_critical_findings(self) -> bool:
         """Return True when any finding reaches critical severity."""
@@ -189,6 +275,17 @@ class ScanResult:
             for permission in self.github_token_permissions
             if permission.risk_level == level
         )
+        for detector_findings in (
+            self.oidc_trust_findings,
+            self.script_injection_findings,
+            self.artifact_poisoning_findings,
+            self.ai_agent_injection_findings,
+        ):
+            findings.extend(
+                finding
+                for finding in detector_findings
+                if finding.risk_level == level
+            )
         return findings
 
 
