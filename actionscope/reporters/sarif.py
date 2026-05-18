@@ -309,10 +309,11 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                     f"External action '{finding.get('uses')}' is not pinned "
                     "to a full 40-character commit SHA. "
                     + (
-                        "Short SHA-like refs are still mutable or ambiguous."
+                        "Short SHA-like refs are still mutable or ambiguous. "
                         if short_sha
-                        else ""
+                        else "Version tags and branches are mutable. "
                     )
+                    + "Pin to a full SHA to reduce supply-chain risk."
                 ),
                 level="warning",
                 security_severity="4.0",

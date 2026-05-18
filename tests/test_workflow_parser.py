@@ -300,6 +300,10 @@ def test_classify_action_ref_returns_branch_for_main() -> None:
     assert classify_action_ref("actions/checkout@main") == "branch"
 
 
+def test_classify_action_ref_returns_branch_for_v_prefixed_branch_name() -> None:
+    assert classify_action_ref("actions/checkout@very-stable") == "branch"
+
+
 def test_classify_action_ref_returns_short_sha_for_7_char_hex() -> None:
     assert classify_action_ref("actions/checkout@a5b3abf") == "short_sha"
 

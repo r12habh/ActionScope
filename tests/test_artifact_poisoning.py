@@ -105,3 +105,10 @@ def test_scan_for_artifact_poisoning_works_on_fixture_dir(tmp_path: Path) -> Non
 
     assert errors == []
     assert len(findings) == 1
+
+
+def test_non_mapping_jobs_do_not_crash_artifact_scan() -> None:
+    data = {"on": {"workflow_run": {}}, "jobs": None}
+
+    assert downloads_artifact_in_workflow(data) is False
+    assert analyze_artifact_poisoning(data, "artifact.yml") == []

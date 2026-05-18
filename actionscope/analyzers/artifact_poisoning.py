@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import yaml
 
@@ -175,7 +175,7 @@ def _is_download_artifact_step(step: dict) -> bool:
     )
 
 
-def _iter_steps(workflow_data: dict) -> Any:
+def _iter_steps(workflow_data: dict) -> Iterator[tuple[str, dict]]:
     jobs = workflow_data.get("jobs") or {}
     if not isinstance(jobs, dict):
         return

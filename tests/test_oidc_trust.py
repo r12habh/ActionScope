@@ -247,3 +247,62 @@ data "aws_iam_policy_document" "trust" {
     findings = analyze_terraform_oidc_trust(tf_data, "iam.tf")
 
     assert [finding.issue_id for finding in findings] == ["wildcard_repo"]
+
+
+def test_policy_document_detects_later_github_federated_principal() -> None:
+    tf_data = hcl2.loads(
+        """
+data "aws_iam_policy_document" "trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type = "AWS"
+      identifiers = ["arn:aws:iam::123456789012:root"]
+    }
+    principals {
+      type = "Federated"
+      identifiers = [
+        "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      ]
+    }
+    condition {
+      test = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = ["repo:acme-corp/*"]
+    }
+    condition {
+      test = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values = ["sts.amazonaws.com"]
+    }
+  }
+}
+"""
+    )
+
+    findings = analyze_terraform_oidc_trust(tf_data, "iam.tf")
+
+    assert [finding.issue_id for finding in findings] == ["wildcard_repo"]
+
+
+def test_terraform_without_resource_section_does_not_crash() -> None:
+    tf_data = hcl2.loads(
+        """
+data "aws_iam_policy_document" "trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type = "Federated"
+      identifiers = ["token.actions.githubusercontent.com"]
+    }
+  }
+}
+"""
+    )
+
+    findings = analyze_terraform_oidc_trust(tf_data, "iam.tf")
+
+    assert [finding.issue_id for finding in findings] == [
+        "missing_sub",
+        "missing_aud",
+    ]

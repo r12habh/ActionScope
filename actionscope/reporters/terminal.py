@@ -330,7 +330,7 @@ def _render_oidc_trust_section(
             f"([dim]{_workflow_basename(finding.source_file)}[/])"
         )
         c.print(f"   Condition: {finding.evidence}")
-        c.print(f"   Risk: {finding.issue_description}")
+        c.print(f"   Risk: {finding.risk_level.name}")
         c.print(f"   Fix: {finding.recommendation}")
 
 

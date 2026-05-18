@@ -124,6 +124,12 @@ def find_untrusted_inputs_in_step(step: dict) -> list[str]:
                 expression = match.group(0)
                 if expression not in found:
                     found.append(expression)
+    run_block = step.get("run")
+    if isinstance(run_block, str):
+        for match in _UNTRUSTED_RE.finditer(run_block):
+            expression = match.group(0)
+            if expression not in found:
+                found.append(expression)
     return found
 
 
@@ -252,7 +258,7 @@ def _name_looks_like_ai_agent(step_name: str) -> bool:
     lowered = step_name.lower()
     return any(
         term in lowered
-        for term in ("claude", "copilot", "gemini", "opencode", "cline")
+        for term in ("claude", "copilot", "gemini", "opencode", "cline", "continue")
     )
 
 

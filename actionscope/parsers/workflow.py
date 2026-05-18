@@ -214,7 +214,10 @@ def classify_action_ref(uses_ref: str) -> str:
         return "sha"
     if re.fullmatch(r"[0-9a-f]{7,39}", ref, re.IGNORECASE):
         return "short_sha"
-    if ref.startswith("v") or re.search(r"\d+\.\d+", ref):
+    if re.fullmatch(
+        r"(?:v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?|v\d+(?:[-+][0-9A-Za-z.-]+)?)",
+        ref,
+    ):
         return "tag"
     return "branch"
 

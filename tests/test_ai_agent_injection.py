@@ -75,6 +75,12 @@ def test_find_untrusted_inputs_detects_pr_body_in_with_block() -> None:
     assert find_untrusted_inputs_in_step(step) == ["github.event.pull_request.body"]
 
 
+def test_find_untrusted_inputs_detects_pr_body_in_run_block() -> None:
+    step = {"run": "echo ${{ github.event.pull_request.body }}"}
+
+    assert find_untrusted_inputs_in_step(step) == ["github.event.pull_request.body"]
+
+
 def test_classify_agent_returns_claude_code_for_anthropics_action() -> None:
     assert classify_agent("anthropics/claude-code-action@v1") == "claude_code"
 
@@ -157,3 +163,17 @@ def test_cross_correlation_with_aws_credentials_detected() -> None:
     )[0]
 
     assert finding.has_aws_secret_access is True
+
+
+def test_detect_ai_agent_steps_finds_continue_by_step_name() -> None:
+    data = {
+        "jobs": {
+            "ai": {
+                "steps": [
+                    {"name": "Run Continue review", "run": "continue review"}
+                ]
+            }
+        }
+    }
+
+    assert detect_ai_agent_steps(data)

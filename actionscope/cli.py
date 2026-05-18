@@ -170,7 +170,11 @@ def scan(
 
     # Step 5: Handle a truly empty scan. Repos can have useful non-credential
     # findings such as OIDC trust-policy issues or script injection risks.
-    if not credential_sources and not _has_reportable_findings(result):
+    if (
+        not credential_sources
+        and not _has_reportable_findings(result)
+        and not result.errors
+    ):
         if output_format == "terminal":
             if not quiet:
                 render_no_aws_found(console)
@@ -303,6 +307,7 @@ def _has_reportable_findings(result: ScanResult) -> bool:
             result.script_injection_findings,
             result.artifact_poisoning_findings,
             result.ai_agent_injection_findings,
+            result.errors,
         )
     )
 

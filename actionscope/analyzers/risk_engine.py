@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -312,7 +313,7 @@ def _safe_scan_oidc(repo_path: str) -> tuple[list[OidcTrustFinding], list[str]]:
     try:
         return scan_oidc_trust_policies(repo_path)
     except Exception as exc:
-        return [], [f"Could not scan OIDC trust policies: {exc}"]
+        return [], [_scan_error("OIDC trust policy scan", exc)]
 
 
 def _safe_scan_script_injection(
@@ -321,7 +322,7 @@ def _safe_scan_script_injection(
     try:
         return scan_workflows_for_injection(repo_path)
     except Exception as exc:
-        return [], [f"Could not scan script injection risks: {exc}"]
+        return [], [_scan_error("script injection scan", exc)]
 
 
 def _safe_scan_artifact_poisoning(
@@ -330,7 +331,7 @@ def _safe_scan_artifact_poisoning(
     try:
         return scan_for_artifact_poisoning(repo_path)
     except Exception as exc:
-        return [], [f"Could not scan artifact poisoning risks: {exc}"]
+        return [], [_scan_error("artifact poisoning scan", exc)]
 
 
 def _safe_scan_ai_agent_injection(
@@ -345,4 +346,11 @@ def _safe_scan_ai_agent_injection(
             github_token_perms=github_token_perms,
         )
     except Exception as exc:
-        return [], [f"Could not scan AI agent injection risks: {exc}"]
+        return [], [_scan_error("AI agent injection scan", exc)]
+
+
+def _scan_error(scan_name: str, exc: Exception) -> str:
+    return (
+        f"Scan incomplete: {scan_name} failed with "
+        f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+    )

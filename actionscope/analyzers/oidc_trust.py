@@ -11,7 +11,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import hcl2
 
@@ -128,7 +128,9 @@ def analyze_terraform_oidc_trust(
     """Find and analyze GitHub OIDC trust policies in parsed Terraform data."""
     findings: list[OidcTrustFinding] = []
 
-    for resource_type, resource_name, body in _iter_blocks(tf_data.get("resource")):
+    for resource_type, resource_name, body in _iter_blocks(
+        tf_data.get("resource") or []
+    ):
         if resource_type != "aws_iam_role":
             continue
         role_name = _role_name(resource_name, body)
@@ -137,7 +139,7 @@ def analyze_terraform_oidc_trust(
             continue
         findings.extend(analyze_json_oidc_trust(policy, source_file, role_name))
 
-    for data_type, data_name, body in _iter_blocks(tf_data.get("data")):
+    for data_type, data_name, body in _iter_blocks(tf_data.get("data") or []):
         if data_type != "aws_iam_policy_document":
             continue
         policy = _policy_from_terraform_document(body)
@@ -186,7 +188,7 @@ def scan_oidc_trust_policies(
         if isinstance(data, dict):
             findings.extend(analyze_terraform_oidc_trust(data, str(tf_file.resolve())))
 
-    for json_file in sorted(repo.rglob("*.json"))[:200]:
+    for json_file in sorted(repo.rglob("*.json")):
         try:
             with json_file.open("r", encoding="utf-8") as handle:
                 data = json.load(handle)
@@ -278,7 +280,7 @@ def _is_non_protected_branch_without_environment(sub_value: str) -> bool:
     return match.group(1) not in {"main", "master"}
 
 
-def _iter_blocks(blocks: Any) -> Any:
+def _iter_blocks(blocks: Any) -> Iterator[tuple[str, str, dict]]:
     if blocks is None:
         return
     blocks_list = [blocks] if isinstance(blocks, dict) else blocks
@@ -382,19 +384,41 @@ def _policy_from_terraform_document(body: dict) -> dict:
             "Effect": statement.get("effect", "Allow"),
             "Action": statement.get("actions") or statement.get("action"),
         }
-        principals = statement.get("principals")
-        if isinstance(principals, list) and principals:
-            identifiers = (
-                principals[0].get("identifiers")
-                if isinstance(principals[0], dict)
-                else None
-            )
-            converted["Principal"] = {"Federated": identifiers}
+        principal = _terraform_federated_principal(statement.get("principals"))
+        if principal:
+            converted["Principal"] = principal
         condition = _terraform_conditions(statement.get("condition"))
         if condition:
             converted["Condition"] = condition
         statements.append(converted)
     return {"Version": "2012-10-17", "Statement": statements}
+
+
+def _terraform_federated_principal(raw_principals: Any) -> dict[str, Any] | None:
+    principals = raw_principals
+    if isinstance(principals, dict):
+        principals = [principals]
+    if not isinstance(principals, list):
+        return None
+
+    for principal in principals:
+        if not isinstance(principal, dict):
+            continue
+        principal_type = _clean_string(principal.get("type", ""))
+        identifiers = _normalize(principal.get("identifiers"))
+        identifiers_list = _string_values(identifiers)
+        mentions_github = GITHUB_OIDC_ISSUER in _compact(identifiers)
+        if principal_type == "Federated" or mentions_github:
+            if not identifiers_list:
+                continue
+            principal_value: Any = (
+                identifiers_list[0]
+                if len(identifiers_list) == 1
+                else identifiers_list
+            )
+            return {"Federated": principal_value}
+
+    return None
 
 
 def _terraform_conditions(raw_conditions: Any) -> dict[str, dict[str, Any]]:

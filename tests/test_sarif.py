@@ -278,3 +278,48 @@ def test_v020_detector_findings_produce_sarif_results() -> None:
     assert {"AS008", "AS009", "AS010", "AS012"} <= {
         result["ruleId"] for result in _results(data)
     }
+
+
+def test_oidc_wildcard_finding_produces_as007_result() -> None:
+    result = ScanResult(
+        oidc_trust_findings=[
+            OidcTrustFinding(
+                source_file="terraform/oidc.tf",
+                role_name="deploy",
+                role_arn=None,
+                issue_id="wildcard_repo",
+                issue_description="Wildcard subject",
+                risk_level=RiskLevel.CRITICAL,
+                evidence="repo:acme-corp/*",
+                recommendation="Scope down",
+            )
+        ],
+    )
+    data = _sarif_data(result)
+
+    assert "AS007" in {result["ruleId"] for result in _results(data)}
+
+
+def test_ai_agent_without_aws_credentials_produces_as011_result() -> None:
+    result = ScanResult(
+        ai_agent_injection_findings=[
+            AiAgentInjectionFinding(
+                workflow_file=".github/workflows/ai.yml",
+                job_name="review",
+                step_name="Claude",
+                agent_type="claude_code",
+                agent_action="anthropics/claude-code-action@v1",
+                has_api_key_secret=True,
+                has_aws_secret_access=False,
+                has_write_permissions=True,
+                untrusted_trigger=True,
+                untrusted_inputs=["github.event.pull_request.body"],
+                risk_level=RiskLevel.HIGH,
+                description="AI risk",
+                recommendation="Gate execution",
+            )
+        ],
+    )
+    data = _sarif_data(result)
+
+    assert "AS011" in {result["ruleId"] for result in _results(data)}

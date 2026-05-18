@@ -15,8 +15,8 @@ All notable changes to ActionScope are documented here.
 - AI agent prompt injection surface detector: identifies Claude Code, Copilot
   Agent, and other AI coding agent workflows that may be vulnerable to prompt
   injection via PR/issue content
-- Short SHA detection: distinguishes partial (7-character) SHAs from full
-  immutable 40-character commit SHAs in action references
+- Short SHA-like refs: distinguishes partial/short SHA-like references from
+  full immutable 40-character commit SHAs in action references
 - SARIF rules AS007-AS012 for all new finding types
 - All new finding types included in terminal, JSON, SARIF, and PR comment
   markdown output
