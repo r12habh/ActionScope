@@ -116,6 +116,9 @@ class PolicyFinding:
     has_privilege_escalation: bool = False
     overall_risk: RiskLevel = RiskLevel.INFO
     privesc_paths: list = field(default_factory=list)
+    role_name: Optional[str] = None
+    policy_name: Optional[str] = None
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -125,6 +128,8 @@ class WorkflowCredentialBinding:
     credential_source: AwsCredentialSource
     policy_finding: Optional[PolicyFinding]
     policy_source: str
+    match_confidence: str = "none"
+    match_reason: str = ""
 
 
 @dataclass

@@ -95,43 +95,76 @@ def extract_aws_credential_sources(
         if not isinstance(job_data, dict):
             continue
 
-        steps = job_data.get("steps", [])
-        if not isinstance(steps, list):
-            continue
-
         job_has_oidc = _permissions_have_id_token_write(job_data.get("permissions"))
 
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-
-            uses = step.get("uses")
-            if not _is_configure_aws_credentials_action(uses):
-                continue
-
-            with_block = step.get("with", {})
-            if not isinstance(with_block, dict):
-                with_block = {}
-
-            env_vars = extract_env_var_references(step)
-            role_arn = _optional_string(with_block.get("role-to-assume"))
-
-            credential_sources.append(
-                AwsCredentialSource(
-                    workflow_file=workflow_file,
-                    job_name=str(job_name),
-                    step_name=str(step.get("name") or uses),
-                    role_arn=role_arn,
-                    uses_access_keys=(
-                        "aws-access-key-id" in with_block
-                        or "AWS_ACCESS_KEY_ID" in env_vars
-                    ),
-                    uses_oidc=bool(role_arn and (workflow_has_oidc or job_has_oidc)),
-                    aws_region=_optional_string(with_block.get("aws-region")),
-                )
+        for step in _job_steps(job_data):
+            source = _credential_source_from_step(
+                step,
+                workflow_file,
+                str(job_name),
+                workflow_has_oidc or job_has_oidc,
             )
+            if source is not None:
+                credential_sources.append(source)
 
     return credential_sources
+
+
+def extract_delegated_credential_sources(
+    workflow_data: dict,
+    workflow_file: str,
+    repo_path: str,
+) -> tuple[list[AwsCredentialSource], list[str]]:
+    """Detect AWS credential setup delegated to local wrappers or workflows."""
+    jobs = workflow_data.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return [], []
+
+    credential_sources: list[AwsCredentialSource] = []
+    warnings: list[str] = []
+    workflow_has_oidc = _permissions_have_id_token_write(
+        workflow_data.get("permissions")
+    )
+
+    for job_name, job_data in jobs.items():
+        if not isinstance(job_data, dict):
+            continue
+
+        job_name_str = str(job_name)
+        job_has_oidc = _permissions_have_id_token_write(job_data.get("permissions"))
+        has_oidc = workflow_has_oidc or job_has_oidc
+
+        reusable = job_data.get("uses")
+        if isinstance(reusable, str) and _is_reusable_workflow_reference(reusable):
+            sources, reusable_warnings = _inspect_reusable_workflow(
+                reusable.strip(),
+                repo_path,
+                workflow_file,
+                job_name_str,
+            )
+            credential_sources.extend(sources)
+            warnings.extend(reusable_warnings)
+
+        for step in _job_steps(job_data):
+            uses = step.get("uses")
+            if not isinstance(uses, str):
+                continue
+            uses = uses.strip()
+            if not _is_local_action_reference(uses):
+                continue
+
+            sources, local_warnings = _inspect_local_composite_action(
+                uses,
+                step,
+                repo_path,
+                workflow_file,
+                job_name_str,
+                has_oidc,
+            )
+            credential_sources.extend(sources)
+            warnings.extend(local_warnings)
+
+    return credential_sources, warnings
 
 
 def extract_env_var_references(step: dict) -> dict[str, str]:
@@ -251,6 +284,13 @@ def scan_workflows(
         credential_sources.extend(
             extract_aws_credential_sources(workflow_data, workflow_file)
         )
+        delegated_sources, delegated_errors = extract_delegated_credential_sources(
+            workflow_data,
+            workflow_file,
+            repo_path,
+        )
+        credential_sources.extend(delegated_sources)
+        errors.extend(delegated_errors)
         token_permissions.extend(
             analyze_workflow_permissions(workflow_data, workflow_file)
         )
@@ -260,6 +300,225 @@ def scan_workflows(
         )
 
     return credential_sources, token_permissions, unpinned_actions, errors
+
+
+def _job_steps(job_data: dict) -> list[dict]:
+    steps = job_data.get("steps") or []
+    if not isinstance(steps, list):
+        return []
+    return [step for step in steps if isinstance(step, dict)]
+
+
+def _credential_source_from_step(
+    step: dict,
+    workflow_file: str,
+    job_name: str,
+    has_oidc_permission: bool,
+    step_name_prefix: str = "",
+) -> AwsCredentialSource | None:
+    uses = step.get("uses")
+    if not _is_configure_aws_credentials_action(uses):
+        return None
+
+    with_block = step.get("with", {})
+    if not isinstance(with_block, dict):
+        with_block = {}
+
+    env_vars = extract_env_var_references(step)
+    role_arn = _optional_string(with_block.get("role-to-assume"))
+    step_name = str(step.get("name") or uses)
+    if step_name_prefix:
+        step_name = f"{step_name_prefix} -> {step_name}"
+
+    return AwsCredentialSource(
+        workflow_file=workflow_file,
+        job_name=job_name,
+        step_name=step_name,
+        role_arn=role_arn,
+        uses_access_keys=(
+            "aws-access-key-id" in with_block or "AWS_ACCESS_KEY_ID" in env_vars
+        ),
+        uses_oidc=bool(role_arn and has_oidc_permission),
+        aws_region=_optional_string(with_block.get("aws-region")),
+    )
+
+
+def _inspect_reusable_workflow(
+    uses_ref: str,
+    repo_path: str,
+    workflow_file: str,
+    job_name: str,
+) -> tuple[list[AwsCredentialSource], list[str]]:
+    if not _is_local_reusable_workflow_reference(uses_ref):
+        return [], [
+            (
+                f"{workflow_file} job {job_name} delegates to external reusable "
+                f"workflow {uses_ref}; ActionScope cannot inspect external targets"
+            )
+        ]
+
+    target = _repo_relative_path(repo_path, uses_ref[2:])
+    if target is None:
+        return [], [
+            (
+                f"{workflow_file} job {job_name} delegates to local reusable "
+                f"workflow {uses_ref}, but the target is outside the repo"
+            )
+        ]
+    workflow_data = _parse_delegated_yaml(target)
+    if workflow_data is None:
+        return [], [
+            (
+                f"{workflow_file} job {job_name} delegates to local reusable "
+                f"workflow {uses_ref}, but ActionScope could not inspect it"
+            )
+        ]
+
+    sources = extract_aws_credential_sources(workflow_data, str(target))
+    rewritten = [
+        AwsCredentialSource(
+            workflow_file=workflow_file,
+            job_name=job_name,
+            step_name=f"Reusable workflow {uses_ref} -> {source.step_name}",
+            role_arn=source.role_arn,
+            uses_access_keys=source.uses_access_keys,
+            uses_oidc=source.uses_oidc,
+            aws_region=source.aws_region,
+        )
+        for source in sources
+    ]
+    return rewritten, []
+
+
+def _inspect_local_composite_action(
+    uses_ref: str,
+    caller_step: dict,
+    repo_path: str,
+    workflow_file: str,
+    job_name: str,
+    has_oidc_permission: bool,
+) -> tuple[list[AwsCredentialSource], list[str]]:
+    action_file = _local_action_file(repo_path, uses_ref)
+    if action_file is None:
+        return [], [
+            (
+                f"{workflow_file} job {job_name} uses local action {uses_ref}, "
+                "but ActionScope could not find action.yml"
+            )
+        ]
+
+    action_data = _parse_delegated_yaml(action_file)
+    if action_data is None:
+        return [], [
+            (
+                f"{workflow_file} job {job_name} uses local action {uses_ref}, "
+                "but ActionScope could not parse it"
+            )
+        ]
+
+    runs = action_data.get("runs") if isinstance(action_data, dict) else None
+    steps = runs.get("steps") if isinstance(runs, dict) else None
+    if not isinstance(steps, list):
+        return [], []
+
+    caller_with = caller_step.get("with", {})
+    if not isinstance(caller_with, dict):
+        caller_with = {}
+
+    sources: list[AwsCredentialSource] = []
+    for nested_step in steps:
+        if not isinstance(nested_step, dict):
+            continue
+        resolved_step = _resolve_composite_inputs(nested_step, caller_with)
+        source = _credential_source_from_step(
+            resolved_step,
+            workflow_file,
+            job_name,
+            has_oidc_permission,
+            step_name_prefix=f"Local action {uses_ref}",
+        )
+        if source is not None:
+            sources.append(source)
+
+    return sources, []
+
+
+def _resolve_composite_inputs(step: dict, caller_with: dict) -> dict:
+    resolved = dict(step)
+    with_block = resolved.get("with")
+    if isinstance(with_block, dict):
+        resolved["with"] = {
+            key: _resolve_input_expression(value, caller_with)
+            for key, value in with_block.items()
+        }
+    env_block = resolved.get("env")
+    if isinstance(env_block, dict):
+        resolved["env"] = {
+            key: _resolve_input_expression(value, caller_with)
+            for key, value in env_block.items()
+        }
+    return resolved
+
+
+def _resolve_input_expression(value: Any, caller_with: dict) -> Any:
+    if not isinstance(value, str):
+        return value
+    match = re.fullmatch(r"\s*\$\{\{\s*inputs\.([A-Za-z0-9_-]+)\s*}}\s*", value)
+    if not match:
+        return value
+    input_name = match.group(1)
+    return caller_with.get(input_name, value)
+
+
+def _local_action_file(repo_path: str, uses_ref: str) -> Path | None:
+    action_dir = _repo_relative_path(repo_path, uses_ref[2:])
+    if action_dir is None:
+        return None
+    for name in ("action.yml", "action.yaml"):
+        candidate = action_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _repo_relative_path(repo_path: str, relative_path: str) -> Path | None:
+    repo = Path(repo_path).expanduser().resolve()
+    candidate = (repo / relative_path).resolve()
+    try:
+        if not candidate.is_relative_to(repo):
+            return None
+    except ValueError:
+        return None
+    return candidate
+
+
+def _parse_delegated_yaml(path: Path) -> dict | None:
+    try:
+        with path.open("r", encoding="utf-8") as yaml_file:
+            data = yaml.load(yaml_file, Loader=GitHubWorkflowLoader)
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError, OSError) as exc:
+        _warn(f"Could not read delegated workflow/action {path}: {exc}")
+        return None
+    except yaml.YAMLError as exc:
+        _warn(f"Could not parse delegated workflow/action {path}: {exc}")
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _is_reusable_workflow_reference(uses_ref: str) -> bool:
+    if ".github/workflows/" not in uses_ref:
+        return False
+    return uses_ref.endswith((".yml", ".yaml")) or "@" in uses_ref
+
+
+def _is_local_reusable_workflow_reference(uses_ref: str) -> bool:
+    return uses_ref.startswith("./.github/workflows/")
+
+
+def _is_local_action_reference(uses_ref: str) -> bool:
+    return uses_ref.startswith("./") and not _is_local_reusable_workflow_reference(
+        uses_ref
+    )
 
 
 def _permissions_have_id_token_write(permissions: Any) -> bool:

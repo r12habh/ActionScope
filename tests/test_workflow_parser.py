@@ -6,6 +6,7 @@ from shutil import copyfile
 from actionscope.parsers.workflow import (
     classify_action_ref,
     extract_aws_credential_sources,
+    extract_delegated_credential_sources,
     extract_env_var_references,
     find_unpinned_action_uses,
     find_workflow_files,
@@ -344,3 +345,168 @@ def test_find_unpinned_action_uses_finds_v4_tags_as_unpinned() -> None:
     assert len(findings) == 1
     assert findings[0]["uses"] == "actions/checkout@v4"
     assert findings[0]["pin_type"] == "tag"
+
+
+def test_local_composite_action_wrapper_is_inspected(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    action_dir = tmp_path / ".github" / "actions" / "configure-aws"
+    workflow_dir.mkdir(parents=True)
+    action_dir.mkdir(parents=True)
+    workflow_file = workflow_dir / "deploy.yml"
+    workflow_file.write_text(
+        """
+name: Deploy
+on: push
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure through wrapper
+        uses: ./.github/actions/configure-aws
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/wrapped-role
+""",
+        encoding="utf-8",
+    )
+    (action_dir / "action.yml").write_text(
+        """
+name: Configure AWS Wrapper
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        aws-region: us-west-2
+""",
+        encoding="utf-8",
+    )
+
+    workflow_data = parse_workflow_file(str(workflow_file))
+    assert workflow_data is not None
+
+    sources, errors = extract_delegated_credential_sources(
+        workflow_data,
+        str(workflow_file),
+        str(tmp_path),
+    )
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/wrapped-role"
+    assert sources[0].uses_oidc is True
+    assert "Local action ./.github/actions/configure-aws" in sources[0].step_name
+
+
+def test_external_reusable_workflow_is_reported_as_uninspectable() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "uses": "org/repo/.github/workflows/deploy.yml@v1"
+            }
+        }
+    }
+
+    sources, errors = extract_delegated_credential_sources(
+        workflow_data,
+        "caller.yml",
+        "/repo",
+    )
+
+    assert sources == []
+    assert len(errors) == 1
+    assert "cannot inspect external targets" in errors[0]
+
+
+def test_local_reusable_workflow_is_inspected(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    caller = workflow_dir / "caller.yml"
+    reusable = workflow_dir / "deploy.yml"
+    caller.write_text(
+        """
+name: Caller
+on: push
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+""",
+        encoding="utf-8",
+    )
+    reusable.write_text(
+        """
+name: Reusable Deploy
+on: workflow_call
+permissions:
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/reusable-role
+""",
+        encoding="utf-8",
+    )
+
+    workflow_data = parse_workflow_file(str(caller))
+    assert workflow_data is not None
+
+    sources, errors = extract_delegated_credential_sources(
+        workflow_data,
+        str(caller),
+        str(tmp_path),
+    )
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].workflow_file == str(caller)
+    assert sources[0].job_name == "deploy"
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/reusable-role"
+    assert "Reusable workflow ./.github/workflows/deploy.yml" in sources[0].step_name
+
+
+def test_scan_workflows_includes_local_composite_wrapper(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    action_dir = tmp_path / ".github" / "actions" / "configure-aws"
+    workflow_dir.mkdir(parents=True)
+    action_dir.mkdir(parents=True)
+    (workflow_dir / "deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/configure-aws
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/wrapped-role
+""",
+        encoding="utf-8",
+    )
+    (action_dir / "action.yml").write_text(
+        """
+name: Configure AWS Wrapper
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+""",
+        encoding="utf-8",
+    )
+
+    sources, _, _, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/wrapped-role"
