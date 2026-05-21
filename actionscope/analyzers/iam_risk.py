@@ -38,7 +38,6 @@ ALWAYS_CRITICAL = frozenset(
         "iam:addusertogroup",
         "iam:updateloginprofile",
         "iam:setdefaultpolicyversion",
-        "glue:createdevendpoint",
         "sts:assumerole",
     }
 )
@@ -66,7 +65,6 @@ _CRITICAL_ACTIONS = {
     "iam:addusertogroup": "iam:AddUserToGroup",
     "iam:updateloginprofile": "iam:UpdateLoginProfile",
     "iam:setdefaultpolicyversion": "iam:SetDefaultPolicyVersion",
-    "glue:createdevendpoint": "glue:CreateDevEndpoint",
 }
 _DESTRUCTIVE_KEYWORDS = ("delete", "terminate", "remove", "destroy")
 

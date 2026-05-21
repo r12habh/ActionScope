@@ -145,12 +145,6 @@ def test_iam_set_default_policy_version_classified_as_critical() -> None:
     assert result.risk_level is RiskLevel.CRITICAL
 
 
-def test_glue_create_dev_endpoint_classified_as_critical() -> None:
-    result = classify_action("glue:CreateDevEndpoint")
-
-    assert result.risk_level is RiskLevel.CRITICAL
-
-
 def test_ec2_terminate_instances_classified_as_high() -> None:
     result = classify_action("ec2:TerminateInstances")
 
