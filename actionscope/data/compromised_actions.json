@@ -1,0 +1,60 @@
+{
+  "schema_version": "1",
+  "updated_at": "2026-05-21",
+  "source": "https://github.com/r12habh/ActionScope",
+  "actions": [
+    {
+      "action": "actions-cool/issues-helper",
+      "compromised_at": "2026-05-18T19:10:24Z",
+      "safe_sha": null,
+      "advisory_url": "https://www.stepsecurity.io/blog/actions-cool-issues-helper-github-action-compromised-all-tags-point-to-imposter-commit-that-exfiltrates-ci-cd-credentials",
+      "description": "All version tags redirected to imposter commit. Malicious code reads Runner.Worker process memory to exfiltrate CI/CD secrets. Exfiltration domain: t.m-kosche[.]com.",
+      "status": "compromised",
+      "affected_refs": [
+        "v3",
+        "v3.8.0",
+        "v3.7.6",
+        "v3.7.5",
+        "v3.7.4",
+        "v3.7.3",
+        "v3.7.2",
+        "v3.7.1",
+        "v3.7.0",
+        "v3.6.3",
+        "v3.6.2",
+        "v3.6.1",
+        "v3.6.0",
+        "v3.5.2",
+        "v3.5.1",
+        "v3.5.0"
+      ]
+    },
+    {
+      "action": "actions-cool/maintain-one-comment",
+      "compromised_at": "2026-05-18T19:10:24Z",
+      "safe_sha": null,
+      "advisory_url": "https://www.stepsecurity.io/blog/actions-cool-issues-helper-github-action-compromised-all-tags-point-to-imposter-commit-that-exfiltrates-ci-cd-credentials",
+      "description": "All 15 version tags redirected to imposter commit. Same exfiltration technique and domain as issues-helper. Coordinated attack.",
+      "status": "compromised",
+      "affected_refs": []
+    },
+    {
+      "action": "tj-actions/changed-files",
+      "compromised_at": "2025-03-19T00:00:00Z",
+      "safe_sha": null,
+      "advisory_url": "https://github.com/advisories/GHSA-mrrh-fwg8-r2c3",
+      "description": "All version tags redirected to malicious commit. Exfiltrated secrets via workflow logs. Affected 23,000+ repositories.",
+      "status": "historical",
+      "affected_refs": []
+    },
+    {
+      "action": "aquasecurity/trivy-action",
+      "compromised_at": "2026-03-19T00:00:00Z",
+      "safe_sha": null,
+      "advisory_url": "https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23",
+      "description": "Official trivy-action and setup-trivy GitHub Actions compromised alongside Trivy scanner binary. Injected credential-stealing malware.",
+      "status": "historical",
+      "affected_refs": []
+    }
+  ]
+}

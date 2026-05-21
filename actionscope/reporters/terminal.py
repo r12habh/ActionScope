@@ -15,6 +15,8 @@ from actionscope.models import (
     AiAgentInjectionFinding,
     ArtifactPoisoningFinding,
     AwsCredentialSource,
+    CompromisedActionFinding,
+    EnvironmentFinding,
     GitHubTokenPermission,
     OidcTrustFinding,
     PolicyFinding,
@@ -116,7 +118,11 @@ def _iam_action_risk_counts(
     return counts
 
 
-def render_scan_result(result: ScanResult, console: Optional[Console] = None) -> None:
+def render_scan_result(
+    result: ScanResult,
+    console: Optional[Console] = None,
+    delta: object | None = None,
+) -> None:
     """
     Render the complete ScanResult to the terminal.
 
@@ -133,7 +139,7 @@ def render_scan_result(result: ScanResult, console: Optional[Console] = None) ->
     Do not raise — catch all rendering errors.
     """
     try:
-        _render_scan_result_impl(result, console)
+        _render_scan_result_impl(result, console, delta=delta)
     except Exception as exc:
         render_error(f"Could not render ActionScope report: {exc}", console)
 
@@ -141,8 +147,10 @@ def render_scan_result(result: ScanResult, console: Optional[Console] = None) ->
 def _render_scan_result_impl(
     result: ScanResult,
     console: Optional[Console] = None,
+    delta: object | None = None,
 ) -> None:
     c = console if console is not None else Console()
+    delta_lines = _delta_header_lines(delta)
 
     header_body = Text.assemble(
         ("ActionScope — Blast Radius Report\n", "bold"),
@@ -157,6 +165,7 @@ def _render_scan_result_impl(
             f"{RISK_ICONS[result.overall_risk]} {result.overall_risk.name}",
             RISK_COLORS[result.overall_risk],
         ),
+        *delta_lines,
     )
     c.print()
     c.print(
@@ -168,21 +177,25 @@ def _render_scan_result_impl(
     )
     c.print()
 
+    _render_compromised_actions_section(c, result.compromised_action_findings)
+
     for binding in result.bindings:
         _render_binding(c, binding)
 
     _render_oidc_trust_section(c, result.oidc_trust_findings)
+    _render_environment_section(c, result.environment_findings)
     _render_script_injection_section(c, result.script_injection_findings)
     _render_artifact_poisoning_section(c, result.artifact_poisoning_findings)
     _render_ai_agent_section(c, result.ai_agent_injection_findings)
     _render_unpinned_actions_section(c, result.unpinned_actions)
+    _render_pin_suggestions_section(c, result.pin_suggestions)
 
     _render_github_token_section(c, result)
 
     unmatched = get_unmatched_findings(result.bindings, result.policy_findings)
     _render_unmatched_policies(c, unmatched)
 
-    _render_summary_panel(c, result)
+    _render_summary_panel(c, result, delta=delta)
 
     if result.overall_risk in (RiskLevel.HIGH, RiskLevel.CRITICAL):
         c.print()
@@ -309,6 +322,34 @@ def _render_github_token_section(c: Console, result: ScanResult) -> None:
         )
 
 
+def _render_compromised_actions_section(
+    c: Console,
+    findings: list[CompromisedActionFinding],
+) -> None:
+    if not findings:
+        return
+
+    c.print()
+    c.rule(
+        f"[bold red]⛔ KNOWN COMPROMISED ACTIONS ({len(findings)} found)[/]",
+        style="red",
+    )
+    c.print()
+    for finding in findings:
+        wf = _workflow_basename(finding.workflow_file)
+        c.print(f"[bold red]⛔ {finding.risk_level.name}: {finding.uses_ref}[/]")
+        c.print(f"   Workflow: {wf} → {finding.job_name} → {finding.step_name}")
+        c.print(
+            f"   Status: Compromised {finding.compromise_date} — documented "
+            "supply-chain compromise"
+        )
+        c.print(
+            "   Impact: Mutable tags may run credential-stealing code in this job"
+        )
+        c.print("   Fix: Remove this action OR pin to a verified pre-compromise SHA")
+        c.print(f"   Advisory: {finding.advisory_url}")
+
+
 def _render_oidc_trust_section(
     c: Console,
     findings: list[OidcTrustFinding],
@@ -331,6 +372,31 @@ def _render_oidc_trust_section(
         )
         c.print(f"   Condition: {finding.evidence}")
         c.print(f"   Risk: {finding.risk_level.name}")
+        c.print(f"   Fix: {finding.recommendation}")
+
+
+def _render_environment_section(
+    c: Console,
+    findings: list[EnvironmentFinding],
+) -> None:
+    if not findings:
+        return
+
+    c.print()
+    c.rule(f"[bold]GitHub Environment Issues ({len(findings)} found)[/]", style="dim")
+    c.print()
+    for finding in findings:
+        icon = RISK_ICONS[finding.risk_level]
+        wf = _workflow_basename(finding.workflow_file)
+        c.print(
+            f"{icon} [bold]{finding.risk_level.name}:[/] {wf} → "
+            f"{finding.job_name} — {finding.finding_type.replace('_', ' ')}"
+        )
+        if finding.role_arn:
+            c.print(f"   AWS Role: {finding.role_arn}")
+        if finding.environment_name:
+            c.print(f"   Environment: {finding.environment_name}")
+        c.print(f"   Risk: {finding.description}")
         c.print(f"   Fix: {finding.recommendation}")
 
 
@@ -454,6 +520,35 @@ def _render_unpinned_actions_section(
     )
 
 
+def _render_pin_suggestions_section(c: Console, suggestions: list) -> None:
+    if not suggestions:
+        return
+
+    c.print()
+    c.rule("[bold]Pin Suggestions (resolved via GitHub API)[/]", style="dim")
+    c.print()
+    for pin in suggestions:
+        original = _pin_value(pin, "original_ref")
+        pinned = _pin_value(pin, "pinned_ref")
+        error = _pin_value(pin, "error")
+        c.print(f"  {original}")
+        if error:
+            c.print(f"  [yellow]→ unresolved: {error}[/]")
+        else:
+            c.print(f"  [green]→ {pinned}[/]")
+        c.print()
+    c.print(
+        "[dim]SHA shown is current as of scan time. Verify with git ls-remote "
+        "before committing the replacement.[/]"
+    )
+
+
+def _pin_value(pin: object, key: str) -> object:
+    if isinstance(pin, dict):
+        return pin.get(key)
+    return getattr(pin, key, None)
+
+
 def _agent_permission_label(finding: AiAgentInjectionFinding) -> str:
     if finding.has_write_permissions:
         return "write permissions"
@@ -492,7 +587,11 @@ def _unmatched_summary(finding: PolicyFinding) -> str:
     return "policy analyzed"
 
 
-def _render_summary_panel(c: Console, result: ScanResult) -> None:
+def _render_summary_panel(
+    c: Console,
+    result: ScanResult,
+    delta: object | None = None,
+) -> None:
     policies_analyzed = len(result.policy_findings)
     policies_not_found = sum(
         1 for b in result.bindings if b.policy_source == "not_found"
@@ -522,15 +621,54 @@ def _render_summary_panel(c: Console, result: ScanResult) -> None:
         (f"Policies not found: {policies_not_found}\n", ""),
         (f"OIDC trust issues: {len(result.oidc_trust_findings)}\n", ""),
         (
+            f"Known-compromised actions: "
+            f"{len(result.compromised_action_findings)}\n",
+            "",
+        ),
+        (f"Environment issues: {len(result.environment_findings)}\n", ""),
+        (
             f"Workflow injection risks: {workflow_injection_count}\n",
             "",
         ),
         ("\n", ""),
         (risk_line, ""),
     )
+    if result.compromised_action_findings:
+        summary_lines.append(
+            "\n⛔ IMMEDIATE ACTION REQUIRED: "
+            f"{len(result.compromised_action_findings)} workflow(s) use "
+            "known-compromised actions.",
+            style="bold red",
+        )
+    if delta is not None and getattr(delta, "new_compromised_actions", []):
+        summary_lines.append(
+            "\n⛔ NEW: "
+            f"{len(getattr(delta, 'new_compromised_actions', []))} "
+            "newly-known-compromised action(s) detected since last scan.",
+            style="bold red",
+        )
 
     c.print()
     c.print(Panel(summary_lines, box=box.ROUNDED, padding=(0, 2)))
+
+
+def _delta_header_lines(delta: object | None) -> tuple:
+    if delta is None:
+        return tuple()
+    if not getattr(delta, "risk_changed", False):
+        return tuple()
+    previous = str(getattr(delta, "previous_overall_risk", "unknown")).upper()
+    current = str(getattr(delta, "current_overall_risk", "unknown")).upper()
+    if getattr(delta, "risk_increased", False):
+        direction = "⬆️  (risk increased)"
+        style = "bold red"
+    elif getattr(delta, "risk_decreased", False):
+        direction = "⬇️  (risk decreased — good)"
+        style = "green"
+    else:
+        direction = ""
+        style = ""
+    return (("\n", ""), (f"Risk Change: {previous} → {current} {direction}", style))
 
 
 def render_no_aws_found(console: Optional[Console] = None) -> None:
@@ -589,6 +727,20 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
         )
         c.print(Panel(body, box=box.ROUNDED, padding=(0, 2)))
 
+        compromised = data.get("compromised_action_findings", [])
+        if compromised:
+            c.print()
+            c.rule(
+                f"[bold red]⛔ KNOWN COMPROMISED ACTIONS "
+                f"({len(compromised)} found)[/]"
+            )
+            for finding in compromised:
+                c.print(
+                    f"⛔ {finding.get('risk_level', 'critical').upper()}: "
+                    f"{finding.get('uses_ref', '')}"
+                )
+                c.print(f"   Advisory: {finding.get('advisory_url', '')}")
+
         findings = data.get("findings", [])
         for finding in findings:
             c.print()
@@ -632,8 +784,19 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                     f"   {finding.get('uses', '')} "
                     f"({finding.get('pin_type', '')} — not SHA-pinned)"
                 )
+        pin_suggestions = data.get("pin_suggestions", [])
+        if pin_suggestions:
+            c.print()
+            c.rule("[bold]Pin Suggestions (resolved via GitHub API)[/]")
+            for pin in pin_suggestions:
+                c.print(f"  {pin.get('original_ref', '')}")
+                if pin.get("error"):
+                    c.print(f"  → unresolved: {pin.get('error')}")
+                else:
+                    c.print(f"  → {pin.get('pinned_ref', '')}")
         for key, title in (
             ("oidc_trust_findings", "OIDC Trust Policy Issues"),
+            ("environment_findings", "GitHub Environment Issues"),
             ("script_injection_findings", "Script Injection Risks"),
             ("artifact_poisoning_findings", "Artifact Poisoning Risks"),
             ("ai_agent_injection_findings", "AI Agent Prompt Injection Surfaces"),

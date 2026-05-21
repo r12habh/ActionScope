@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from enum import Enum
 from typing import Any
 
@@ -109,6 +109,9 @@ def _summary_dict(result: ScanResult) -> dict[str, Any]:
         "script_injection_risks": len(result.script_injection_findings),
         "artifact_poisoning_risks": len(result.artifact_poisoning_findings),
         "ai_agent_injection_risks": len(result.ai_agent_injection_findings),
+        "compromised_actions": len(result.compromised_action_findings),
+        "environment_issues": len(result.environment_findings),
+        "pin_suggestions": len(result.pin_suggestions),
     }
 
 
@@ -149,6 +152,23 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
             _serialize_for_json(asdict(finding))
             for finding in result.ai_agent_injection_findings
         ],
+        "compromised_action_findings": [
+            _serialize_for_json(asdict(finding))
+            for finding in result.compromised_action_findings
+        ],
+        "environment_findings": [
+            _serialize_for_json(asdict(finding))
+            for finding in result.environment_findings
+        ],
+        "pin_suggestions": [
+            _serialize_for_json(asdict(finding) if is_dataclass(finding) else finding)
+            for finding in result.pin_suggestions
+        ],
+        "delta": _serialize_for_json(
+            asdict(result.delta)
+            if is_dataclass(getattr(result, "delta", None))
+            else getattr(result, "delta", None)
+        ),
         "unmatched_policies": [
             _policy_finding_to_report_dict(p) for p in unmatched
         ],

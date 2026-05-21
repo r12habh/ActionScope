@@ -25,6 +25,7 @@ pip install actionscope
 
 ```bash
 actionscope scan .
+actionscope scan . --resolve-pins
 ```
 
 ## Example Output
@@ -57,6 +58,36 @@ deploy.yml → deploy → Configure AWS credentials
     comment-pr: true
 ```
 
+### Delta Reporting in CI
+
+```yaml
+- uses: r12habh/ActionScope@v0
+  with:
+    fail-on: high
+    comment-pr: true
+    load-state: true
+    save-state: true
+```
+
+This persists `.actionscope/last_scan.json` as a GitHub Actions artifact and
+lets PR comments show what changed since the previous scan.
+
+### Known-Compromised Actions
+
+ActionScope includes a small curated database of documented compromised GitHub
+Actions. Repositories using mutable tags for known-bad actions are flagged as
+CRITICAL, including:
+
+- `actions-cool/issues-helper`
+- `actions-cool/maintain-one-comment`
+- `tj-actions/changed-files`
+- `aquasecurity/trivy-action`
+
+The database is updated with each ActionScope release. For real-time runtime
+protection, consider
+[StepSecurity Harden-Runner](https://www.stepsecurity.io/harden-runner), which
+monitors live workflow behavior.
+
 ## What ActionScope Adds Beyond Existing Tools
 
 | Capability | actionlint | zizmor | Scorecard | ActionScope |
@@ -81,6 +112,16 @@ to any external service unless you explicitly enable live AWS verification.
 4. Classifies each IAM action by risk using the
    [policy-sentry](https://github.com/salesforce/policy_sentry) database
 5. Outputs a plain-English blast radius report
+
+### Pin Suggestions
+
+```bash
+actionscope scan . --resolve-pins
+```
+
+This resolves unpinned references such as `actions/checkout@v4` to the current
+full commit SHA via the GitHub API and prints ready-to-paste replacements. The
+SHA is current as of scan time, so verify it before committing the replacement.
 
 ### What If My Policies Aren't in the Repo?
 

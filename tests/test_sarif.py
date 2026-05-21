@@ -9,6 +9,8 @@ from actionscope.models import (
     AiAgentInjectionFinding,
     ArtifactPoisoningFinding,
     AwsCredentialSource,
+    CompromisedActionFinding,
+    EnvironmentFinding,
     GitHubTokenPermission,
     IamAction,
     OidcTrustFinding,
@@ -170,6 +172,8 @@ def test_all_rule_ids_are_present_in_rules_list() -> None:
         "AS010",
         "AS011",
         "AS012",
+        "AS013",
+        "AS014",
     }
 
 
@@ -323,3 +327,47 @@ def test_ai_agent_without_aws_credentials_produces_as011_result() -> None:
     data = _sarif_data(result)
 
     assert "AS011" in {result["ruleId"] for result in _results(data)}
+
+
+def test_compromised_action_produces_as013_result() -> None:
+    result = ScanResult(
+        compromised_action_findings=[
+            CompromisedActionFinding(
+                workflow_file=".github/workflows/triage.yml",
+                job_name="triage",
+                step_name="Issue helper",
+                uses_ref="actions-cool/issues-helper@v3",
+                action_name="actions-cool/issues-helper",
+                ref="v3",
+                is_sha_pinned=False,
+                compromise_date="2026-05-18T19:10:24Z",
+                advisory_url="https://example.com/advisory",
+                description="compromised",
+                risk_level=RiskLevel.CRITICAL,
+            )
+        ]
+    )
+    data = _sarif_data(result)
+
+    assert "AS013" in {result["ruleId"] for result in _results(data)}
+
+
+def test_environment_finding_produces_as014_result() -> None:
+    result = ScanResult(
+        environment_findings=[
+            EnvironmentFinding(
+                workflow_file=".github/workflows/deploy.yml",
+                job_name="deploy",
+                environment_name=None,
+                has_aws_credentials=True,
+                role_arn="arn:aws:iam::123456789012:role/github-deploy-role",
+                finding_type="deploy_without_environment",
+                risk_level=RiskLevel.MEDIUM,
+                description="missing environment",
+                recommendation="add environment",
+            )
+        ]
+    )
+    data = _sarif_data(result)
+
+    assert "AS014" in {result["ruleId"] for result in _results(data)}

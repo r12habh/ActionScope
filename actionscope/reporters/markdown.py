@@ -9,6 +9,8 @@ from actionscope.models import (
     AiAgentInjectionFinding,
     ArtifactPoisoningFinding,
     AwsCredentialSource,
+    CompromisedActionFinding,
+    EnvironmentFinding,
     GitHubTokenPermission,
     IamAction,
     OidcTrustFinding,
@@ -334,6 +336,158 @@ def _ai_agent_section(findings: list[AiAgentInjectionFinding]) -> str:
     return "\n".join(lines)
 
 
+def _compromised_actions_section(findings: list[CompromisedActionFinding]) -> str:
+    if not findings:
+        return ""
+    lines = [
+        "### ⛔ COMPROMISED ACTIONS (Immediate Action Required)",
+        "",
+    ]
+    for finding in findings:
+        workflow = _md_cell(_workflow_basename(finding.workflow_file))
+        lines.extend(
+            [
+                "> ⛔ **COMPROMISED ACTION DETECTED**",
+                f"> `{workflow}` uses `{_md_cell(finding.uses_ref)}`",
+                (
+                    f"> Compromised on {finding.compromise_date}. "
+                    "Mutable tags may execute credential-stealing code."
+                ),
+                "> **Remove this action or pin to a verified SHA immediately.**",
+                f"> Advisory: {finding.advisory_url}",
+                ">",
+            ]
+        )
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def _environment_section(findings: list[EnvironmentFinding]) -> str:
+    if not findings:
+        return ""
+    lines = [
+        "### GitHub Environment Issues",
+        "",
+        "| Workflow | Job | Environment | Issue | Risk |",
+        "|----------|-----|-------------|-------|------|",
+    ]
+    for finding in findings:
+        workflow = _md_cell(_workflow_basename(finding.workflow_file))
+        environment = _md_cell(finding.environment_name or "(none)")
+        issue = _md_cell(finding.finding_type.replace("_", " "))
+        lines.append(
+            f"| {workflow} | {_md_cell(finding.job_name)} | {environment} | "
+            f"{issue} | {RISK_DISPLAY[finding.risk_level]} |"
+        )
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def _pin_suggestions_section(suggestions: list) -> str:
+    if not suggestions:
+        return ""
+    lines = [
+        "### Pin Suggestions",
+        "",
+        "```yaml",
+        "# Replace unpinned actions with SHA-pinned equivalents:",
+    ]
+    for pin in suggestions:
+        original = _pin_value(pin, "original_ref")
+        pinned = _pin_value(pin, "pinned_ref")
+        error = _pin_value(pin, "error")
+        lines.append(f"# {original}")
+        if error:
+            lines.append(f"# unresolved: {error}")
+        else:
+            lines.append(f"uses: {pinned}")
+    lines.extend(
+        [
+            "```",
+            "",
+            "> SHA shown is current as of scan time. Verify via "
+            "`git ls-remote https://github.com/ACTION_OWNER/ACTION_REPO "
+            "refs/tags/TAG`.",
+            "",
+            "---",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _pin_value(pin: object, key: str) -> object:
+    if isinstance(pin, dict):
+        return pin.get(key)
+    return getattr(pin, key, None)
+
+
+def _delta_section(delta: object | None) -> str:
+    if delta is None:
+        return ""
+    previous = getattr(delta, "previous_overall_risk", None) or "(none)"
+    current = getattr(delta, "current_overall_risk", "info")
+    if getattr(delta, "risk_increased", False):
+        change = "⬆️ Increased"
+    elif getattr(delta, "risk_decreased", False):
+        change = "⬇️ Decreased"
+    elif getattr(delta, "risk_changed", False):
+        change = "Changed"
+    else:
+        change = "No comparison"
+    previous_critical = getattr(delta, "previous_critical_count", 0)
+    current_critical = getattr(delta, "current_critical_count", 0)
+    previous_high = getattr(delta, "previous_high_count", 0)
+    current_high = getattr(delta, "current_high_count", 0)
+    lines = [
+        "### 📊 Delta Since Last Scan",
+        "",
+        "| Metric | Previous | Current | Change |",
+        "|--------|----------|---------|--------|",
+        (
+            f"| Overall Risk | {str(previous).upper()} | "
+            f"{str(current).upper()} | {change} |"
+        ),
+        (
+            f"| Critical Findings | {previous_critical} | {current_critical} | "
+            f"{_signed_delta(current_critical, previous_critical)} |"
+        ),
+        (
+            f"| High Findings | {previous_high} | {current_high} | "
+            f"{_signed_delta(current_high, previous_high)} |"
+        ),
+    ]
+    new_actions = getattr(delta, "new_compromised_actions", [])
+    if new_actions:
+        lines.extend(
+            [
+                "",
+                "⛔ **New compromised actions since last scan:** "
+                + ", ".join(f"`{_md_cell(action)}`" for action in new_actions),
+            ]
+        )
+    resolved = getattr(delta, "resolved_finding_types", [])
+    if resolved:
+        lines.extend(
+            [
+                "",
+                "✅ **Resolved since last scan:** "
+                + ", ".join(f"`{_md_cell(item)}`" for item in resolved),
+            ]
+        )
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def _signed_delta(current: int, previous: int) -> str:
+    diff = current - previous
+    if diff > 0:
+        return f"+{diff}"
+    if diff < 0:
+        return str(diff)
+    return "No change"
+
+
 def _summary_table(result: ScanResult) -> str:
     # Count IAM actions by risk across all policy findings in the scan
     counts: dict[RiskLevel, int] = {lvl: 0 for lvl in RiskLevel}
@@ -352,7 +506,7 @@ def _summary_table(result: ScanResult) -> str:
     return "\n".join(rows)
 
 
-def to_markdown(result: ScanResult) -> str:
+def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     """
     Generate a Markdown report suitable for GitHub PR comments.
     """
@@ -366,6 +520,10 @@ def to_markdown(result: ScanResult) -> str:
         "---\n\n"
     )
 
+    compromised_part = _compromised_actions_section(
+        result.compromised_action_findings
+    )
+    delta_part = _delta_section(delta)
     findings_body = "### Workflow Findings\n\n"
     if result.bindings:
         sections = [_binding_section(b) for b in result.bindings]
@@ -376,9 +534,11 @@ def to_markdown(result: ScanResult) -> str:
     token_part = _github_token_section(result)
     unpinned_part = _unpinned_section(result.unpinned_actions)
     oidc_part = _oidc_trust_section(result.oidc_trust_findings)
+    environment_part = _environment_section(result.environment_findings)
     script_part = _script_injection_section(result.script_injection_findings)
     artifact_part = _artifact_poisoning_section(result.artifact_poisoning_findings)
     ai_part = _ai_agent_section(result.ai_agent_injection_findings)
+    pin_part = _pin_suggestions_section(result.pin_suggestions)
 
     summary = (
         "### Summary\n\n"
@@ -388,13 +548,17 @@ def to_markdown(result: ScanResult) -> str:
 
     return (
         header
+        + compromised_part
+        + delta_part
         + findings_body
         + token_part
         + oidc_part
+        + environment_part
         + script_part
         + artifact_part
         + ai_part
         + unpinned_part
+        + pin_part
         + summary
     )
 
@@ -424,6 +588,78 @@ def to_markdown_from_dict(data: dict) -> str:
         "### Workflow Findings",
         "",
     ]
+
+    compromised = data.get("compromised_action_findings", [])
+    if compromised:
+        prefix = [
+            "### ⛔ COMPROMISED ACTIONS (Immediate Action Required)",
+            "",
+        ]
+        for finding in compromised:
+            workflow = _md_cell(
+                _workflow_basename(str(finding.get("workflow_file", "")))
+            )
+            prefix.extend(
+                [
+                    "> ⛔ **COMPROMISED ACTION DETECTED**",
+                    f"> `{workflow}` uses `{_md_cell(finding.get('uses_ref', ''))}`",
+                    (
+                        f"> Compromised on {finding.get('compromise_date', '')}. "
+                        "Mutable tags may execute credential-stealing code."
+                    ),
+                    "> **Remove this action or pin to a verified SHA immediately.**",
+                    f"> Advisory: {finding.get('advisory_url', '')}",
+                    ">",
+                ]
+            )
+        prefix.extend(["", "---", ""])
+        lines = lines[:6] + prefix + lines[6:]
+
+    delta_data = data.get("delta")
+    if isinstance(delta_data, dict):
+        delta_lines = [
+            "### 📊 Delta Since Last Scan",
+            "",
+            "| Metric | Previous | Current | Change |",
+            "|--------|----------|---------|--------|",
+        ]
+        previous = delta_data.get("previous_overall_risk") or "(none)"
+        current = delta_data.get("current_overall_risk", "info")
+        if delta_data.get("risk_increased"):
+            change = "⬆️ Increased"
+        elif delta_data.get("risk_decreased"):
+            change = "⬇️ Decreased"
+        elif delta_data.get("risk_changed"):
+            change = "Changed"
+        else:
+            change = "No comparison"
+        previous_critical = int(delta_data.get("previous_critical_count", 0))
+        current_critical = int(delta_data.get("current_critical_count", 0))
+        previous_high = int(delta_data.get("previous_high_count", 0))
+        current_high = int(delta_data.get("current_high_count", 0))
+        delta_lines.append(
+            f"| Overall Risk | {str(previous).upper()} | "
+            f"{str(current).upper()} | {change} |"
+        )
+        delta_lines.append(
+            f"| Critical Findings | {previous_critical} | {current_critical} | "
+            f"{_signed_delta(current_critical, previous_critical)} |"
+        )
+        delta_lines.append(
+            f"| High Findings | {previous_high} | {current_high} | "
+            f"{_signed_delta(current_high, previous_high)} |"
+        )
+        new_actions = delta_data.get("new_compromised_actions") or []
+        if new_actions:
+            delta_lines.extend(
+                [
+                    "",
+                    "⛔ **New compromised actions since last scan:** "
+                    + ", ".join(f"`{_md_cell(action)}`" for action in new_actions),
+                ]
+            )
+        delta_lines.extend(["", "---", ""])
+        lines = lines[:6] + delta_lines + lines[6:]
 
     findings = data.get("findings", [])
     if findings:
@@ -561,8 +797,36 @@ def to_markdown_from_dict(data: dict) -> str:
             ]
         )
 
+    pin_suggestions = data.get("pin_suggestions", [])
+    if pin_suggestions:
+        lines.extend(
+            [
+                "### Pin Suggestions",
+                "",
+                "```yaml",
+                "# Replace unpinned actions with SHA-pinned equivalents:",
+            ]
+        )
+        for pin in pin_suggestions:
+            lines.append(f"# {pin.get('original_ref', '')}")
+            if pin.get("error"):
+                lines.append(f"# unresolved: {pin.get('error')}")
+            else:
+                lines.append(f"uses: {pin.get('pinned_ref', '')}")
+        lines.extend(
+            [
+                "```",
+                "",
+                "> SHA shown is current as of scan time. Verify before committing.",
+                "",
+                "---",
+                "",
+            ]
+        )
+
     for key, title in (
         ("oidc_trust_findings", "OIDC Trust Issues"),
+        ("environment_findings", "GitHub Environment Issues"),
         ("script_injection_findings", "Script Injection Risks"),
         ("artifact_poisoning_findings", "Artifact Poisoning Risks"),
         ("ai_agent_injection_findings", "AI Agent Prompt Injection Surfaces"),
@@ -627,11 +891,15 @@ def to_markdown_from_dict(data: dict) -> str:
     return "\n".join(lines)
 
 
-def write_markdown(result: ScanResult, output_path: str) -> None:
+def write_markdown(
+    result: ScanResult,
+    output_path: str,
+    delta: object | None = None,
+) -> None:
     """Write Markdown to file."""
     try:
         with open(output_path, "w", encoding="utf-8") as f:
-            f.write(to_markdown(result))
+            f.write(to_markdown(result, delta=delta))
     except (OSError, UnicodeEncodeError) as exc:
         print(
             f"Warning: could not write Markdown output file {output_path}: {exc}",
