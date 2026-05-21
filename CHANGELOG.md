@@ -2,7 +2,7 @@
 
 All notable changes to ActionScope are documented here.
 
-## [0.2.0] - 2026-05-17
+## [0.2.0] - 2026-05-21
 
 ### Added
 - OIDC trust policy analyzer: detects wildcard org subjects, missing sub/aud
