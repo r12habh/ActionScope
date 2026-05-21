@@ -22,6 +22,10 @@ COMMON_POLICY_DIRS = (
 PRIVILEGE_ESCALATION_ACTIONS = {
     "iam:attachrolepolicy",
     "iam:createpolicyversion",
+    "iam:createloginprofile",
+    "iam:addusertogroup",
+    "iam:updateloginprofile",
+    "iam:setdefaultpolicyversion",
 }
 
 

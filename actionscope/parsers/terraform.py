@@ -16,6 +16,10 @@ from actionscope.models import IamAction, PolicyFinding, RiskLevel
 PRIVILEGE_ESCALATION_ACTIONS = {
     "iam:attachrolepolicy",
     "iam:createpolicyversion",
+    "iam:createloginprofile",
+    "iam:addusertogroup",
+    "iam:updateloginprofile",
+    "iam:setdefaultpolicyversion",
 }
 IAM_ROLE_ARN_RE = re.compile(r"^arn:[^:]+:iam::\d{12}:role/.+")
 

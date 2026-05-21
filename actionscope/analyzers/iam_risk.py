@@ -35,6 +35,9 @@ ALWAYS_CRITICAL = frozenset(
         "iam:updateassumerolepolicy",
         "iam:createaccesskey",
         "iam:createloginprofile",
+        "iam:addusertogroup",
+        "iam:updateloginprofile",
+        "iam:setdefaultpolicyversion",
         "sts:assumerole",
     }
 )
@@ -58,6 +61,10 @@ _CRITICAL_ACTIONS = {
     "iam:attachuserpolicy": "iam:AttachUserPolicy",
     "iam:putrolepolicy": "iam:PutRolePolicy",
     "iam:updateassumerolepolicy": "iam:UpdateAssumeRolePolicy",
+    "iam:createloginprofile": "iam:CreateLoginProfile",
+    "iam:addusertogroup": "iam:AddUserToGroup",
+    "iam:updateloginprofile": "iam:UpdateLoginProfile",
+    "iam:setdefaultpolicyversion": "iam:SetDefaultPolicyVersion",
 }
 _DESTRUCTIVE_KEYWORDS = ("delete", "terminate", "remove", "destroy")
 

@@ -128,8 +128,8 @@ def test_format_privesc_summary_empty_for_empty_findings() -> None:
     assert format_privesc_summary([]) == ""
 
 
-def test_all_eight_paths_are_defined() -> None:
-    assert len(ESCALATION_PATHS) == 8
+def test_all_thirteen_paths_are_defined() -> None:
+    assert len(ESCALATION_PATHS) == 13
     assert {path["id"] for path in ESCALATION_PATHS} == {
         "passrole_wildcard",
         "create_policy_version",
@@ -139,6 +139,11 @@ def test_all_eight_paths_are_defined() -> None:
         "lambda_create_function",
         "ec2_run_instances",
         "cloudformation_create",
+        "create_login_profile",
+        "add_user_to_group",
+        "update_login_profile",
+        "set_default_policy_version",
+        "glue_create_dev_endpoint",
     }
 
 
@@ -161,6 +166,10 @@ def test_action_star_resource_star_triggers_single_action_paths() -> None:
         "create_access_key",
         "attach_role_policy",
         "update_assume_role",
+        "create_login_profile",
+        "add_user_to_group",
+        "update_login_profile",
+        "set_default_policy_version",
     } <= ids
 
 
@@ -168,3 +177,49 @@ def test_detect_privesc_paths_handles_empty_actions() -> None:
     finding = policy([])
 
     assert detect_privesc_paths(finding, finding.source_file) == []
+
+
+def test_create_login_profile_detected() -> None:
+    assert "create_login_profile" in path_ids(
+        policy([action("iam:CreateLoginProfile")])
+    )
+
+
+def test_create_login_profile_not_detected_without_wildcard() -> None:
+    finding = policy(
+        [action("iam:CreateLoginProfile", "arn:aws:iam::123:user/specific")]
+    )
+    assert "create_login_profile" not in path_ids(finding)
+
+
+def test_add_user_to_group_detected() -> None:
+    assert "add_user_to_group" in path_ids(
+        policy([action("iam:AddUserToGroup")])
+    )
+
+
+def test_update_login_profile_detected() -> None:
+    assert "update_login_profile" in path_ids(
+        policy([action("iam:UpdateLoginProfile")])
+    )
+
+
+def test_set_default_policy_version_detected() -> None:
+    assert "set_default_policy_version" in path_ids(
+        policy([action("iam:SetDefaultPolicyVersion")])
+    )
+
+
+def test_glue_create_dev_endpoint_detected_when_both_actions_present() -> None:
+    finding = policy(
+        [
+            action("glue:CreateDevEndpoint", "*"),
+            action("iam:PassRole", "*"),
+        ]
+    )
+    assert "glue_create_dev_endpoint" in path_ids(finding)
+
+
+def test_glue_create_dev_endpoint_not_detected_with_one_action() -> None:
+    finding = policy([action("glue:CreateDevEndpoint", "*")])
+    assert "glue_create_dev_endpoint" not in path_ids(finding)
