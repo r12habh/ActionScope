@@ -121,6 +121,30 @@ def test_iam_put_role_policy_classified_as_critical() -> None:
     assert result.risk_level is RiskLevel.CRITICAL
 
 
+def test_iam_create_login_profile_classified_as_critical() -> None:
+    result = classify_action("iam:CreateLoginProfile")
+
+    assert result.risk_level is RiskLevel.CRITICAL
+
+
+def test_iam_add_user_to_group_classified_as_critical() -> None:
+    result = classify_action("iam:AddUserToGroup")
+
+    assert result.risk_level is RiskLevel.CRITICAL
+
+
+def test_iam_update_login_profile_classified_as_critical() -> None:
+    result = classify_action("iam:UpdateLoginProfile")
+
+    assert result.risk_level is RiskLevel.CRITICAL
+
+
+def test_iam_set_default_policy_version_classified_as_critical() -> None:
+    result = classify_action("iam:SetDefaultPolicyVersion")
+
+    assert result.risk_level is RiskLevel.CRITICAL
+
+
 def test_ec2_terminate_instances_classified_as_high() -> None:
     result = classify_action("ec2:TerminateInstances")
 
