@@ -237,8 +237,28 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         c.print(
             f"[dim]ℹ️  Policy not found in repo for role: {src.role_arn}[/]"
         )
+        c.print()
+        c.print(Text("    ActionScope looked for IAM policies in:", style="dim"))
+        c.print(Text("    • *.tf files (Terraform)", style="dim"))
+        c.print(Text("    • **/iam/*.json (JSON policy files)", style="dim"))
+        c.print(Text("    • **/policies/*.json", style="dim"))
+        c.print()
         c.print(
-            "[dim]💡  Run with --aws-verify to fetch live policies from AWS[/]"
+            Text(
+                "    If policies live in a separate infrastructure repo, try:",
+                style="dim",
+            )
+        )
+        c.print(Text("    actionscope scan /path/to/infra-repo", style="dim"))
+        c.print()
+        c.print(Text("    To fetch live policies from AWS:", style="dim"))
+        c.print(Text("    actionscope scan . --aws-verify", style="dim"))
+        c.print(
+            Text(
+                "    Requires read-only IAM access such as iam:GetRole "
+                "and iam:ListAttachedRolePolicies",
+                style="dim",
+            )
         )
 
     if binding.policy_source == "dynamic_reference" and src.role_arn:
