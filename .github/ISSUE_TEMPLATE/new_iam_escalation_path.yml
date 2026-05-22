@@ -1,0 +1,38 @@
+name: Propose New IAM Privilege Escalation Path
+description: Add a new privilege escalation path to ActionScope's detector
+labels: ["enhancement", "security"]
+title: "[PRIVESC] iam:SomeAction escalation path"
+body:
+  - type: input
+    id: path_name
+    attributes:
+      label: Path name
+      placeholder: "e.g. Glue Dev Endpoint + PassRole"
+    validations:
+      required: true
+  - type: textarea
+    id: required_actions
+    attributes:
+      label: Required IAM actions (one per line)
+      placeholder: "glue:CreateDevEndpoint\niam:PassRole"
+    validations:
+      required: true
+  - type: textarea
+    id: attack_scenario
+    attributes:
+      label: Attack scenario
+      placeholder: "Describe how an attacker would exploit this"
+    validations:
+      required: true
+  - type: input
+    id: reference
+    attributes:
+      label: Reference (Rhino Security, blog post, CVE, etc.)
+    validations:
+      required: true
+  - type: input
+    id: severity
+    attributes:
+      label: Suggested severity (critical/high/medium)
+      placeholder: "critical"
+
