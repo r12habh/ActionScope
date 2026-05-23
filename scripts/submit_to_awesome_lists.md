@@ -7,37 +7,55 @@ Liveness checked against the GitHub API as of 2026-05-23. Each list is rated
 on three axes: **fit** (does ActionScope belong there?), **activity** (is the
 list actively maintained?), and **audience** (star count as a rough proxy).
 
+## Submission strategy
+
+ActionScope is currently 1 ⭐, 7 days old. Awesome-list curators generally
+expect some organic adoption signal (stars, downloads, mentions) before
+accepting a tool, and submitting a brand-new repo to multiple curated lists
+at once reads as spam and tends to produce quick closures that pollute the
+PR history for future resubmits.
+
+Current approach: send one foundational PR (toniblyx, the loosest-bar
+list), then defer the rest until ActionScope has organic adoption
+(target: ~30 days old, ~50+ stars). Drive that adoption via the launch
+posts in `research/launch_posts.md` (HN, Reddit, LinkedIn) and the SEO
+FAQ section in the README.
+
 ## Target Lists
 
-### Tier 1 — Submit first (high fit + active)
+### Sent
 
-- [ ] **[toniblyx/my-arsenal-of-aws-security-tools](https://github.com/toniblyx/my-arsenal-of-aws-security-tools)**
-      — 9.4k ⭐, active, AWS-focused. Best single-list match.
-      Section: `Defensive (Blue Team)` → `AWS IAM` or a new entry under
-      `GitHub Actions / CI security`.
+- [x] **[toniblyx/my-arsenal-of-aws-security-tools](https://github.com/toniblyx/my-arsenal-of-aws-security-tools)**
+      — 9.4k ⭐, AWS-focused, only requires "Open Source."
+      Submitted as [PR #128](https://github.com/toniblyx/my-arsenal-of-aws-security-tools/pull/128)
+      on 2026-05-23.
+
+### Deferred — wait for adoption milestones
+
+Resubmit when ActionScope reaches roughly 30 days old + 50+ stars.
 
 - [ ] **[analysis-tools-dev/static-analysis](https://github.com/analysis-tools-dev/static-analysis)**
-      — 14.5k ⭐, very active. Uses a JSON entry under `data/api/tools.json`
-      (not a README edit). Categories will likely be `linter` +
-      `security`; language `yaml`; types `cli` + `github-action`.
+      — 14.5k ⭐. Has hard requirements: >20 stars + project ≥3 months old.
+      File format is YAML under `data/tools/<toolname>.yml` (not JSON, not
+      README). 500-char description cap; tags from `data/tags.yml`. **Do
+      not submit until ActionScope clears the age + star bar.**
 
 - [ ] **[sbilly/awesome-security](https://github.com/sbilly/awesome-security)**
-      — 14.4k ⭐, active. Plain markdown; pick a section like
-      `Network > Cloud / Server / Tools` or `Code Auditing`.
-
-### Tier 2 — Submit if Tier 1 lands well
+      — 14.4k ⭐, no formal CONTRIBUTING. Curators set an implicit quality
+      bar; risky to submit while at 1 ⭐.
 
 - [ ] **[4ndersonLin/awesome-cloud-security](https://github.com/4ndersonLin/awesome-cloud-security)**
-      — 2.4k ⭐, active, cloud-security focus.
+      — 2.4k ⭐, follows the awesome-manifesto "must be useful" rule. Same
+      risk as sbilly while at 1 ⭐.
 
 - [ ] **[devsecops/awesome-devsecops](https://github.com/devsecops/awesome-devsecops)**
-      — 5.4k ⭐, last push May 2024 (somewhat stale; PR may sit).
-      Section: `Tools > Testing` or `Tools > Automation`.
+      — 5.4k ⭐, last push May 2024 (stale). Empty CONTRIBUTING. Low merge
+      probability regardless of timing; revisit only if list resumes
+      activity.
 
 - [ ] **[meirwah/awesome-incident-response](https://github.com/meirwah/awesome-incident-response)**
       — 9k ⭐, active. Marginal fit — ActionScope is more
-      detection/prevention than IR. Worth a try given the
-      compromised-actions database.
+      detection/prevention than IR. Worth a try after adoption catches up.
 
 ### Skipped — not viable
 
@@ -78,16 +96,19 @@ Found 95.5% use unpinned actions, 58.2% use static AWS keys.
 
 ## Format quirks per list
 
-- **analysis-tools-dev/static-analysis**: Edit `data/api/tools.json`,
-  not the README. Bot regenerates the rendered list. Schema includes:
-  `name`, `categories`, `languages`, `types`, `licenses`, `homepage`,
-  `source`, `description`. Reference an existing similar tool (e.g.
-  `actionlint`) for the right keys.
-- **toniblyx/my-arsenal-of-aws-security-tools**: Strict alphabetical
-  order within each section. Read `CONTRIBUTING.md` if present.
+- **analysis-tools-dev/static-analysis**: Edit `data/tools/<toolname>.yml`
+  (YAML, not JSON; not README). Description ≤500 chars. Tags from
+  `data/tags.yml` — add new tags there if needed. Reference an existing
+  similar tool (e.g. `actionlint.yml`) for the schema.
+- **toniblyx/my-arsenal-of-aws-security-tools**: Markdown table; entries
+  are appended over time rather than strictly alphabetical. Format
+  includes the badgen.net star/contributor/watcher badges per row.
 - **sbilly/awesome-security**: Bullet-list under topical headings,
   format is `- [Name](link) - description.` (one line, period at end).
 - **devsecops/awesome-devsecops**: Bullet-list with `* [Name](link)`
   prefix; description is a sentence with no trailing period.
 - **meirwah/awesome-incident-response**: Same as sbilly format; pick the
   least-bad subcategory and explain the fit in the PR body.
+- **4ndersonLin/awesome-cloud-security**: `[Name](link)` format per the
+  awesome manifesto; reference back to awesome-cloud-security from
+  ActionScope's README is appreciated.
