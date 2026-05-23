@@ -21,6 +21,53 @@ To add support for another credential provider (e.g. Google Cloud):
 3. Add test fixtures in tests/fixtures/workflows/
 4. Open a PR
 
+## Commit Messages and PR Titles
+
+We squash-merge every PR, so **the PR title becomes the commit subject on
+`main`**. The same rules apply to both — write one-line, specific, scannable
+descriptions of what changed and why.
+
+### Format
+
+```
+type(scope): imperative description in lowercase
+```
+
+- **type** (required): `feat`, `fix`, `docs`, `refactor`, `test`, `chore`,
+  `ci`, `perf`, `build`, `style`
+- **scope** (optional): the area touched, e.g. `feat(sarif):`, `fix(state):`
+- **description**: imperative mood ("add", not "added" or "adds"), lowercase
+  start, no trailing period, ≤72 chars total
+
+### Examples
+
+```
+✅ feat(sarif): emit AS013 with risk-derived severity, not hardcoded 10.0
+✅ fix(state): tolerate non-dict finding_counts in compute_delta
+✅ docs(contributing): require imperative one-line commit messages
+✅ refactor(terminal): inline _delta_header_lines into render entry point
+
+❌ Improve missing policy guidance               (no type, vague)
+❌ Updated stuff                                 (past tense, vague)
+❌ feat: Adds a new feature for things.          (past tense, capital, period)
+❌ fix bug                                       (too vague, what bug where?)
+```
+
+### One-line rule
+
+The body should be empty by default. If the subject needs more context,
+that's a signal the subject is too vague — rewrite it before adding a body.
+Reserve commit bodies for the rare case where you genuinely need to record
+a "why" that can't fit in 72 characters (rollback plans, links to issues
+that explain a non-obvious decision, etc.). Long-form context belongs in
+the PR description, which the reviewer reads anyway and which doesn't end
+up in `git log`.
+
+### Tag-only releases
+
+Release commits use `release: vX.Y.Z` as the subject. The CHANGELOG entry
+carries the detail.
+
 ## Running Tests
 
 ```bash
