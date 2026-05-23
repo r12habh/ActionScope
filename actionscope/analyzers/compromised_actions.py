@@ -46,7 +46,11 @@ def is_compromised_ref(
     if _is_full_sha(normalized_ref):
         if normalized_ref.lower() in {item.lower() for item in affected_refs}:
             return True, entry
-        return False, None
+        if affected_refs:
+            # Explicit affected_refs list and this SHA isn't in it — safe pin.
+            return False, None
+        # No explicit list means all refs are compromised; SHA is ambiguous.
+        return True, entry
 
     if affected_refs:
         if normalized_ref in affected_refs:
@@ -85,11 +89,7 @@ def check_workflow_for_compromised_actions(
             action_name, ref = parsed
             compromised, entry = is_compromised_ref(action_name, ref, db)
             is_sha_pinned = _is_full_sha(ref)
-            if not compromised and is_sha_pinned:
-                entry = _entry_for_action(action_name.lower(), db)
-                if entry is None:
-                    continue
-            elif not compromised or entry is None:
+            if not compromised or entry is None:
                 continue
 
             findings.append(
@@ -119,7 +119,10 @@ def scan_for_compromised_actions(
     """Scan workflow files for known-compromised action references."""
     findings: list[CompromisedActionFinding] = []
     errors: list[str] = []
-    db = load_compromised_actions()
+    try:
+        db = load_compromised_actions()
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return [], [f"Could not load compromised actions database {DATA_FILE}: {exc}"]
 
     for workflow_file in _workflow_files(repo_path):
         try:

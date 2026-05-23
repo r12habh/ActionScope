@@ -657,8 +657,13 @@ def _delta_header_lines(delta: object | None) -> tuple:
         return tuple()
     if not getattr(delta, "risk_changed", False):
         return tuple()
-    previous = str(getattr(delta, "previous_overall_risk", "unknown")).upper()
-    current = str(getattr(delta, "current_overall_risk", "unknown")).upper()
+    def _risk_label(value: object) -> str:
+        if hasattr(value, "name"):
+            return value.name
+        return str(value).upper()
+
+    previous = _risk_label(getattr(delta, "previous_overall_risk", "unknown"))
+    current = _risk_label(getattr(delta, "current_overall_risk", "unknown"))
     if getattr(delta, "risk_increased", False):
         direction = "⬆️  (risk increased)"
         style = "bold red"

@@ -404,7 +404,13 @@ def _save_state(
 ) -> None:
     from actionscope.state import save_scan_state
 
-    save_scan_state(result, repo_path, state_file)
+    try:
+        save_scan_state(result, repo_path, state_file)
+    except (PermissionError, OSError) as exc:
+        status_console.print(
+            f"[yellow]Warning: could not save state to {state_file}: {exc}[/yellow]"
+        )
+        return
     if not quiet:
         status_console.print(f"[dim]State saved to {state_file}[/dim]")
 

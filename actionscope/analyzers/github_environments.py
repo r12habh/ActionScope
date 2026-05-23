@@ -271,9 +271,13 @@ def _trust_uses_ref(
 
 
 def _finding_matches_role(finding: OidcTrustFinding, role_arn: str | None) -> bool:
-    if role_arn is None or finding.role_arn is None:
-        return True
-    return finding.role_arn == role_arn or finding.role_name in role_arn
+    if not role_arn:
+        return False
+    if finding.role_arn:
+        return finding.role_arn == role_arn
+    if finding.role_name:
+        return f":role/{finding.role_name}" in role_arn
+    return False
 
 
 def _steps(job_data: dict) -> list[dict]:

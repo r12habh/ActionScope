@@ -88,6 +88,14 @@ runs:
         name: ${{ inputs.state-artifact-name }}
         path: .actionscope/
 
+    - name: Verify restored state
+      if: inputs.load-state == 'true'
+      shell: bash
+      run: |
+        if [ ! -f .actionscope/last_scan.json ]; then
+          echo "::warning::ActionScope: load-state is true but .actionscope/last_scan.json was not restored. Delta reporting will be skipped."
+        fi
+
     - name: Run ActionScope
       id: scan
       shell: bash
@@ -112,6 +120,7 @@ runs:
           --no-color 2>/tmp/actionscope-stderr.txt || {
             echo "ActionScope scan failed. See stderr:"
             cat /tmp/actionscope-stderr.txt || true
+            exit 1
           }
 
         if [ -f /tmp/actionscope-results.json ]; then

@@ -853,6 +853,7 @@ def to_markdown_from_dict(data: dict) -> str:
                 title_text = (
                     finding.get("issue_description")
                     or finding.get("description")
+                    or finding.get("finding_type")
                     or finding.get("agent_type")
                     or "finding"
                 )

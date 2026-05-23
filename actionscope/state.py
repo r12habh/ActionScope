@@ -97,19 +97,19 @@ def compute_delta(
     previous_actions = set(_list(previous_state.get("compromised_actions")))
     current_actions = set(_list(current_state.get("compromised_actions")))
 
+    prev_counts = previous_state.get("finding_counts")
+    if not isinstance(prev_counts, dict):
+        prev_counts = {}
+
     return ScanDelta(
         previous_overall_risk=previous_risk,
         current_overall_risk=current_risk,
         risk_changed=risk_changed,
         risk_increased=_risk_value(current_risk) > _risk_value(previous_risk),
         risk_decreased=_risk_value(current_risk) < _risk_value(previous_risk),
-        previous_critical_count=int(
-            previous_state.get("finding_counts", {}).get("critical", 0)
-        ),
+        previous_critical_count=_to_int(prev_counts.get("critical")),
         current_critical_count=current_state["finding_counts"]["critical"],
-        previous_high_count=int(
-            previous_state.get("finding_counts", {}).get("high", 0)
-        ),
+        previous_high_count=_to_int(prev_counts.get("high")),
         current_high_count=current_state["finding_counts"]["high"],
         new_finding_types=sorted(current_types - previous_types),
         resolved_finding_types=sorted(previous_types - current_types),
@@ -117,17 +117,17 @@ def compute_delta(
         new_oidc_issues=max(
             0,
             int(current_state["oidc_issue_count"])
-            - int(previous_state.get("oidc_issue_count", 0)),
+            - _to_int(previous_state.get("oidc_issue_count")),
         ),
         new_injection_issues=max(
             0,
             int(current_state["injection_issue_count"])
-            - int(previous_state.get("injection_issue_count", 0)),
+            - _to_int(previous_state.get("injection_issue_count")),
         ),
         new_privesc_paths=max(
             0,
             int(current_state["privesc_path_count"])
-            - int(previous_state.get("privesc_path_count", 0)),
+            - _to_int(previous_state.get("privesc_path_count")),
         ),
     )
 
@@ -210,3 +210,10 @@ def _list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return []
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
