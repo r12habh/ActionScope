@@ -2,6 +2,14 @@
 
 All notable changes to ActionScope are documented here.
 
+## [Unreleased]
+
+### Changed
+- Minimum required Click version bumped from `>=8.0` to `>=8.2`. The test
+  suite relies on `Result.stdout` / `Result.stderr` being separate attributes
+  (added in Click 8.2). Runtime CLI behavior is unchanged; most installs
+  already resolve Click 8.2+ transitively via other dependencies.
+
 ## [0.3.0] - 2026-05-21
 
 ### Added

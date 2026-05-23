@@ -25,28 +25,27 @@ from actionscope.cli import main
 
 
 def _scan(repo: Path) -> tuple[int, dict | None, str]:
-    """Run a JSON scan on `repo`; return (exit_code, parsed_json_or_None, trailing).
+    """Run a JSON scan on `repo`; return (exit_code, parsed_stdout_json, stderr).
 
-    The CLI currently emits warning lines to stdout after the JSON document
-    when files fail to parse. We tolerate this here by using `raw_decode` to
-    take only the leading JSON value and treat anything after it as trailing
-    log output. (See follow-up: warnings should go to stderr.)
+    Parses `result.stdout` (only the structured output channel), not
+    `result.output` (stdout + stderr merged). Warnings legitimately go to
+    stderr so a real CLI consumer piping through `jq` is unaffected by them,
+    but Click's `result.output` merges both streams which makes naive
+    `json.loads(result.output)` fail when any warning is emitted. Tests that
+    parse JSON must always use `result.stdout`.
     """
     runner = CliRunner()
     result = runner.invoke(
         main, ["scan", str(repo), "--output-format", "json", "--no-color"]
     )
     data: dict | None = None
-    trailing = ""
-    if result.output:
+    if result.stdout:
         try:
-            value, idx = json.JSONDecoder().raw_decode(result.output)
+            value = json.loads(result.stdout)
             data = value if isinstance(value, dict) else None
-            trailing = result.output[idx:].strip()
         except json.JSONDecodeError:
             data = None
-            trailing = result.output
-    return result.exit_code, data, trailing
+    return result.exit_code, data, result.stderr or ""
 
 
 def _make_workflow(repo: Path, name: str, content: str) -> Path:
@@ -313,7 +312,7 @@ def test_scan_path_is_a_file_not_a_directory(tmp_path: Path) -> None:
 
     assert "Traceback" not in result.output
     assert result.exit_code == 0
-    data, _ = json.JSONDecoder().raw_decode(result.output)
+    data = json.loads(result.stdout)
     # actions/checkout@v4 is unpinned, so the file produces at least one
     # finding and thus increments workflow_count.
     assert data["workflow_count"] == 1
@@ -323,27 +322,29 @@ def test_scan_path_is_a_file_not_a_directory(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "CLI currently emits 'Warning: Could not parse workflow file ...' "
-        "lines to stdout *after* the JSON payload when a workflow fails to "
-        "parse, which breaks any downstream `json.loads`. Tests in this file "
-        "work around it with raw_decode. This xfail tracks the desired future "
-        "behavior — warnings should go to stderr in JSON output mode. When "
-        "the CLI is fixed, this test starts XPASSing and the raw_decode "
-        "workaround in `_scan` can be removed."
-    ),
-    strict=False,
-)
-def test_json_output_is_pure_json_when_files_fail_to_parse(tmp_path: Path) -> None:
-    """Goal post: `json.loads(result.output)` succeeds even with parse errors."""
+def test_stdout_stays_pure_json_when_files_fail_to_parse(tmp_path: Path) -> None:
+    """`result.stdout` must remain a single, parseable JSON document even when
+    warnings are emitted to stderr.
+
+    Regression guard for the *real* invariant: stdout is the structured output
+    channel; warnings belong on stderr. A real consumer piping
+    `actionscope scan ... | jq` depends on this. The earlier xfail framing of
+    this case was wrong — the CLI already does the right thing; what broke was
+    test code reading `result.output` (Click's merged stdout+stderr) instead of
+    `result.stdout`.
+    """
     _make_workflow(tmp_path, "broken.yml", "name: x\non: [push\njobs:\n  : invalid\n")
     runner = CliRunner()
     result = runner.invoke(
         main, ["scan", str(tmp_path), "--output-format", "json", "--no-color"]
     )
-    # The full output should parse as one JSON document, with no trailing text.
-    json.loads(result.output)
+    # stdout parses cleanly as JSON ...
+    data = json.loads(result.stdout)
+    assert "overall_risk" in data
+    # ... and stderr is where the warning lives.
+    assert "Warning:" in (result.stderr or ""), (
+        "warning should go to stderr, not be swallowed"
+    )
 
 
 def test_yaml_with_extremely_long_step_name_is_handled(tmp_path: Path) -> None:
