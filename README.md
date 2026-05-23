@@ -225,6 +225,67 @@ actionscope scan . --output-format markdown   # for PR comments
 actionscope scan . --output-format sarif      # for GitHub Security tab
 ```
 
+## FAQ
+
+### How do I detect compromised GitHub Actions like tj-actions or actions-cool?
+
+ActionScope ships a curated database of known-compromised actions (tj-actions,
+actions-cool/issues-helper, actions-cool/maintain-one-comment, trivy-action)
+and scans every `uses:` reference in your workflows against it. Run
+`actionscope scan .` and any compromised reference appears as a CRITICAL
+finding with the advisory URL.
+
+### What can my GitHub Actions workflow do in my AWS account?
+
+ActionScope extracts every `aws-actions/configure-aws-credentials` step from
+your workflows, follows the role ARN, and correlates it with Terraform or JSON
+IAM policy files in the same repo. The output is a plain-English blast-radius
+report — every IAM action the workflow can perform, classified by risk. Add
+`--aws-verify` to fetch the live policies from AWS using read-only IAM calls.
+
+### How do I scan a GitHub Actions workflow for security issues without AWS credentials?
+
+`actionscope scan .` runs as pure static analysis by default. It needs no AWS
+credentials, no GitHub token (except for `--resolve-pins`), and never sends
+your code to an external service.
+
+### How do I find script injection or `pull_request_target` risks?
+
+ActionScope detects direct injection of attacker-controlled GitHub event
+fields (PR titles, issue bodies, branch names) into `run:` blocks, and flags
+`pull_request_target` jobs that combine untrusted event data with
+write-capable `GITHUB_TOKEN` permissions — the pattern behind the April 2026
+prt-scan attack.
+
+### How do I get GitHub Code Scanning alerts for my workflows?
+
+Run `actionscope scan . --output-format sarif --output-file results.sarif`
+and upload `results.sarif` to the GitHub Security tab via the
+`github/codeql-action/upload-sarif` action. ActionScope emits SARIF rules
+AS001–AS014 covering AWS exposure, OIDC trust, unpinned actions,
+compromised actions, script injection, and environment hardening.
+
+### How do I pin GitHub Actions to a full commit SHA?
+
+`actionscope scan . --resolve-pins` uses the GitHub API to look up the
+current full-SHA tip for every mutable `uses: owner/repo@vX` reference in
+your workflows and prints a suggested pinned version with the tag preserved
+as a comment.
+
+### What's the difference between ActionScope and actionlint, zizmor, or Checkov?
+
+actionlint validates workflow YAML syntax. zizmor and Scorecard detect
+workflow security patterns. Checkov scans IAM policies independently.
+ActionScope is the only tool that **crosses the boundary** — it ties a
+specific workflow to a specific IAM role to a specific blast radius.
+
+### Does ActionScope require AWS credentials?
+
+Only if you opt in to `--aws-verify`, which makes read-only IAM API calls to
+fetch live attached policies. See
+[`docs/aws-verify-permissions.md`](docs/aws-verify-permissions.md) for the
+exact permission set required.
+
 ## Documentation
 
 - [CLI reference](docs/cli-reference.md)
