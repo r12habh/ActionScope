@@ -138,6 +138,10 @@ runs:
           {
             echo 'findings-json<<JSON_EOF'
             cat /tmp/actionscope-results.json
+            # The JSON reporter does not emit a trailing newline; without one
+            # here `JSON_EOF` ends up appended to the closing brace, so the
+            # runner can't find the delimiter and rejects the output write.
+            echo ''
             echo JSON_EOF
           } >> "$GITHUB_OUTPUT"
           echo "credential-sources-count=$COUNT" >> "$GITHUB_OUTPUT"

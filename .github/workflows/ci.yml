@@ -87,3 +87,74 @@ jobs:
           python-version: '3.11'
       - run: pip install ruff
       - run: ruff check actionscope/ tests/
+
+  build-and-install:
+    name: Build wheel and install in fresh venv
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Twine metadata check
+        run: twine check dist/*
+
+      - name: Install the wheel into a fresh venv
+        # Catches the most common packaging regressions: missing data files
+        # (the compromised_actions.json database), broken entrypoints,
+        # forgotten MANIFEST entries. The dev/editable install path the rest
+        # of CI uses would not surface these.
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install dist/*.whl
+
+      - name: CLI smoke — --version
+        run: /tmp/fresh/bin/actionscope --version
+
+      - name: CLI smoke — --help
+        run: /tmp/fresh/bin/actionscope --help
+
+      - name: CLI smoke — scan a known fixture and validate findings
+        run: |
+          /tmp/fresh/bin/actionscope scan tests/fixtures/coverage_repo \
+            --output-format json --no-color > /tmp/wheel-scan.json
+
+          python3 - <<'PY'
+          import json, sys
+
+          d = json.load(open('/tmp/wheel-scan.json'))
+          summary = d.get('summary', {})
+
+          failures = []
+          if d.get('overall_risk') != 'critical':
+              failures.append(f"overall_risk={d.get('overall_risk')!r}, expected 'critical'")
+          if summary.get('credential_sources', 0) < 2:
+              failures.append(f"credential_sources={summary.get('credential_sources')}, expected >= 2")
+          if summary.get('compromised_actions', 0) < 1:
+              failures.append("compromised_actions=0; the bundled DB is missing or unreadable")
+          if summary.get('environment_issues', 0) < 1:
+              failures.append("environment_issues=0; the env analyzer is silent on a known-bad fixture")
+
+          if failures:
+              print("FAIL: wheel-installed CLI did not detect expected findings:", file=sys.stderr)
+              for f in failures:
+                  print(f"  - {f}", file=sys.stderr)
+              sys.exit(1)
+          print(f"OK: wheel-installed CLI overall_risk={d['overall_risk']}, summary={summary}")
+          PY
+
+      - name: Upload built artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: actionscope-dist
+          path: dist/
+          retention-days: 7

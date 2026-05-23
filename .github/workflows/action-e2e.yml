@@ -1,0 +1,131 @@
+name: Action E2E
+
+# Validates that the composite action defined in `action.yml` still works
+# end-to-end against a known fixture. Without this, regressions in the
+# action's shell glue (the kind dependabot bumps of upload-artifact /
+# download-artifact / codeql-action can introduce) only surface for real
+# users via "uses: r12habh/ActionScope@v0".
+#
+# Note: the action does `pip install actionscope` from PyPI by default, so
+# this job exercises action.yml against the *published* release. That makes
+# it a real-user-experience check for action.yml regressions, but it does
+# not test PR code changes end-to-end through the action. Combined with the
+# wheel-install job in ci.yml (which tests the CLI from a fresh wheel),
+# this gives full coverage of both delivery paths.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  action-e2e:
+    name: Local action against coverage_repo fixture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run the local action against the coverage_repo fixture
+        id: scan
+        uses: ./
+        with:
+          path: tests/fixtures/coverage_repo
+          # Disable the fail-on threshold so the workflow continues to the
+          # assertion step below regardless of risk level.
+          fail-on: ''
+          output-format: json
+          comment-pr: 'false'
+          upload-sarif: 'false'
+          save-state: 'false'
+          load-state: 'false'
+
+      - name: Assert outputs reflect expected findings
+        env:
+          OVERALL_RISK: ${{ steps.scan.outputs.overall-risk }}
+          CRED_COUNT: ${{ steps.scan.outputs.credential-sources-count }}
+          FINDINGS_JSON: ${{ steps.scan.outputs.findings-json }}
+        shell: bash
+        run: |
+          set -eu
+          echo "action.yml emitted outputs:"
+          echo "  overall-risk=${OVERALL_RISK}"
+          echo "  credential-sources-count=${CRED_COUNT}"
+          echo "  findings-json (size): ${#FINDINGS_JSON} bytes"
+
+          fail=0
+          if [ "${OVERALL_RISK}" != "critical" ]; then
+            echo "::error::action.yml output overall-risk='${OVERALL_RISK}', expected 'critical'"
+            fail=1
+          fi
+          if [ -z "${CRED_COUNT}" ] || [ "${CRED_COUNT}" -lt 2 ]; then
+            echo "::error::action.yml output credential-sources-count='${CRED_COUNT}', expected integer >= 2"
+            fail=1
+          fi
+          # findings-json was silently broken for the entire history of the
+          # action because the heredoc delimiter (JSON_EOF) ended up appended
+          # to the closing `}` of the JSON when the file lacked a trailing
+          # newline. Locking down a real parse here prevents the regression
+          # from coming back unnoticed.
+          if [ -z "${FINDINGS_JSON}" ]; then
+            echo "::error::action.yml output findings-json is empty"
+            fail=1
+          else
+            echo "${FINDINGS_JSON}" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          if d.get('overall_risk') != 'critical':
+              sys.exit(f\"findings-json overall_risk={d.get('overall_risk')!r}, expected 'critical'\")
+          if (d.get('summary') or {}).get('compromised_actions', 0) < 1:
+              sys.exit('findings-json does not include compromised_actions detection')
+          " || fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::action.yml composite step regression detected"
+            exit 1
+          fi
+          echo "OK: action.yml reports the fixture's expected findings"
+
+      - name: Assert fail-on threshold gates exit code
+        id: fail_on
+        uses: ./
+        continue-on-error: true
+        with:
+          path: tests/fixtures/coverage_repo
+          fail-on: critical
+          output-format: json
+          comment-pr: 'false'
+          upload-sarif: 'false'
+          save-state: 'false'
+          load-state: 'false'
+
+      - name: Verify fail-on=critical did fail the step on critical findings
+        # Run unconditionally so install errors, runtime crashes, or any
+        # outcome other than the expected `failure` are caught — gating on
+        # `outcome == 'success'` would let unrelated failures silently pass
+        # this job by skipping the assertion entirely.
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.fail_on.outcome }}
+        run: |
+          set -eu
+          echo "fail-on=critical step outcome: ${OUTCOME}"
+          case "${OUTCOME}" in
+            failure)
+              echo "OK: action correctly failed the step on a CRITICAL-risk fixture"
+              ;;
+            success)
+              echo "::error::fail-on=critical did NOT fail the step on a CRITICAL fixture"
+              exit 1
+              ;;
+            *)
+              echo "::error::fail-on step had an unexpected outcome='${OUTCOME}' (expected 'failure')"
+              echo "::error::this usually means the action errored before reaching the fail-on logic"
+              exit 1
+              ;;
+          esac
