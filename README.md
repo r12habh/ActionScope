@@ -6,6 +6,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/actionscope)](https://pypi.org/project/actionscope/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/actionscope)](https://pypi.org/project/actionscope/)
 [![CI](https://github.com/r12habh/ActionScope/actions/workflows/ci.yml/badge.svg)](https://github.com/r12habh/ActionScope/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/r12habh/ActionScope/branch/main/graph/badge.svg)](https://codecov.io/gh/r12habh/ActionScope)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-ActionScope-blue?logo=github)](https://github.com/marketplace/actions/actionscope)
 
@@ -231,6 +232,7 @@ actionscope scan . --output-format sarif      # for GitHub Security tab
 - [Known-compromised actions database](docs/compromised-actions.md)
 - [SARIF and GitHub Security tab](docs/sarif.md)
 - [AWS verification permissions](docs/aws-verify-permissions.md)
+- [Release runbook](docs/release-runbook.md)
 
 ## Contributing
 
