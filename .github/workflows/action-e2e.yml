@@ -104,8 +104,28 @@ jobs:
           load-state: 'false'
 
       - name: Verify fail-on=critical did fail the step on critical findings
-        if: steps.fail_on.outcome == 'success'
+        # Run unconditionally so install errors, runtime crashes, or any
+        # outcome other than the expected `failure` are caught — gating on
+        # `outcome == 'success'` would let unrelated failures silently pass
+        # this job by skipping the assertion entirely.
+        if: always()
         shell: bash
+        env:
+          OUTCOME: ${{ steps.fail_on.outcome }}
         run: |
-          echo "::error::fail-on=critical did not fail the step on a CRITICAL-risk fixture"
-          exit 1
+          set -eu
+          echo "fail-on=critical step outcome: ${OUTCOME}"
+          case "${OUTCOME}" in
+            failure)
+              echo "OK: action correctly failed the step on a CRITICAL-risk fixture"
+              ;;
+            success)
+              echo "::error::fail-on=critical did NOT fail the step on a CRITICAL fixture"
+              exit 1
+              ;;
+            *)
+              echo "::error::fail-on step had an unexpected outcome='${OUTCOME}' (expected 'failure')"
+              echo "::error::this usually means the action errored before reaching the fail-on logic"
+              exit 1
+              ;;
+          esac
