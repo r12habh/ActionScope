@@ -1,0 +1,44 @@
+name: Report Compromised GitHub Action
+description: Report a newly compromised or malicious GitHub Action for the database
+labels: ["security", "compromised-action"]
+title: "[COMPROMISED ACTION] action-owner/action-name"
+body:
+  - type: input
+    id: action
+    attributes:
+      label: Action name (owner/repo)
+      placeholder: "e.g. actions-cool/issues-helper"
+    validations:
+      required: true
+  - type: input
+    id: compromised_at
+    attributes:
+      label: Date/time of compromise (UTC)
+      placeholder: "e.g. 2026-05-18T19:10:00Z"
+  - type: input
+    id: advisory_url
+    attributes:
+      label: Advisory or report URL
+      placeholder: "https://..."
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description of the attack
+      placeholder: "What does the malicious code do?"
+    validations:
+      required: true
+  - type: input
+    id: affected_tags
+    attributes:
+      label: Affected version tags (comma-separated)
+      placeholder: "v3, v3.7.4, v3.8.0 (leave blank if all tags affected)"
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Verification
+      options:
+        - label: I have verified this is a real compromise, not a false alarm
+          required: true
+

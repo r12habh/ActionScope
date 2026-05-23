@@ -166,6 +166,38 @@ class AiAgentInjectionFinding:
 
 
 @dataclass
+class CompromisedActionFinding:
+    """A workflow step that uses a known-compromised GitHub Action."""
+
+    workflow_file: str
+    job_name: str
+    step_name: str
+    uses_ref: str
+    action_name: str
+    ref: str
+    is_sha_pinned: bool
+    compromise_date: str
+    advisory_url: str
+    description: str
+    risk_level: RiskLevel
+
+
+@dataclass
+class EnvironmentFinding:
+    """GitHub Environment hardening opportunity for an AWS deploy job."""
+
+    workflow_file: str
+    job_name: str
+    environment_name: Optional[str]
+    has_aws_credentials: bool
+    role_arn: Optional[str]
+    finding_type: str
+    risk_level: RiskLevel
+    description: str
+    recommendation: str
+
+
+@dataclass
 class PolicyFinding:
     """IAM policy analysis results from a supported policy source."""
 
@@ -216,6 +248,11 @@ class ScanResult:
     ai_agent_injection_findings: list[AiAgentInjectionFinding] = field(
         default_factory=list
     )
+    compromised_action_findings: list[CompromisedActionFinding] = field(
+        default_factory=list
+    )
+    environment_findings: list[EnvironmentFinding] = field(default_factory=list)
+    pin_suggestions: list = field(default_factory=list)
     policy_findings: list[PolicyFinding] = field(default_factory=list)
     bindings: list[WorkflowCredentialBinding] = field(default_factory=list)
     overall_risk: RiskLevel = RiskLevel.INFO
@@ -238,6 +275,8 @@ class ScanResult:
                 self.script_injection_findings,
                 self.artifact_poisoning_findings,
                 self.ai_agent_injection_findings,
+                self.compromised_action_findings,
+                self.environment_findings,
             )
             for finding in findings
         ]
@@ -280,6 +319,8 @@ class ScanResult:
             self.script_injection_findings,
             self.artifact_poisoning_findings,
             self.ai_agent_injection_findings,
+            self.compromised_action_findings,
+            self.environment_findings,
         ):
             findings.extend(
                 finding

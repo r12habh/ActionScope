@@ -10,6 +10,8 @@ from typing import Optional
 
 from actionscope.analyzers.ai_agent_injection import scan_for_ai_agent_injection
 from actionscope.analyzers.artifact_poisoning import scan_for_artifact_poisoning
+from actionscope.analyzers.compromised_actions import scan_for_compromised_actions
+from actionscope.analyzers.github_environments import scan_environment_usage
 from actionscope.analyzers.oidc_trust import scan_oidc_trust_policies
 from actionscope.analyzers.privesc_detector import detect_privesc_paths
 from actionscope.analyzers.script_injection import scan_workflows_for_injection
@@ -17,6 +19,8 @@ from actionscope.models import (
     AiAgentInjectionFinding,
     ArtifactPoisoningFinding,
     AwsCredentialSource,
+    CompromisedActionFinding,
+    EnvironmentFinding,
     GitHubTokenPermission,
     OidcTrustFinding,
     PolicyFinding,
@@ -141,6 +145,8 @@ def compute_overall_risk(
     script_injection_findings: list[ScriptInjectionFinding] | None = None,
     artifact_poisoning_findings: list[ArtifactPoisoningFinding] | None = None,
     ai_agent_injection_findings: list[AiAgentInjectionFinding] | None = None,
+    compromised_action_findings: list[CompromisedActionFinding] | None = None,
+    environment_findings: list[EnvironmentFinding] | None = None,
 ) -> RiskLevel:
     """Compute the highest risk across bindings, token perms, and policies."""
     binding_risks = [
@@ -163,6 +169,8 @@ def compute_overall_risk(
             script_injection_findings or [],
             artifact_poisoning_findings or [],
             ai_agent_injection_findings or [],
+            compromised_action_findings or [],
+            environment_findings or [],
         )
         for finding in findings
     ]
@@ -210,7 +218,22 @@ def build_scan_result(
         credential_sources,
         github_token_perms,
     )
-    errors.extend(oidc_errors + script_errors + artifact_errors + ai_errors)
+    compromised_action_findings, compromised_errors = _safe_scan_compromised_actions(
+        repo_path
+    )
+    environment_findings, environment_errors = _safe_scan_environments(
+        repo_path,
+        credential_sources,
+        oidc_trust_findings,
+    )
+    errors.extend(
+        oidc_errors
+        + script_errors
+        + artifact_errors
+        + ai_errors
+        + compromised_errors
+        + environment_errors
+    )
 
     bindings = build_bindings(credential_sources, policy_findings, repo_path)
     unmatched_findings = get_unmatched_findings(bindings, policy_findings)
@@ -222,6 +245,8 @@ def build_scan_result(
         script_injection_findings,
         artifact_poisoning_findings,
         ai_agent_injection_findings,
+        compromised_action_findings,
+        environment_findings,
     )
     workflow_count = len(
         {source.workflow_file for source in credential_sources}
@@ -230,6 +255,8 @@ def build_scan_result(
         | {finding.workflow_file for finding in script_injection_findings}
         | {finding.workflow_file for finding in artifact_poisoning_findings}
         | {finding.workflow_file for finding in ai_agent_injection_findings}
+        | {finding.workflow_file for finding in compromised_action_findings}
+        | {finding.workflow_file for finding in environment_findings}
     )
 
     result = ScanResult(
@@ -242,6 +269,8 @@ def build_scan_result(
         script_injection_findings=script_injection_findings,
         artifact_poisoning_findings=artifact_poisoning_findings,
         ai_agent_injection_findings=ai_agent_injection_findings,
+        compromised_action_findings=compromised_action_findings,
+        environment_findings=environment_findings,
         policy_findings=policy_findings,
         bindings=bindings,
         errors=errors,
@@ -347,6 +376,30 @@ def _safe_scan_ai_agent_injection(
         )
     except Exception as exc:
         return [], [_scan_error("AI agent injection scan", exc)]
+
+
+def _safe_scan_compromised_actions(
+    repo_path: str,
+) -> tuple[list[CompromisedActionFinding], list[str]]:
+    try:
+        return scan_for_compromised_actions(repo_path)
+    except Exception as exc:
+        return [], [_scan_error("compromised actions scan", exc)]
+
+
+def _safe_scan_environments(
+    repo_path: str,
+    credential_sources: list[AwsCredentialSource],
+    oidc_trust_findings: list[OidcTrustFinding],
+) -> tuple[list[EnvironmentFinding], list[str]]:
+    try:
+        return scan_environment_usage(
+            repo_path,
+            credential_sources,
+            oidc_trust_findings,
+        )
+    except Exception as exc:
+        return [], [_scan_error("GitHub Environments scan", exc)]
 
 
 def _scan_error(scan_name: str, exc: Exception) -> str:

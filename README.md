@@ -1,19 +1,29 @@
 # ActionScope
 
-> Map the AWS blast radius of your GitHub Actions workflows.
+> **Map the AWS blast radius of your GitHub Actions workflows.**
+> One command. No AWS credentials required. Instant plain-English results.
 
-[![PyPI](https://img.shields.io/pypi/v/actionscope)](https://pypi.org/project/actionscope/)
-[![GitHub Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-ActionScope-blue?logo=github)](https://github.com/marketplace/actions/actionscope)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/actionscope)](https://pypi.org/project/actionscope/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/actionscope)](https://pypi.org/project/actionscope/)
 [![CI](https://github.com/r12habh/ActionScope/actions/workflows/ci.yml/badge.svg)](https://github.com/r12habh/ActionScope/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/r12habh/ActionScope/branch/main/graph/badge.svg)](https://codecov.io/gh/r12habh/ActionScope)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-ActionScope-blue?logo=github)](https://github.com/marketplace/actions/actionscope)
+
+**Your GitHub Actions workflows hold AWS credentials. Do you know what they can do?**
 
 ActionScope reads your `.github/workflows/` files, Terraform IAM resources,
-and inline JSON IAM policies, then tells you — in plain English — what your
-CI/CD pipelines can actually do to your AWS environment.
+and JSON IAM policies, then tells you in plain English what your CI/CD
+pipeline can do in AWS if it is compromised.
 
-**It answers the question no other tool answers:**
-"If this workflow is compromised, what can an attacker do in AWS?"
+It also detects:
+- 🚨 **Known-compromised actions** (`actions-cool`, `tj-actions`, `trivy-action`)
+- 🔓 **OIDC trust policy misconfigurations** (wildcard org subjects, missing sub/aud)
+- 💉 **Script injection** (PR titles, issue bodies in `run:` blocks)
+- 🎭 **Artifact poisoning** (`workflow_run` + untrusted artifact execution)
+- 🤖 **AI agent prompt injection surfaces** (Claude Code, Copilot in CI)
+- 📌 **Unpinned actions** with SHA resolution
+
+<!-- Demo GIF placeholder: add docs/demo.gif after recording. -->
 
 ## Install
 
@@ -24,93 +34,225 @@ pip install actionscope
 ## Quick Start
 
 ```bash
+# Scan your repo (static analysis: no AWS credentials needed)
 actionscope scan .
+
+# Verify live AWS permissions (read-only IAM calls)
+actionscope scan . --aws-verify
+
+# Resolve unpinned tags to SHAs
+actionscope scan . --resolve-pins
+
+# Save state for PR delta comparison
+actionscope scan . --save-state
 ```
 
 ## Example Output
 
-```
+```text
 ActionScope — Blast Radius Report
 Path: /my-repo  |  Workflows: 2  |  Overall Risk: 🔴 CRITICAL
+
+⛔ KNOWN COMPROMISED ACTIONS (1 found)
+──────────────────────────────────────────────────────────────
+⛔ CRITICAL: actions-cool/issues-helper@v3 (issue-triage.yml)
+   Compromised 2026-05-18 — mutable tags may run credential-stealing code
+   Fix: Remove this action or pin to a verified pre-compromise SHA
+
+─────────────────────────────────────────────────────────────
 
 deploy.yml → deploy → Configure AWS credentials
   AWS Role: arn:aws:iam::123456789012:role/github-deploy-role
   Auth: OIDC ✓
 
   ┌─────────────────────────────┬────────────────────┬──────────┐
-  │ Action                      │ Access Level       │ Risk     │
-  ├─────────────────────────────┼────────────────────┼──────────┤
   │ iam:PassRole                │ Permissions mgmt   │ 🔴 CRIT  │
   │ ec2:TerminateInstances      │ Write              │ 🟠 HIGH  │
   │ s3:GetObject                │ Read               │ 🟢 LOW   │
   └─────────────────────────────┴────────────────────┴──────────┘
 
-  ⚠️  iam:PassRole on * — privilege escalation path exists
+  🔴 Privilege Escalation Path: iam:PassRole on * — can escalate to any role
 ```
 
 ## Use as a GitHub Action
 
 ```yaml
-- uses: r12habh/ActionScope@v0
-  with:
-    fail-on: high
-    comment-pr: true
+name: ActionScope Security Scan
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  security-events: write   # for SARIF upload
+  pull-requests: write     # for PR comments
+
+jobs:
+  actionscope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r12habh/ActionScope@v0
+        with:
+          fail-on: high          # fail CI if HIGH or above
+          comment-pr: true       # post findings as PR comment
+          upload-sarif: true     # show in GitHub Security tab
+          resolve-pins: true     # suggest SHA pins for unpinned actions
 ```
 
-## What ActionScope Adds Beyond Existing Tools
+## What Makes ActionScope Different
+
+ActionScope answers a question no other tool answers:
+
+> "This workflow assumes **this IAM role**. If the workflow is compromised,
+> what can an attacker **actually do** in your AWS account?"
 
 | Capability | actionlint | zizmor | Scorecard | ActionScope |
-|-----------|-----------|--------|-----------|-------------|
+|---|---|---|---|---|
 | Workflow syntax validation | ✅ | Partial | ❌ | Partial |
 | Security pattern detection | ❌ | ✅ | ✅ | ✅ |
-| GITHUB_TOKEN review | ❌ | ✅ | ✅ | ✅ |
-| Unpinned actions detection | ❌ | ✅ | ✅ | ✅ |
-| AWS credential source detection | ❌ | ❌ | ❌ | ✅ |
-| Workflow → IAM role correlation | ❌ | ❌ | ❌ | ✅ |
-| Blast-radius plain-English report | ❌ | ❌ | ❌ | ✅ |
-| SARIF / GitHub Security tab | ❌ | ✅ | ✅ | ✅ |
+| GITHUB_TOKEN permission review | ❌ | ✅ | ✅ | ✅ |
+| Unpinned action detection | ❌ | ✅ | ✅ | ✅ |
+| **Known-compromised action detection** | ❌ | ❌ | ❌ | **✅** |
+| **AWS credential source detection** | ❌ | ❌ | ❌ | **✅** |
+| **Workflow → IAM role correlation** | ❌ | ❌ | ❌ | **✅** |
+| **Live AWS IAM policy verification** | ❌ | ❌ | ❌ | **✅** |
+| **Blast radius in plain English** | ❌ | ❌ | ❌ | **✅** |
+| **OIDC trust policy analysis** | ❌ | ❌ | ❌ | **✅** |
+| **Script injection detection** | ❌ | Partial | ❌ | **✅** |
+| SARIF / GitHub Security tab | ❌ | ✅ | ✅ | **✅** |
 
 ## How It Works
 
-ActionScope performs **static analysis by default** — it never sends your code
-to any external service unless you explicitly enable live AWS verification.
+ActionScope performs **static analysis only** by default. It never sends your
+code to an external service and does not require AWS credentials unless you
+explicitly enable live AWS verification.
 
-1. Finds all `.github/workflows/*.yml` files
-2. Extracts AWS role ARNs and GITHUB_TOKEN permission declarations
-3. Finds matching IAM policies in Terraform or JSON files in your repo
-4. Classifies each IAM action by risk using the
-   [policy-sentry](https://github.com/salesforce/policy_sentry) database
-5. Outputs a plain-English blast radius report
-
-### What If My Policies Aren't in the Repo?
-
-```
-ℹ️  Policy not found in repo for role: arn:aws:iam::123456:role/ci-deploy
-💡  Run with --aws-verify to fetch live policies from AWS
+```text
+.github/workflows/*.yml
+terraform/**/*.tf          →  ActionScope  →  Blast Radius Report
+policies/**/*.json                              + PR Comment
+                                                + SARIF → GitHub Security Tab
 ```
 
-`--aws-verify` uses read-only IAM API calls to fetch the real attached
-policies for any role ARN found in your workflows. See
-[`docs/aws-verify-permissions.md`](docs/aws-verify-permissions.md) for the
-exact AWS permissions required.
+1. Find `aws-actions/configure-aws-credentials` in workflows
+2. Extract role ARNs and credential patterns
+3. Match roles to IAM policies in Terraform or JSON files
+4. Classify IAM actions using the `policy-sentry` action database
+5. Detect privilege escalation paths
+6. Check for known-compromised actions in the bundled database
+7. Output a plain-English blast radius report
 
-Release and Marketplace publishing steps are documented in
-[`docs/release-runbook.md`](docs/release-runbook.md).
+### Live AWS Verification (`--aws-verify`)
+
+```bash
+pip install actionscope[aws]
+actionscope scan . --aws-verify
+```
+
+Requires read-only IAM permissions:
+`iam:GetRole`, `iam:ListAttachedRolePolicies`, `iam:GetPolicy`,
+`iam:GetPolicyVersion`, `iam:ListRolePolicies`, `iam:GetRolePolicy`.
+
+See [docs/aws-verify-permissions.md](docs/aws-verify-permissions.md)
+for the minimal required policy.
+
+## Security Detectors
+
+### 🚨 Known-Compromised Actions
+
+Checks workflows against a curated database of GitHub Actions with documented
+supply chain compromises. Updated with each ActionScope release.
+
+Current entries: `actions-cool/issues-helper` (2026-05-18),
+`actions-cool/maintain-one-comment` (2026-05-18),
+`tj-actions/changed-files` (2025-03-19), and
+`aquasecurity/trivy-action` (2026-03-19).
+
+### 🔓 OIDC Trust Policy Analysis
+
+Detects wildcard org subjects, missing `sub`/`aud` conditions, and
+insufficient branch/environment scoping in GitHub OIDC trust policies.
+
+### 💉 Script Injection Detection
+
+Finds direct interpolation of attacker-controlled GitHub context values
+(`github.event.pull_request.title`, `github.event.issue.body`, etc.) into
+`run:` shell blocks: the "Pwn Request" attack class.
+
+### 🎭 Artifact Poisoning Detection
+
+Identifies `workflow_run` workflows that download and execute artifacts from
+potentially untrusted fork PR workflows with secret access.
+
+### 🤖 AI Agent Prompt Injection Surface
+
+Detects Claude Code, GitHub Copilot Agent, Gemini CLI and similar AI coding
+agents configured with write permissions in untrusted PR contexts.
+
+### 📌 Action Pinning + SHA Resolution
+
+Detects unpinned actions and resolves tags to current SHAs via the GitHub API.
+Distinguishes full SHAs (safe) from short SHAs (still mutable) and tags.
+
+### ⚡ IAM Privilege Escalation Paths
+
+Detects documented escalation paths including PassRole, CreatePolicyVersion,
+AttachRolePolicy, CreateAccessKey, Lambda+PassRole, EC2+PassRole,
+CloudFormation+PassRole, and more.
 
 ## Research
 
-ActionScope is backed by a public measurement study of 493 GitHub repositories
-and 3,981 workflow files that use AWS via GitHub Actions.
+ActionScope is backed by an empirical study of 493 public GitHub repositories
+and 3,981 GitHub Actions workflow files using AWS.
 
-Key findings from May 2026:
-- **95.5%** use at least one unpinned action (the supply-chain attack surface)
-- **58.2%** use static AWS access keys instead of OIDC
-- **44.0%** expose role ARNs directly in workflow files
-- **8.1%** use `pull_request_target` with write-capable permissions
+| Finding | Result |
+|---------|--------|
+| Using static AWS keys (not OIDC) | 58.2% of repos |
+| Using unpinned external actions | 95.5% of repos |
+| `pull_request_target` + write permissions | 8.1% of repos |
+| Exposing role ARNs directly in workflows | 44.0% of repos |
 
-→ [Full research findings](research/FINDINGS.md) | [Scanner and data](research/)
+→ [Full research findings](research/FINDINGS.md) |
+[Scanner and anonymized dataset](research/)
+
+## Output Formats
+
+```bash
+actionscope scan . --output-format terminal   # default: colored Rich output
+actionscope scan . --output-format json       # for CI integration
+actionscope scan . --output-format markdown   # for PR comments
+actionscope scan . --output-format sarif      # for GitHub Security tab
+```
+
+## Documentation
+
+- [CLI reference](docs/cli-reference.md)
+- [OIDC trust policy analysis](docs/oidc-trust.md)
+- [Known-compromised actions database](docs/compromised-actions.md)
+- [SARIF and GitHub Security tab](docs/sarif.md)
+- [AWS verification permissions](docs/aws-verify-permissions.md)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions.
+
+New to the codebase? Start with a
+[good first issue](https://github.com/r12habh/ActionScope/issues?q=label%3A%22good+first+issue%22).
+
+The most impactful contributions right now:
+
+1. **Add IAM actions to the risk database**
+2. **Add compromised action entries** when a new supply-chain attack happens
+3. **Add test fixtures** from real-world workflows, anonymized
+4. **Improve error messages** when policies are missing
 
 ## Built By
 
 Rishabh Singh.
+
 [GitHub](https://github.com/r12habh)
+
+---
+
+*ActionScope performs static analysis by default. It does not transmit your
+code or credentials to any external service.*
