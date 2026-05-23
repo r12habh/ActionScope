@@ -23,6 +23,22 @@ inputs:
     description: 'Upload SARIF results to GitHub Code Scanning'
     required: false
     default: 'false'
+  resolve-pins:
+    description: 'Resolve unpinned action tags to current SHA via GitHub API'
+    required: false
+    default: 'false'
+  save-state:
+    description: 'Save scan state for delta comparison in future scans'
+    required: false
+    default: 'false'
+  load-state:
+    description: 'Compare against previous scan state for delta reporting'
+    required: false
+    default: 'false'
+  state-artifact-name:
+    description: 'GitHub Actions artifact name for persisting scan state'
+    required: false
+    default: 'actionscope-state'
   comment-pr:
     description: 'Post findings as a PR comment (requires pull-requests: write permission)'
     required: false
@@ -64,16 +80,47 @@ runs:
           pip install actionscope
         fi
 
+    - name: Restore previous state
+      if: inputs.load-state == 'true'
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: ${{ inputs.state-artifact-name }}
+        path: .actionscope/
+
+    - name: Verify restored state
+      if: inputs.load-state == 'true'
+      shell: bash
+      run: |
+        if [ ! -f .actionscope/last_scan.json ]; then
+          echo "::warning::ActionScope: load-state is true but .actionscope/last_scan.json was not restored. Delta reporting will be skipped."
+        fi
+
     - name: Run ActionScope
       id: scan
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |
+        SCAN_FLAGS=""
+        if [ "${{ inputs.load-state }}" = "true" ]; then
+          SCAN_FLAGS="$SCAN_FLAGS --load-state"
+        fi
+        if [ "${{ inputs.save-state }}" = "true" ]; then
+          SCAN_FLAGS="$SCAN_FLAGS --save-state"
+        fi
+        if [ "${{ inputs.resolve-pins }}" = "true" ]; then
+          SCAN_FLAGS="$SCAN_FLAGS --resolve-pins"
+        fi
+
         actionscope scan ${{ inputs.path }} \
           --output-format json \
           --output-file /tmp/actionscope-results.json \
+          $SCAN_FLAGS \
           --no-color 2>/tmp/actionscope-stderr.txt || {
             echo "ActionScope scan failed. See stderr:"
             cat /tmp/actionscope-stderr.txt || true
+            exit 1
           }
 
         if [ -f /tmp/actionscope-results.json ]; then
@@ -107,6 +154,14 @@ runs:
               --format sarif > /tmp/actionscope-results.sarif || true
           fi
         fi
+
+    - name: Save state artifact
+      if: inputs.save-state == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.state-artifact-name }}
+        path: .actionscope/last_scan.json
+        retention-days: 30
 
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true'

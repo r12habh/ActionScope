@@ -2,6 +2,27 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.3.0] - 2026-05-21
+
+### Added
+- Known-compromised actions database for actions-cool/issues-helper,
+  actions-cool/maintain-one-comment, tj-actions/changed-files, and
+  aquasecurity/trivy-action, with CRITICAL flagging for compromised tags and
+  SARIF rule AS013.
+- GitHub Environments OIDC analyzer: detects AWS deploy jobs without
+  environment protection and trust policies not scoped to environments. SARIF
+  rule AS014.
+- Scan delta/diff mode: `--save-state` and `--load-state` persist scan results
+  and generate risk-change summaries for PR comments.
+- GitHub Actions artifact-based state persistence for CI delta tracking.
+- Auto-pin resolver: `--resolve-pins` resolves unpinned action tags to current
+  SHAs via the GitHub API with ready-to-paste replacement strings.
+
+### Security Response
+- Immediate response coverage for the actions-cool/issues-helper supply-chain
+  attack disclosed on 2026-05-18. Repositories using affected mutable tags now
+  receive a CRITICAL finding with advisory and remediation guidance.
+
 ## [0.2.0] - 2026-05-21
 
 ### Added

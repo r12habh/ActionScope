@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "actionscope"
-version = "0.2.0"
+version = "0.3.0"
 description = "Map the AWS blast radius of GitHub Actions workflows"
 readme = "README.md"
 license = {text = "MIT"}
@@ -18,6 +18,23 @@ keywords = [
   "cicd",
   "blast-radius",
   "devsecops",
+  "static-analysis",
+  "cloud-security",
+  "supply-chain",
+  "oidc",
+  "terraform",
+  "github-security",
+  "ci-cd-security",
+  "workflow-security",
+  "privilege-escalation",
+  "sarif",
+  "aws-iam",
+  "github-actions-security",
+  "secrets-scanning",
+  "infrastructure-security",
+  "devSecOps-tools",
+  "appsec",
+  "cloud-blast-radius",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -64,6 +81,9 @@ actionscope = "actionscope.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["actionscope"]
+include = [
+  "/actionscope/data/compromised_actions.json",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [

@@ -195,6 +195,36 @@ def to_sarif(result: ScanResult) -> str:
             )
         )
 
+    for finding in result.compromised_action_findings:
+        results.append(
+            _make_result(
+                rule_id="AS013",
+                message=(
+                    f"Known-compromised action {finding.uses_ref}: "
+                    f"{finding.description} Advisory: {finding.advisory_url}"
+                ),
+                level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
+                security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
+                location_path=finding.workflow_file,
+                location_line=1,
+            )
+        )
+
+    for finding in result.environment_findings:
+        results.append(
+            _make_result(
+                rule_id="AS014",
+                message=(
+                    f"GitHub Environment issue ({finding.finding_type}): "
+                    f"{finding.description}"
+                ),
+                level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
+                security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
+                location_path=finding.workflow_file,
+                location_line=1,
+            )
+        )
+
     sarif_doc = {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -372,6 +402,38 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 rule_id="AS012" if finding.get("has_aws_secret_access") else "AS011",
                 message=str(
                     finding.get("description", "AI agent prompt injection surface")
+                ),
+                level=RISK_TO_SARIF_SEVERITY[risk],
+                security_severity=RISK_TO_SECURITY_SEVERITY[risk],
+                location_path=str(finding.get("workflow_file", "")),
+                location_line=1,
+            )
+        )
+
+    for finding in data.get("compromised_action_findings", []):
+        risk = _risk_from_string(str(finding.get("risk_level", "critical")))
+        results.append(
+            _make_result(
+                rule_id="AS013",
+                message=(
+                    f"Known-compromised action {finding.get('uses_ref')}: "
+                    f"{finding.get('description', '')} "
+                    f"Advisory: {finding.get('advisory_url', '')}"
+                ),
+                level=RISK_TO_SARIF_SEVERITY[risk],
+                security_severity=RISK_TO_SECURITY_SEVERITY[risk],
+                location_path=str(finding.get("workflow_file", "")),
+                location_line=1,
+            )
+        )
+
+    for finding in data.get("environment_findings", []):
+        risk = _risk_from_string(str(finding.get("risk_level", "info")))
+        results.append(
+            _make_result(
+                rule_id="AS014",
+                message=str(
+                    finding.get("description", "GitHub Environment issue")
                 ),
                 level=RISK_TO_SARIF_SEVERITY[risk],
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
@@ -667,6 +729,42 @@ def _build_rules() -> list[dict[str, Any]]:
             "helpUri": "https://github.com/r12habh/ActionScope#readme",
             "properties": {
                 "tags": ["security", "github-actions", "ai-agent", "aws"]
+            },
+        },
+        {
+            "id": "AS013",
+            "name": "KnownCompromisedAction",
+            "shortDescription": {
+                "text": "Workflow uses a known-compromised GitHub Action"
+            },
+            "fullDescription": {
+                "text": (
+                    "This workflow references a GitHub Action with a documented "
+                    "supply-chain compromise. Mutable tags can be retargeted to "
+                    "credential-stealing commits."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": ["security", "github-actions", "supply-chain"]
+            },
+        },
+        {
+            "id": "AS014",
+            "name": "GitHubEnvironmentOidcScope",
+            "shortDescription": {
+                "text": "Deploy job is missing GitHub Environment hardening"
+            },
+            "fullDescription": {
+                "text": (
+                    "AWS deploy workflows should use GitHub Environments and "
+                    "OIDC trust policies scoped to the environment subject so "
+                    "environment protection rules can gate role access."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": ["security", "github-actions", "oidc", "environment"]
             },
         },
     ]

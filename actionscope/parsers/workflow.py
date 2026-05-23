@@ -35,7 +35,11 @@ GitHubWorkflowLoader.yaml_implicit_resolvers = {
 
 def find_workflow_files(repo_path: str) -> list[str]:
     """Find GitHub Actions workflow YAML files under a repository path."""
-    workflow_dir = Path(repo_path).expanduser() / ".github" / "workflows"
+    path = Path(repo_path).expanduser()
+    if path.is_file() and path.suffix.lower() in {".yml", ".yaml"}:
+        return [str(path.resolve())]
+
+    workflow_dir = path / ".github" / "workflows"
     if not workflow_dir.is_dir():
         return []
 

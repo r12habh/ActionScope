@@ -13,7 +13,11 @@ from actionscope.analyzers.risk_engine import build_scan_result
 from actionscope.models import PolicyFinding, RiskLevel, ScanResult
 from actionscope.parsers.policy_json import scan_policy_files
 from actionscope.parsers.terraform import scan_terraform_files
-from actionscope.parsers.workflow import scan_workflows
+from actionscope.parsers.workflow import (
+    find_workflow_files,
+    parse_workflow_file,
+    scan_workflows,
+)
 from actionscope.reporters.json_reporter import to_json, write_json
 from actionscope.reporters.markdown import to_markdown, write_markdown
 from actionscope.reporters.terminal import render_no_aws_found, render_scan_result
@@ -67,6 +71,35 @@ def version_command() -> None:
 )
 @click.option("--no-color", is_flag=True, default=False)
 @click.option("--quiet", "-q", is_flag=True, default=False)
+@click.option(
+    "--save-state",
+    is_flag=True,
+    default=False,
+    help="Save scan state to .actionscope/last_scan.json",
+)
+@click.option(
+    "--load-state",
+    is_flag=True,
+    default=False,
+    help="Load previous scan state and compute a delta",
+)
+@click.option(
+    "--state-file",
+    default=".actionscope/last_scan.json",
+    help="Path to the ActionScope scan state file",
+)
+@click.option(
+    "--resolve-pins",
+    is_flag=True,
+    default=False,
+    help="Resolve unpinned action tags to current SHA via GitHub API",
+)
+@click.option(
+    "--github-token",
+    default=None,
+    envvar="GITHUB_TOKEN",
+    help="GitHub token for pin resolution API calls",
+)
 def scan(
     path: str,
     output_format: str,
@@ -75,6 +108,11 @@ def scan(
     aws_verify: bool,
     no_color: bool,
     quiet: bool,
+    save_state: bool,
+    load_state: bool,
+    state_file: str,
+    resolve_pins: bool,
+    github_token: str | None,
 ) -> None:
     """Scan a repository for AWS blast radius in GitHub Actions workflows."""
 
@@ -168,6 +206,20 @@ def scan(
             errors=all_errors + [f"Could not correlate scan results: {exc}"],
         )
 
+    if resolve_pins:
+        status_console.print("[dim]Resolving action pins via GitHub API...[/dim]")
+        result.pin_suggestions = _resolve_pin_suggestions(
+            repo_path,
+            github_token,
+        )
+
+    delta = None
+    if load_state:
+        from actionscope.state import compute_delta, load_scan_state
+
+        delta = compute_delta(load_scan_state(state_file), result)
+        result.delta = delta
+
     # Step 5: Handle a truly empty scan. Repos can have useful non-credential
     # findings such as OIDC trust-policy issues or script injection risks.
     if (
@@ -179,7 +231,7 @@ def scan(
             if not quiet:
                 render_no_aws_found(console)
             if output_file:
-                write_markdown(result, output_file)
+                write_markdown(result, output_file, delta=delta)
         elif output_format == "json":
             output = to_json(result)
             if output_file:
@@ -187,9 +239,9 @@ def scan(
             else:
                 print(output)
         elif output_format == "markdown":
-            md = to_markdown(result)
+            md = to_markdown(result, delta=delta)
             if output_file:
-                write_markdown(result, output_file)
+                write_markdown(result, output_file, delta=delta)
             else:
                 print(md)
         elif output_format == "sarif":
@@ -204,14 +256,16 @@ def scan(
                     )
             else:
                 print(output)
+        if save_state:
+            _save_state(result, repo_path, state_file, status_console, quiet)
         _exit_with_fail_on(result, fail_on)
 
     # Step 6: Render output
     if output_format == "terminal":
         if not quiet:
-            render_scan_result(result, console)
+            render_scan_result(result, console, delta=delta)
         if output_file:
-            write_markdown(result, output_file)
+            write_markdown(result, output_file, delta=delta)
     elif output_format == "json":
         output = to_json(result)
         if output_file:
@@ -219,9 +273,9 @@ def scan(
         else:
             print(output)
     elif output_format == "markdown":
-        md = to_markdown(result)
+        md = to_markdown(result, delta=delta)
         if output_file:
-            write_markdown(result, output_file)
+            write_markdown(result, output_file, delta=delta)
         else:
             print(md)
     elif output_format == "sarif":
@@ -236,6 +290,9 @@ def scan(
                 )
         else:
             print(output)
+
+    if save_state:
+        _save_state(result, repo_path, state_file, status_console, quiet)
 
     _exit_with_fail_on(result, fail_on)
 
@@ -302,6 +359,8 @@ def _has_reportable_findings(result: ScanResult) -> bool:
         (
             result.github_token_permissions,
             result.unpinned_actions,
+            result.compromised_action_findings,
+            result.environment_findings,
             result.policy_findings,
             result.oidc_trust_findings,
             result.script_injection_findings,
@@ -310,6 +369,50 @@ def _has_reportable_findings(result: ScanResult) -> bool:
             result.errors,
         )
     )
+
+
+def _resolve_pin_suggestions(
+    repo_path: str,
+    github_token: str | None,
+) -> list:
+    from actionscope.resolvers.pin_resolver import resolve_pins_for_workflow
+
+    suggestions = []
+    seen: set[str] = set()
+    for workflow_file in find_workflow_files(repo_path):
+        workflow_data = parse_workflow_file(workflow_file)
+        if not isinstance(workflow_data, dict):
+            continue
+        for pin in resolve_pins_for_workflow(
+            workflow_data,
+            workflow_file,
+            github_token=github_token,
+        ):
+            if pin.original_ref in seen:
+                continue
+            seen.add(pin.original_ref)
+            suggestions.append(pin)
+    return suggestions
+
+
+def _save_state(
+    result: ScanResult,
+    repo_path: str,
+    state_file: str,
+    status_console: Console,
+    quiet: bool,
+) -> None:
+    from actionscope.state import save_scan_state
+
+    try:
+        save_scan_state(result, repo_path, state_file)
+    except (PermissionError, OSError) as exc:
+        status_console.print(
+            f"[yellow]Warning: could not save state to {state_file}: {exc}[/yellow]"
+        )
+        return
+    if not quiet:
+        status_console.print(f"[dim]State saved to {state_file}[/dim]")
 
 
 def _finding_matches_verified_role(

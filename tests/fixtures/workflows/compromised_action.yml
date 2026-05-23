@@ -1,0 +1,15 @@
+name: Compromised Action Fixture
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Issue helper
+        uses: actions-cool/issues-helper@v3
+      - name: Maintain one comment
+        uses: actions-cool/maintain-one-comment@v1
+

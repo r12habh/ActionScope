@@ -29,11 +29,15 @@ them with Terraform or JSON policy files in your repo, and outputs a
 plain-English blast radius report. With --aws-verify, it calls the AWS IAM
 API (read-only) to fetch the actual attached policies.
 
+It also flags OIDC trust-policy mistakes, script injection, artifact
+poisoning, AI-agent prompt-injection surfaces, and known-compromised actions.
+
 To validate the problem, we scanned 493 public repos. Results:
 research/FINDINGS.md in the repo.
 
 Most surprising finding: 8.1% have pull_request_target
 with write permissions — the pattern the April 2026 prt-scan campaign exploited.
+Also: 95.5% used at least one action that was not pinned to a full SHA.
 
 GitHub: https://github.com/r12habh/ActionScope
 
@@ -59,7 +63,9 @@ So I built ActionScope. It:
 2. Finds aws-actions/configure-aws-credentials steps
 3. Extracts role ARNs
 4. Correlates with Terraform/JSON IAM policies in your repo
-5. Outputs a plain-English blast radius report
+5. Detects workflow-layer risks like unpinned/compromised actions,
+   script injection, artifact poisoning, and OIDC trust-policy mistakes
+6. Outputs a plain-English blast radius report
 
     actionscope scan .
 
@@ -77,6 +83,7 @@ repos with AWS-connected workflows. Findings document is in the repo.
 
 Most interesting finding: 8.1% use pull_request_target
 with write permissions — the exact pattern exploited in April's prt-scan attack.
+95.5% also use at least one external action that is not pinned to a full SHA.
 
 Repo: https://github.com/r12habh/ActionScope
 
@@ -108,8 +115,13 @@ Live mode (--aws-verify, read-only IAM calls):
 - Fetches the actual policies attached to the role
 - Real blast radius based on what AWS says the role can do
 
-Also detects 8 privilege escalation paths including PassRole + wildcard,
-CreatePolicyVersion, AttachRolePolicy, and Lambda + PassRole combos.
+Also detects 13 privilege escalation paths including PassRole + wildcard,
+CreatePolicyVersion, AttachRolePolicy, CreateAccessKey, CloudFormation +
+PassRole, and Lambda + PassRole combos.
+
+Newer checks cover OIDC trust-policy wildcards, direct script injection,
+artifact poisoning, AI agent prompt-injection surfaces, and known-compromised
+GitHub Actions.
 
 Install: pip install actionscope
 Required IAM perms for --aws-verify: just read-only IAM actions (policy in docs/)
@@ -148,8 +160,8 @@ effective permissions — not just what's in your repo.
 To understand how widespread the problem is, I scanned 493
 public repositories. 8.1% had pull_request_target with
 write permissions — the pattern that prt-scan exploited in April.
-58.2% still use static access keys instead of OIDC. Full findings
-in the repo.
+58.2% still use static access keys instead of OIDC. 95.5% had at least
+one external action not pinned to a full SHA. Full findings in the repo.
 
 It's open source, one command to install, and the --aws-verify analysis takes
 about 30 seconds for a typical repo.
