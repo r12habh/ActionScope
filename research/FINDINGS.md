@@ -94,6 +94,51 @@ in our sample have not adopted it.
 
 ---
 
+## What We Found Most Often
+
+Across 3,981 valid workflow files, we found 10,303 individual non-SHA-pinned
+external action references. The most common mutable references were:
+
+| Action reference | Count |
+|---|---:|
+| `actions/checkout@v4` | 982 |
+| `actions/checkout@v3` | 642 |
+| `actions/checkout@v2` | 446 |
+| `actions/checkout@v6` | 411 |
+| `aws-actions/configure-aws-credentials@v4` | 385 |
+| `aws-actions/configure-aws-credentials@v1` | 302 |
+| `actions/upload-artifact@v4` | 239 |
+| `actions/setup-node@v4` | 210 |
+| `actions/checkout@v5` | 166 |
+| `actions/github-script@v7` | 164 |
+
+This does not mean those actions are malicious. It means the workflow is
+trusting a mutable reference instead of an immutable commit SHA.
+
+---
+
+## Scanner Validation
+
+We manually reviewed a deterministic stratified sample of 50 workflows from
+the same GitHub Code Search population to check scanner accuracy.
+
+| Field | Precision | Recall |
+|---|---:|---:|
+| OIDC usage | 100.0% | 100.0% |
+| Static access-key usage | 100.0% | 90.5% |
+| Visible role ARN | 100.0% | 100.0% |
+| `permissions: write-all` | 100.0% | 100.0% |
+| `pull-requests: write` | 100.0% | 100.0% |
+| `pull_request_target` | 100.0% | 100.0% |
+| `pull_request_target` + write-capable permissions | 100.0% | 100.0% |
+| Non-SHA-pinned external actions | 100.0% | 95.7% |
+
+The sample intentionally overrepresented positive examples for rare fields
+such as `write-all` and `pull_request_target`, so the TP/TN counts are not
+population estimates. They measure detector accuracy on the labeled sample.
+
+---
+
 ## What We Couldn't Measure
 
 We cannot see the actual IAM permissions attached to the AWS roles these
@@ -109,7 +154,28 @@ That's the gap ActionScope fills for your own infrastructure:
 pip install actionscope
 actionscope scan .                    # correlates workflows with local IaC
 actionscope scan . --aws-verify       # fetches live AWS policies
+actionscope scan . --resolve-pins     # suggests full-SHA action pins
 ```
+
+---
+
+## What ActionScope Now Adds
+
+These workflow-level findings show what is visible from outside. For users
+scanning their own repos, ActionScope also maps the effective AWS blast radius
+by correlating workflow role ARNs with IAM policies from Terraform, JSON files,
+or live AWS verification.
+
+The current tool also detects:
+
+- Known-compromised GitHub Actions
+- OIDC trust-policy misconfigurations
+- Script injection through attacker-controlled GitHub event fields
+- Artifact poisoning through privileged `workflow_run` jobs
+- AI agent prompt-injection surfaces
+- Short SHA-like action refs that are not full immutable commit SHAs
+- GitHub Environment hardening opportunities
+- SARIF output for GitHub Code Scanning
 
 ---
 
@@ -121,7 +187,7 @@ The scanner that generated these findings is open source:
 git clone https://github.com/r12habh/ActionScope
 pip install requests tqdm
 export GITHUB_TOKEN=your_pat_here
-python research/scan_public_repos.py --limit 500
+python research/scan_public_repos.py --limit 500 --output research/findings_may2026.json
 ```
 
 Raw data (anonymized — no repo names): [research/findings_may2026.json](findings_may2026.json)

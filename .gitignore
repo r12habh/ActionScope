@@ -11,3 +11,6 @@ dist/
 .coverage
 htmlcov/
 .actionscope/
+
+# Unpublished research artifacts — see research/methodology.md "Publication Status".
+research/paper/
