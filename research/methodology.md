@@ -37,6 +37,20 @@ records:
 - `pull_request_target` paired with write-capable token permissions
 - Floating action references such as `actions/checkout@v4`
 
+## Validation
+
+We manually reviewed a deterministic stratified sample of 50 workflows from the
+same GitHub Code Search population. The sample intentionally overrepresents
+positive examples for rare fields such as `write-all`, `pull_request_target`,
+and visible role ARNs, so validation TP/TN counts should not be read as
+population frequencies.
+
+The validation sample found 100.0% precision across all measured fields.
+Recall was 100.0% for OIDC usage, visible role ARNs, `write-all`,
+`pull-requests: write`, `pull_request_target`, and the dangerous
+`pull_request_target` combination; 90.5% for static access-key usage; and
+95.7% for non-SHA-pinned external action references.
+
 ## Privacy and Publication
 
 Generated output is anonymized by default:
@@ -61,3 +75,9 @@ workflow-layer exposure, not full cloud blast radius.
 Record the generated timestamp, query, target repository count, and script
 version in the output JSON. Keep the raw anonymized JSON file with the report so
 others can recalculate the aggregate statistics.
+
+## Publication Status
+
+The technical paper draft is pending publication and should not be linked from
+public docs, README files, package metadata, or launch posts until explicitly
+approved for public sharing.

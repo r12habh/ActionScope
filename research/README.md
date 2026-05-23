@@ -11,10 +11,13 @@ pip install requests tqdm
 
 # Run the scanner (requires GitHub PAT with public_repo scope)
 export GITHUB_TOKEN=your_token_here
-python research/scan_public_repos.py --limit 500 --output research/findings.json
+python research/scan_public_repos.py --limit 500 --output research/findings_may2026.json
 
 # Generate the report
-python research/scan_public_repos.py --report --output research/findings.json
+python research/generate_report.py \
+  --input research/findings_may2026.json \
+  --output research/FINDINGS.md \
+  --csv research/findings_summary.csv
 ```
 
 ## What We Measured
@@ -28,11 +31,17 @@ We analyzed only public workflow YAML files. We did not:
 
 ## Findings
 
-See [FINDINGS.md](FINDINGS.md) once generated.
+See [FINDINGS.md](FINDINGS.md).
 
 The raw scanner JSON keeps repository names locally so interrupted runs can
 resume cleanly. Public artifacts generated from it use `repo_hash` and omit
 repository names.
+
+## Technical Paper
+
+A technical paper draft exists locally but is intentionally not linked from
+public documentation until publication. Do not add PDF, arXiv, or preprint
+links here until the paper has been approved for public sharing.
 
 ## Using ActionScope on Your Own Repo
 
