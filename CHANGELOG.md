@@ -2,7 +2,7 @@
 
 All notable changes to ActionScope are documented here.
 
-## [Unreleased]
+## [0.3.1] - 2026-05-23
 
 ### Fixed
 - `action.yml`: the `findings-json` output was silently dropped on every
