@@ -3,6 +3,12 @@
 This runbook captures the manual checklist for publishing ActionScope to PyPI,
 GitHub Releases, and GitHub Marketplace.
 
+> **Before merging any release-related PR**, follow the
+> [Merging Pull Requests](../CONTRIBUTING.md#merging-pull-requests) policy:
+> the branch must be up to date with `main` and CI must be green on the
+> rebased commit, not on a stale base. This catches conflicts that
+> `mergeable: true` does not.
+
 ## PyPI Trusted Publishing
 
 1. Open [PyPI Trusted Publishers](https://pypi.org/manage/account/publishing/).
