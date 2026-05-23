@@ -99,6 +99,20 @@ def test_compute_delta_resolved_finding_types() -> None:
     assert delta.resolved_finding_types == ["compromised:actions-cool/issues-helper"]
 
 
+def test_compute_delta_handles_malformed_previous_state() -> None:
+    previous = {
+        "overall_risk": "high",
+        "finding_counts": "bad",
+        "oidc_issue_count": None,
+    }
+
+    delta = compute_delta(previous, _result(RiskLevel.HIGH))
+
+    assert delta.previous_critical_count == 0
+    assert delta.previous_high_count == 0
+    assert isinstance(delta.risk_changed, bool)
+
+
 def test_save_load_round_trip(tmp_path: Path) -> None:
     state_file = tmp_path / "last_scan.json"
 

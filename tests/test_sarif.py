@@ -21,7 +21,7 @@ from actionscope.models import (
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
 )
-from actionscope.reporters.sarif import to_sarif, write_sarif
+from actionscope.reporters.sarif import to_sarif, to_sarif_from_dict, write_sarif
 
 
 def _credential_source(uses_access_keys: bool = False) -> AwsCredentialSource:
@@ -370,4 +370,40 @@ def test_environment_finding_produces_as014_result() -> None:
     )
     data = _sarif_data(result)
 
+    assert "AS014" in {result["ruleId"] for result in _results(data)}
+
+
+def test_compromised_action_from_dict_produces_as013_result() -> None:
+    data = json.loads(
+        to_sarif_from_dict(
+            {
+                "compromised_action_findings": [
+                    {
+                        "workflow_file": ".github/workflows/triage.yml",
+                        "uses_ref": "actions-cool/issues-helper@v3",
+                        "description": "compromised",
+                        "advisory_url": "https://example.com/advisory",
+                        "risk_level": "critical",
+                    }
+                ]
+            }
+        )
+    )
+    assert "AS013" in {result["ruleId"] for result in _results(data)}
+
+
+def test_environment_finding_from_dict_produces_as014_result() -> None:
+    data = json.loads(
+        to_sarif_from_dict(
+            {
+                "environment_findings": [
+                    {
+                        "workflow_file": ".github/workflows/deploy.yml",
+                        "risk_level": "medium",
+                        "description": "missing environment",
+                    }
+                ]
+            }
+        )
+    )
     assert "AS014" in {result["ruleId"] for result in _results(data)}

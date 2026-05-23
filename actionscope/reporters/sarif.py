@@ -411,6 +411,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
         )
 
     for finding in data.get("compromised_action_findings", []):
+        risk = _risk_from_string(str(finding.get("risk_level", "critical")))
         results.append(
             _make_result(
                 rule_id="AS013",
@@ -419,8 +420,8 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                     f"{finding.get('description', '')} "
                     f"Advisory: {finding.get('advisory_url', '')}"
                 ),
-                level="error",
-                security_severity="10.0",
+                level=RISK_TO_SARIF_SEVERITY[risk],
+                security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                 location_path=str(finding.get("workflow_file", "")),
                 location_line=1,
             )

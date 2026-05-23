@@ -162,3 +162,65 @@ def test_multiple_jobs_are_analyzed_independently() -> None:
     )
 
     assert {finding.job_name for finding in findings} == {"deploy", "release"}
+
+
+def test_trust_finding_only_affects_matching_role_job() -> None:
+    """A trust finding for role A must not generate a finding for job B using role B."""
+    deploy_arn = "arn:aws:iam::123456789012:role/deploy-role"
+    release_arn = "arn:aws:iam::123456789012:role/release-role"
+
+    workflow = {
+        "jobs": {
+            "deploy": {
+                "environment": "production",
+                "steps": [{"run": "terraform apply"}],
+            },
+            "release": {
+                "environment": "production",
+                "steps": [{"run": "aws s3 sync dist s3://bucket"}],
+            },
+        }
+    }
+    credentials = [
+        AwsCredentialSource(
+            workflow_file="deploy.yml",
+            job_name="deploy",
+            step_name="Configure AWS",
+            role_arn=deploy_arn,
+            uses_access_keys=False,
+            uses_oidc=True,
+            aws_region="us-east-1",
+        ),
+        AwsCredentialSource(
+            workflow_file="deploy.yml",
+            job_name="release",
+            step_name="Configure AWS",
+            role_arn=release_arn,
+            uses_access_keys=False,
+            uses_oidc=True,
+            aws_region="us-east-1",
+        ),
+    ]
+    trust_findings = [
+        OidcTrustFinding(
+            source_file="terraform/iam.tf",
+            role_name="deploy-role",
+            role_arn=deploy_arn,
+            issue_id="ref_scoped",
+            issue_description="Branch-scoped trust",
+            risk_level=RiskLevel.MEDIUM,
+            evidence="condition: StringLike, :ref:refs/heads/main",
+            recommendation="Use environment scope",
+        )
+    ]
+
+    findings = analyze_environment_usage(
+        workflow,
+        "deploy.yml",
+        credentials,
+        trust_findings,
+    )
+
+    job_names = {f.job_name for f in findings}
+    assert "deploy" in job_names
+    assert "release" not in job_names

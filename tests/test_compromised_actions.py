@@ -154,6 +154,27 @@ def test_compromised_action_description_is_non_empty() -> None:
     assert findings[0].description
 
 
+def test_workflow_scan_unknown_sha_produces_no_finding_when_refs_explicit() -> None:
+    """SHA pins not in the explicit affected_refs list must not produce findings."""
+    workflow = {
+        "jobs": {
+            "triage": {
+                "steps": [
+                    {"uses": f"actions-cool/issues-helper@{FULL_SHA}"},
+                ],
+            }
+        }
+    }
+
+    findings = check_workflow_for_compromised_actions(
+        workflow,
+        "workflow.yml",
+        load_compromised_actions(),
+    )
+
+    assert findings == []
+
+
 def test_sha_pinned_known_compromised_action_is_high_not_critical() -> None:
     workflow = {
         "jobs": {
