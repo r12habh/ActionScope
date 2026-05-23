@@ -47,12 +47,14 @@ jobs:
         env:
           OVERALL_RISK: ${{ steps.scan.outputs.overall-risk }}
           CRED_COUNT: ${{ steps.scan.outputs.credential-sources-count }}
+          FINDINGS_JSON: ${{ steps.scan.outputs.findings-json }}
         shell: bash
         run: |
           set -eu
           echo "action.yml emitted outputs:"
           echo "  overall-risk=${OVERALL_RISK}"
           echo "  credential-sources-count=${CRED_COUNT}"
+          echo "  findings-json (size): ${#FINDINGS_JSON} bytes"
 
           fail=0
           if [ "${OVERALL_RISK}" != "critical" ]; then
@@ -62,6 +64,24 @@ jobs:
           if [ -z "${CRED_COUNT}" ] || [ "${CRED_COUNT}" -lt 2 ]; then
             echo "::error::action.yml output credential-sources-count='${CRED_COUNT}', expected integer >= 2"
             fail=1
+          fi
+          # findings-json was silently broken for the entire history of the
+          # action because the heredoc delimiter (JSON_EOF) ended up appended
+          # to the closing `}` of the JSON when the file lacked a trailing
+          # newline. Locking down a real parse here prevents the regression
+          # from coming back unnoticed.
+          if [ -z "${FINDINGS_JSON}" ]; then
+            echo "::error::action.yml output findings-json is empty"
+            fail=1
+          else
+            echo "${FINDINGS_JSON}" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          if d.get('overall_risk') != 'critical':
+              sys.exit(f\"findings-json overall_risk={d.get('overall_risk')!r}, expected 'critical'\")
+          if (d.get('summary') or {}).get('compromised_actions', 0) < 1:
+              sys.exit('findings-json does not include compromised_actions detection')
+          " || fail=1
           fi
 
           if [ "$fail" -ne 0 ]; then

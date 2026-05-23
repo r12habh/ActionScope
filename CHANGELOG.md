@@ -4,6 +4,16 @@ All notable changes to ActionScope are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- `action.yml`: the `findings-json` output was silently dropped on every
+  invocation because the heredoc closing delimiter `JSON_EOF` was appended to
+  the closing `}` of the scan result rather than placed on its own line
+  (caused by the JSON reporter not emitting a trailing newline). GitHub
+  Actions emitted "Unable to process file command 'output' successfully" and
+  the output was empty. Users consuming `steps.x.outputs.findings-json` now
+  receive the full JSON document as documented. Discovered by the new
+  Action E2E CI check.
+
 ### Changed
 - Minimum required Click version bumped from `>=8.0` to `>=8.2`. The test
   suite relies on `Result.stdout` / `Result.stderr` being separate attributes
