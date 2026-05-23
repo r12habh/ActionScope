@@ -29,6 +29,8 @@ import pytest
 from click.testing import CliRunner
 
 from actionscope.cli import main
+from actionscope.models import CompromisedActionFinding, RiskLevel, ScanResult
+from actionscope.reporters.sarif import to_sarif
 
 FIXTURE = str(Path(__file__).resolve().parent / "fixtures" / "coverage_repo")
 
@@ -62,9 +64,17 @@ def test_version_is_exactly_2_1_0(sarif_doc: dict) -> None:
 
 
 def test_schema_url_is_present_and_well_formed(sarif_doc: dict) -> None:
-    """The $schema URL is required by SARIF tooling for validation."""
-    schema = sarif_doc.get("$schema") or sarif_doc.get("schema")
-    assert isinstance(schema, str), "$schema field missing or non-string"
+    """The `$schema` URL field is required by SARIF tooling for validation.
+
+    Strictly checks for the `$schema` key (not the unprefixed `schema`) so a
+    regression that accidentally emits the wrong field name surfaces here
+    instead of silently passing.
+    """
+    assert "$schema" in sarif_doc, "top-level `$schema` field is missing"
+    schema = sarif_doc["$schema"]
+    assert isinstance(schema, str), (
+        f"$schema must be a string, got {type(schema).__name__}"
+    )
     assert schema.startswith("http"), f"$schema must be a URL, got {schema!r}"
 
 
@@ -178,12 +188,11 @@ def test_security_severity_is_numeric_in_range(sarif_doc: dict) -> None:
         )
 
 
-def test_AS013_severity_is_not_blindly_max_for_high_finding(sarif_doc: dict) -> None:
-    """AS013 (known-compromised action) severity must reflect the finding's
-    actual risk level rather than always emitting 10.0. The coverage_repo
-    fixture's compromised action is mutable-tag-pinned (CRITICAL), so 10.0 is
-    expected here — but the test exists to lock down the *path* so a future
-    HIGH-risk SHA-pinned compromise doesn't get falsely escalated.
+def test_AS013_critical_finding_maps_to_critical_severity_band(
+    sarif_doc: dict,
+) -> None:
+    """For the coverage_repo's CRITICAL AS013 finding, SARIF severity must be
+    in the critical band (>=9.0). This locks down the CRITICAL path.
     """
     as013_results = [
         r for r in sarif_doc["runs"][0]["results"]
@@ -192,13 +201,53 @@ def test_AS013_severity_is_not_blindly_max_for_high_finding(sarif_doc: dict) -> 
     assert as013_results, "fixture must produce an AS013 result"
     for r in as013_results:
         sev = float((r.get("properties") or {}).get("security-severity", "0"))
-        # Compromised mutable tag = critical -> severity 9.0-10.0 expected.
-        # A HIGH-pinned compromise would map to 7.0-8.9.
-        # Either is acceptable; what's not acceptable is a stray 0 or >10.
-        assert 7.0 <= sev <= 10.0, (
-            f"AS013 severity {sev} is outside the critical/high band "
-            "(probably a regression in the SARIF severity mapping)"
+        assert 9.0 <= sev <= 10.0, (
+            f"AS013 CRITICAL finding mapped to security-severity={sev}, "
+            "expected in the critical band [9.0, 10.0]"
         )
+
+
+def test_AS013_high_finding_does_not_get_critical_severity() -> None:
+    """A HIGH-risk AS013 finding must map to severity in the HIGH band
+    (around 7.x), not the CRITICAL band (9.0+).
+
+    This is the actual regression guard for the AS013 hardcoded `10.0` bug
+    we caught in code review: if a future implementation collapses all AS013
+    severities to a single constant, this test produces a HIGH-risk finding
+    and proves the emitted severity tracks the risk level rather than being
+    constant.
+    """
+    high_finding = CompromisedActionFinding(
+        workflow_file=".github/workflows/triage.yml",
+        job_name="triage",
+        step_name="Maintain one comment",
+        uses_ref=(
+            "actions-cool/maintain-one-comment@"
+            "11bd71901bbe5b1630ceea73d27597364c9af683"
+        ),
+        action_name="actions-cool/maintain-one-comment",
+        ref="11bd71901bbe5b1630ceea73d27597364c9af683",
+        is_sha_pinned=True,
+        compromise_date="2026-05-18T19:10:24Z",
+        advisory_url="https://example.com/advisory",
+        description="ambiguous SHA pin of a known-compromised action",
+        risk_level=RiskLevel.HIGH,
+    )
+    result = ScanResult(compromised_action_findings=[high_finding])
+    sarif = json.loads(to_sarif(result))
+
+    as013 = [r for r in sarif["runs"][0]["results"] if r["ruleId"] == "AS013"]
+    assert len(as013) == 1, "expected exactly one AS013 result from one finding"
+    sev = float((as013[0].get("properties") or {}).get("security-severity", "0"))
+    assert 7.0 <= sev < 9.0, (
+        f"HIGH AS013 finding mapped to security-severity={sev}; expected the "
+        "HIGH band [7.0, 9.0). A hardcoded constant (e.g. 10.0) would fail "
+        "here, which is the point of this test."
+    )
+    assert as013[0].get("level") != "error" or sev < 9.0, (
+        "level=error coupled with sev<9.0 means the level field follows the "
+        "severity mapping correctly"
+    )
 
 
 def test_rule_ids_used_in_results_are_declared_in_rules(sarif_doc: dict) -> None:

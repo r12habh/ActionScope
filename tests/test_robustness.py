@@ -287,7 +287,12 @@ def test_scan_path_that_does_not_exist_exits_cleanly(tmp_path: Path) -> None:
 
 
 def test_scan_path_is_a_file_not_a_directory(tmp_path: Path) -> None:
-    """Passing a single workflow file (not a directory) is supported."""
+    """Passing a single workflow file (not a directory) is supported.
+
+    `find_workflow_files()` explicitly accepts a `.yml`/`.yaml` file path, so
+    the scan must succeed and report the file's content, not silently fall
+    back to "0 workflows" or exit non-zero.
+    """
     wf = _make_workflow(
         tmp_path,
         "single.yml",
@@ -305,7 +310,40 @@ def test_scan_path_is_a_file_not_a_directory(tmp_path: Path) -> None:
     result = runner.invoke(
         main, ["scan", str(wf), "--output-format", "json", "--no-color"]
     )
+
     assert "Traceback" not in result.output
+    assert result.exit_code == 0
+    data, _ = json.JSONDecoder().raw_decode(result.output)
+    # actions/checkout@v4 is unpinned, so the file produces at least one
+    # finding and thus increments workflow_count.
+    assert data["workflow_count"] == 1
+    assert any(
+        f["uses"] == "actions/checkout@v4"
+        for f in data.get("unpinned_actions", [])
+    )
+
+
+@pytest.mark.xfail(
+    reason=(
+        "CLI currently emits 'Warning: Could not parse workflow file ...' "
+        "lines to stdout *after* the JSON payload when a workflow fails to "
+        "parse, which breaks any downstream `json.loads`. Tests in this file "
+        "work around it with raw_decode. This xfail tracks the desired future "
+        "behavior — warnings should go to stderr in JSON output mode. When "
+        "the CLI is fixed, this test starts XPASSing and the raw_decode "
+        "workaround in `_scan` can be removed."
+    ),
+    strict=False,
+)
+def test_json_output_is_pure_json_when_files_fail_to_parse(tmp_path: Path) -> None:
+    """Goal post: `json.loads(result.output)` succeeds even with parse errors."""
+    _make_workflow(tmp_path, "broken.yml", "name: x\non: [push\njobs:\n  : invalid\n")
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["scan", str(tmp_path), "--output-format", "json", "--no-color"]
+    )
+    # The full output should parse as one JSON document, with no trailing text.
+    json.loads(result.output)
 
 
 def test_yaml_with_extremely_long_step_name_is_handled(tmp_path: Path) -> None:

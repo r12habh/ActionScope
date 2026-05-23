@@ -21,6 +21,9 @@ from click.testing import CliRunner
 from actionscope.cli import main
 
 FIXTURE = str(Path(__file__).resolve().parent / "fixtures" / "coverage_repo")
+MEDIUM_ONLY_FIXTURE = str(
+    Path(__file__).resolve().parent / "fixtures" / "medium_only_repo"
+)
 
 
 @pytest.fixture(scope="module")
@@ -210,17 +213,48 @@ def test_markdown_output_mentions_all_detectors(tmp_path: Path) -> None:
 
 
 def test_fail_on_medium_triggered_by_environment_findings_alone() -> None:
-    """`--fail-on medium` must fail when only MEDIUM env findings exist.
+    """`--fail-on medium` must fail when MEDIUM env findings are the *only* signal.
 
-    Regression guard: the risk_engine HIGH-filter bug would let MEDIUM-only
-    scans return exit code 0 under --fail-on medium.
+    Uses the medium_only_repo fixture which is constructed to produce exactly
+    one MEDIUM environment finding and nothing else (no compromised actions,
+    no privesc paths, no script injection, no unpinned actions). If the
+    risk_engine HIGH-filter bug came back, overall_risk would drop to INFO,
+    `--fail-on medium` would exit 0, and this assertion would fail —
+    catching exactly the regression class.
     """
     runner = CliRunner()
-    result = runner.invoke(
+    json_result = runner.invoke(
         main,
-        ["scan", FIXTURE, "--fail-on", "medium", "--output-format", "json"],
+        [
+            "scan", MEDIUM_ONLY_FIXTURE,
+            "--output-format", "json", "--no-color",
+        ],
     )
-    assert result.exit_code == 1
+    data, _ = json.JSONDecoder().raw_decode(json_result.output)
+
+    # Lock down isolation: only the environment detector fires.
+    assert data["overall_risk"] == "medium"
+    assert data["summary"]["environment_issues"] == 1
+    for noisy in (
+        "compromised_actions",
+        "oidc_trust_issues",
+        "script_injection_risks",
+        "artifact_poisoning_risks",
+        "ai_agent_injection_risks",
+        "unpinned_actions",
+        "github_token_risks",
+    ):
+        assert data["summary"][noisy] == 0, (
+            f"medium_only_repo unexpectedly produced {noisy}={data['summary'][noisy]};"
+            f" this test relies on environment findings being the only signal"
+        )
+
+    # The actual regression guard: --fail-on medium must trip on MEDIUM alone.
+    fail_result = runner.invoke(
+        main,
+        ["scan", MEDIUM_ONLY_FIXTURE, "--fail-on", "medium", "--output-format", "json"],
+    )
+    assert fail_result.exit_code == 1
 
 
 def test_json_output_is_stable_across_runs() -> None:
