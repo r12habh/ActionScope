@@ -216,15 +216,11 @@ def _matching_sources(
     job_name: str,
     credential_sources: list,
 ) -> list[AwsCredentialSource]:
-    workflow_tail = Path(workflow_file).name
     return [
         source
         for source in credential_sources
         if getattr(source, "job_name", None) == job_name
-        and (
-            getattr(source, "workflow_file", None) == workflow_file
-            or Path(str(getattr(source, "workflow_file", ""))).name == workflow_tail
-        )
+        and getattr(source, "workflow_file", None) == workflow_file
     ]
 
 
@@ -237,8 +233,6 @@ def _sources_for_workflow(
         source
         for source in credential_sources
         if getattr(source, "workflow_file", None) == workflow_file
-        or Path(str(getattr(source, "workflow_file", ""))).name
-        == Path(workflow_file).name
     ]
     if sources:
         return sources

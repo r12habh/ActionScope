@@ -170,11 +170,7 @@ def compute_overall_risk(
             artifact_poisoning_findings or [],
             ai_agent_injection_findings or [],
             compromised_action_findings or [],
-            [
-                finding
-                for finding in (environment_findings or [])
-                if finding.risk_level >= RiskLevel.HIGH
-            ],
+            environment_findings or [],
         )
         for finding in findings
     ]

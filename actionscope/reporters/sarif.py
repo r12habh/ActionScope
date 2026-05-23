@@ -203,8 +203,8 @@ def to_sarif(result: ScanResult) -> str:
                     f"Known-compromised action {finding.uses_ref}: "
                     f"{finding.description} Advisory: {finding.advisory_url}"
                 ),
-                level="error",
-                security_severity="10.0",
+                level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
+                security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=finding.workflow_file,
                 location_line=1,
             )
