@@ -148,7 +148,11 @@ proves it.
 3. Wait for CI to finish on the rebased branch. Re-run any required checks
    that did not auto-trigger.
 4. Confirm all required checks are green on the rebased commit, not on the
-   stale commit.
+   stale commit. **`PENDING`, `IN_PROGRESS`, `QUEUED`, and `NEUTRAL` are not
+   green.** If even one configured check (CI, lint, CodeRabbit, GitGuardian,
+   self-scan, …) has not reported a final `SUCCESS`, the PR is not ready to
+   merge. Do not rationalize "all green except X (pending, not failing)" —
+   pending means it is still running, and "still running" is not "passed."
 5. Merge.
 
 ### Batches (multiple PRs at once)
@@ -169,6 +173,11 @@ deliberate decision to accept the risk; it should be reserved for cases
 where you have manually verified the combined result is safe (for example,
 two dependabot PRs that touch entirely different files). Document the
 reason in the PR or the commit message when you do this.
+
+**`--admin` is for bypassing the stale-base or review-required block on an
+otherwise-green PR. It is not for bypassing pending checks.** If any check
+is still `PENDING` or `IN_PROGRESS`, wait. The whole point of running the
+check is to read its result.
 
 ### Why this is more than dependabot hygiene
 
