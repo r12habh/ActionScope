@@ -26,7 +26,7 @@ class TestDemoRepoScan:
             ["scan", self.DEMO_REPO, "--output-format", "json"],
         )
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert "overall_risk" in data
         assert "findings" in data
 
@@ -36,7 +36,7 @@ class TestDemoRepoScan:
             main,
             ["scan", self.DEMO_REPO, "--output-format", "json"],
         )
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data["summary"]["credential_sources"] == 2
 
     def test_detects_passrole(self) -> None:
@@ -45,7 +45,7 @@ class TestDemoRepoScan:
             main,
             ["scan", self.DEMO_REPO, "--output-format", "json"],
         )
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         findings_with_passrole = [
             f for f in data["findings"] if f.get("has_passrole")
         ]
@@ -87,7 +87,7 @@ class TestDemoRepoScan:
             main,
             ["scan", self.DEMO_REPO, "--output-format", "json"],
         )
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         workflow_files = [f["workflow_file"] for f in data["findings"]]
         assert not any("test.yml" in wf for wf in workflow_files)
 
@@ -98,7 +98,7 @@ class TestDemoRepoScan:
             main,
             ["scan", self.DEMO_REPO, "--output-format", "json"],
         )
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert len(data["github_token_permissions"]) > 0
 
     def test_unpinned_actions_detected(self) -> None:
@@ -108,7 +108,7 @@ class TestDemoRepoScan:
             main,
             ["scan", self.DEMO_REPO, "--output-format", "json"],
         )
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
 
         assert data["summary"]["unpinned_actions"] >= 1
         assert any(
@@ -123,7 +123,7 @@ class TestDemoRepoScan:
             main,
             ["scan", self.DEMO_REPO, "--output-format", "sarif"],
         )
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
 
         assert data["version"] == "2.1.0"
         assert len(data["runs"][0]["results"]) > 0

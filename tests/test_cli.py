@@ -34,7 +34,7 @@ def test_scan_json_output_valid(runner: CliRunner, cli_repo_safe: Path) -> None:
         ["scan", str(cli_repo_safe), "--output-format", "json"],
     )
     assert result.exit_code == 0
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert "overall_risk" in data
 
 
@@ -96,7 +96,7 @@ def test_scan_sarif_output_valid(runner: CliRunner, cli_repo_safe: Path) -> None
         ["scan", str(cli_repo_safe), "--output-format", "sarif"],
     )
     assert result.exit_code == 0
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data["version"] == "2.1.0"
 
 

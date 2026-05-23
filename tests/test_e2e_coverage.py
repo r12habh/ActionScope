@@ -37,7 +37,7 @@ def scan_json() -> dict:
         "scan should succeed (exit 0) without --fail-on; got %d. Output: %s"
         % (result.exit_code, result.output[:500])
     )
-    return json.loads(result.output)
+    return json.loads(result.stdout)
 
 
 def test_overall_risk_is_critical(scan_json: dict) -> None:
@@ -230,7 +230,7 @@ def test_fail_on_medium_triggered_by_environment_findings_alone() -> None:
             "--output-format", "json", "--no-color",
         ],
     )
-    data, _ = json.JSONDecoder().raw_decode(json_result.output)
+    data = json.loads(json_result.stdout)
 
     # Lock down isolation: only the environment detector fires.
     assert data["overall_risk"] == "medium"
@@ -265,7 +265,7 @@ def test_json_output_is_stable_across_runs() -> None:
         result = runner.invoke(
             main, ["scan", FIXTURE, "--output-format", "json", "--no-color"]
         )
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         return {
             "overall_risk": data["overall_risk"],
             "summary": data["summary"],
