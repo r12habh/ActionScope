@@ -30,27 +30,33 @@ It also detects:
 - 📌 **Unpinned actions** with SHA resolution
 
 <!-- Demo GIF placeholder: add docs/demo.gif after recording. -->
+<!-- To generate: `pip install -e . && vhs docs/demo.tape` -->
 
-## Install
+## Try it on your repo in 30 seconds
 
 ```bash
 pip install actionscope
+cd /path/to/your/repo-with-github-actions
+actionscope scan .
 ```
 
-## Quick Start
+That's it. No AWS credentials needed, no telemetry, no sign-up. Static
+analysis runs in under a second on a typical repo. If you have nothing
+relevant, you get `Overall Risk: ℹ️ INFO`. If you have something, you'll
+see exactly what and why.
+
+**Want a guided first-scan walkthrough?** See
+[**Your First Scan**](https://r12habh.github.io/ActionScope/tutorials/first-scan/)
+— 5 minutes from install to understanding the output.
+
+## Common flags
 
 ```bash
-# Scan your repo (static analysis: no AWS credentials needed)
-actionscope scan .
-
-# Verify live AWS permissions (read-only IAM calls)
-actionscope scan . --aws-verify
-
-# Resolve unpinned tags to SHAs
-actionscope scan . --resolve-pins
-
-# Save state for PR delta comparison
-actionscope scan . --save-state
+actionscope scan . --aws-verify        # fetch live IAM policies (read-only)
+actionscope scan . --resolve-pins      # suggest full-SHA pins for unpinned actions
+actionscope scan . --fail-on high      # exit 1 if any finding is HIGH or above
+actionscope scan . --output-format sarif --output-file results.sarif
+actionscope scan . --save-state        # save state for PR delta comparison
 ```
 
 ## Example Output
@@ -293,9 +299,14 @@ exact permission set required.
 
 ## Documentation
 
+📖 **Full docs site:** <https://r12habh.github.io/ActionScope/>
+
+- **[First Scan Tutorial](https://r12habh.github.io/ActionScope/tutorials/first-scan/)** — install → first scan → reading the output, in 5 minutes
+- **[FAQ](https://r12habh.github.io/ActionScope/faq/)** — empty scans, `policy_source: not_found`, `--aws-verify` safety, DB refresh cadence, tool comparisons
+- [Compromised Actions Database](https://r12habh.github.io/ActionScope/compromised-actions-database/) — every action ActionScope flags, with permalinks
 - [CLI reference](docs/cli-reference.md)
 - [OIDC trust policy analysis](docs/oidc-trust.md)
-- [Known-compromised actions database](docs/compromised-actions.md)
+- [Known-compromised actions detector](docs/compromised-actions.md)
 - [SARIF and GitHub Security tab](docs/sarif.md)
 - [AWS verification permissions](docs/aws-verify-permissions.md)
 - [Release runbook](docs/release-runbook.md)
