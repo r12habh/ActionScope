@@ -75,6 +75,21 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
+## Building the Docs
+
+```bash
+pip install -e ".[docs]"
+mkdocs build --strict
+mkdocs serve
+```
+
+With `uv`:
+
+```bash
+uv pip install -e ".[docs]"
+uv run mkdocs build --strict
+```
+
 ## AI Code Review
 
 ActionScope uses CodeRabbit as an additional AI pull request reviewer for this

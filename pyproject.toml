@@ -68,6 +68,7 @@ dev = [
   "hatchling>=1.25",
   "twine>=5.0",
 ]
+docs = ["mkdocs-material>=9.5"]
 research = ["requests>=2.31", "tqdm>=4.66"]
 
 [project.urls]
