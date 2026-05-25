@@ -1,0 +1,93 @@
+site_name: ActionScope
+site_description: >-
+  Map the AWS blast radius of GitHub Actions workflows. Detects compromised
+  actions, OIDC trust misconfigurations, script injection, IAM privilege
+  escalation paths, and unpinned actions.
+site_url: https://r12habh.github.io/ActionScope/
+site_author: Rishabh Singh
+repo_name: r12habh/ActionScope
+repo_url: https://github.com/r12habh/ActionScope
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Rishabh Singh — MIT licensed
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.integrate
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/shield-check
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/r12habh/ActionScope
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/actionscope/
+  generator: false
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+# Internal docs that intentionally aren't published.
+exclude_docs: |
+  ai-code-review.md
+  demo.md
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: getting-started.md
+      - CLI Reference: cli-reference.md
+  - Detectors:
+      - Compromised Actions: compromised-actions.md
+      - OIDC Trust Policy: oidc-trust.md
+      - SARIF and Code Scanning: sarif.md
+  - Compromised Actions Database: compromised-actions-database.md
+  - Operations:
+      - AWS Verification Permissions: aws-verify-permissions.md
+      - Release Runbook: release-runbook.md

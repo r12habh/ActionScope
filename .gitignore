@@ -14,3 +14,6 @@ htmlcov/
 
 # Unpublished research artifacts — see research/methodology.md "Publication Status".
 research/paper/
+
+# mkdocs build output
+site/

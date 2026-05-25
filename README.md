@@ -9,6 +9,11 @@
 [![codecov](https://codecov.io/gh/r12habh/ActionScope/branch/main/graph/badge.svg)](https://codecov.io/gh/r12habh/ActionScope)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-ActionScope-blue?logo=github)](https://github.com/marketplace/actions/actionscope)
+[![Docs](https://img.shields.io/badge/docs-r12habh.github.io%2FActionScope-blue)](https://r12habh.github.io/ActionScope/)
+
+📖 **Full documentation:** <https://r12habh.github.io/ActionScope/>
+&nbsp;&middot;&nbsp;
+🛡️ **Compromised Actions Database:** <https://r12habh.github.io/ActionScope/compromised-actions-database/>
 
 **Your GitHub Actions workflows hold AWS credentials. Do you know what they can do?**
 
