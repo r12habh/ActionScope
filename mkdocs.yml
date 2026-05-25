@@ -82,6 +82,8 @@ nav:
   - Home: index.md
   - Getting Started:
       - Quick Start: getting-started.md
+      - First Scan Tutorial: tutorials/first-scan.md
+      - FAQ: faq.md
       - CLI Reference: cli-reference.md
   - Detectors:
       - Compromised Actions: compromised-actions.md
