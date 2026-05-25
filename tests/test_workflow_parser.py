@@ -292,6 +292,17 @@ def test_is_pinned_to_sha_returns_true_for_local_action() -> None:
     assert is_pinned_to_sha("./.github/actions/setup")
 
 
+def test_is_pinned_to_sha_returns_false_for_docker_tag() -> None:
+    assert is_pinned_to_sha("docker://alpine:3.20") is False
+
+
+def test_is_pinned_to_sha_returns_true_for_docker_digest() -> None:
+    assert is_pinned_to_sha(
+        "docker://ghcr.io/example/action@sha256:"
+        "c8a99f8a2c5d3e7f1a4b6c9d2e5f8a1b4c7d0e3f6a9b2c5d8e1f4a7b0c3d6e9f"
+    )
+
+
 def test_classify_action_ref_returns_tag_for_version_tag() -> None:
     assert classify_action_ref("actions/checkout@v4") == "tag"
 
@@ -323,6 +334,20 @@ def test_classify_action_ref_returns_sha_for_full_sha() -> None:
 
 def test_classify_action_ref_returns_local_for_relative_path() -> None:
     assert classify_action_ref("./action") == "local"
+
+
+def test_classify_action_ref_returns_tag_for_docker_image_tag() -> None:
+    assert classify_action_ref("docker://alpine:3.20") == "tag"
+
+
+def test_classify_action_ref_returns_sha_for_docker_image_digest() -> None:
+    assert (
+        classify_action_ref(
+            "docker://ghcr.io/example/action@sha256:"
+            "c8a99f8a2c5d3e7f1a4b6c9d2e5f8a1b4c7d0e3f6a9b2c5d8e1f4a7b0c3d6e9f"
+        )
+        == "sha"
+    )
 
 
 def test_find_unpinned_action_uses_returns_empty_for_sha_pinned_workflow() -> None:
@@ -378,6 +403,31 @@ def test_find_unpinned_action_uses_marks_short_sha() -> None:
     findings = find_unpinned_action_uses(workflow_data, "deploy.yml")
 
     assert findings[0]["pin_type"] == "short_sha"
+
+
+def test_find_unpinned_action_uses_flags_docker_tag_but_skips_digest() -> None:
+    workflow_data = {
+        "jobs": {
+            "build": {
+                "steps": [
+                    {"name": "Tagged", "uses": "docker://alpine:3.20"},
+                    {
+                        "name": "Digested",
+                        "uses": (
+                            "docker://ghcr.io/example/action@sha256:"
+                            "c8a99f8a2c5d3e7f1a4b6c9d2e5f8a1b4c7d0e3f6a9b2c5d8e1f4a7b0c3d6e9f"
+                        ),
+                    },
+                ]
+            }
+        }
+    }
+
+    findings = find_unpinned_action_uses(workflow_data, "build.yml")
+
+    assert len(findings) == 1
+    assert findings[0]["uses"] == "docker://alpine:3.20"
+    assert findings[0]["pin_type"] == "tag"
 
 
 def test_unpinned_action_finding_pin_type_short_sha() -> None:
