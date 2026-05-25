@@ -45,6 +45,33 @@ def test_fixture_workflow_produces_critical_finding() -> None:
     assert findings[0].risk_level is RiskLevel.CRITICAL
 
 
+def test_dawidd6_download_artifact_execution_is_detected() -> None:
+    data = {
+        "on": {"workflow_run": {"workflows": ["Build"], "types": ["completed"]}},
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {"uses": "dawidd6/action-download-artifact@v3"},
+                    {"run": "bash deploy.sh"},
+                    {
+                        "run": "echo ${{ secrets.DEPLOY_TOKEN }}",
+                    },
+                ]
+            }
+        },
+    }
+
+    findings = analyze_artifact_poisoning(data, "deploy.yml")
+
+    assert downloads_artifact_in_workflow(data) is True
+    assert executes_after_download(data) is True
+    assert findings[0].job_name == "deploy"
+    assert findings[0].risk_level is RiskLevel.CRITICAL
+    assert findings[0].downloads_artifacts is True
+    assert findings[0].executes_artifacts is True
+    assert findings[0].has_secret_access is True
+
+
 def test_workflow_with_download_but_no_execution_is_medium() -> None:
     data = {
         "on": {"workflow_run": {}},
