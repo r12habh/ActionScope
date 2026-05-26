@@ -88,6 +88,7 @@ nav:
   - Detectors:
       - Compromised Actions: compromised-actions.md
       - OIDC Trust Policy: oidc-trust.md
+      - AI Agent Prompt Injection: ai-agent-prompt-injection.md
       - SARIF and Code Scanning: sarif.md
   - Compromised Actions Database: compromised-actions-database.md
   - Operations:
