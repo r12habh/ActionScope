@@ -2,6 +2,26 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.3.5] - 2026-05-30
+
+### Fixed
+- **JSON policy file discovery now pre-filters by content before applying
+  the cap.** Each candidate file's first 4 KB is checked for both
+  `"Statement"` and `"Effect"` substrings; only files that pass count toward
+  the `--max-policy-files` cap. Live impact on monorepos:
+
+  | Repo | Before | After |
+  |---|---|---|
+  | `aws/aws-cdk` (13,860 JSON files) | 13,060 silently dropped | 1,591 dropped (87% reduction) |
+  | `boto/boto3` (2,056 JSON files) | 1,256 silently dropped | cap warning silent |
+  | `aws-amplify/amplify-cli` (2,371 JSON files) | 1,571 silently dropped | cap warning silent |
+
+  Files in the well-known policy directories (`iam/`, `policies/`,
+  `.github/`, `infra/`, `infrastructure/`, `terraform/`) bypass the
+  pre-filter entirely so the v0.3.3 "always scan common dirs" invariant
+  is preserved. Surfaced by live-scanning 8 production repos (aws-cdk,
+  karpenter, sentry, serverless, goreleaser, boto3, iceberg, amplify-cli).
+
 ## [0.3.4] - 2026-05-30
 
 ### Fixed
