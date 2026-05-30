@@ -134,7 +134,18 @@ def test_not_a_policy_returns_none_from_parse_policy_json_file() -> None:
 def test_scan_policy_files_returns_errors_for_unparseable_files(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "broken_policy.json").write_text("{", encoding="utf-8")
+    """A file that LOOKS like an IAM policy (passes the content pre-filter)
+    but is malformed JSON must surface as a parse error.
+
+    The fixture intentionally contains both `"Statement"` and `"Effect"` so
+    it passes the pre-filter, then fails the full JSON parse.
+    """
+    iam_dir = tmp_path / "iam"
+    iam_dir.mkdir()
+    (iam_dir / "broken_policy.json").write_text(
+        '{"Statement": [{"Effect": "Allow", "Action":',  # truncated JSON
+        encoding="utf-8",
+    )
 
     findings, errors = scan_policy_files(str(tmp_path))
 
@@ -283,18 +294,64 @@ def test_scan_policy_files_does_not_cap_common_dir_policies(tmp_path: Path) -> N
 def test_scan_policy_files_warns_actionably_when_other_cap_truncates(
     tmp_path: Path, capsys
 ) -> None:
-    """The cap warning must name how many files were skipped and the CLI flag."""
+    """The cap warning must name how many files were skipped and the CLI flag.
+
+    The fixture creates 10 files that all pass the content pre-filter (each
+    contains both `"Statement"` and `"Effect"` substrings) so the cap
+    actually triggers.
+    """
     noise_dir = tmp_path / "services" / "noise"
     noise_dir.mkdir(parents=True)
     for i in range(10):
-        (noise_dir / f"data-{i}.json").write_text(
-            '{"unused": "noise"}', encoding="utf-8"
+        (noise_dir / f"policyish-{i}.json").write_text(
+            '{"Statement": [{"Effect": "Allow", "Action": "s3:Get*",'
+            f' "Resource": "*", "_n": {i}}}',
+            encoding="utf-8",
         )
 
     scan_policy_files(str(tmp_path), max_other_files=3)
     err = capsys.readouterr().err
     assert "skipped" in err
     assert "--max-policy-files" in err
+
+
+def test_scan_policy_files_pre_filter_excludes_non_policy_json(
+    tmp_path: Path,
+) -> None:
+    """Files that don't contain `"Statement"`/`"Effect"` in their first 4 KB
+    must be excluded from the candidate set BEFORE the cap is applied.
+
+    Regression guard for the aws-cdk / boto3 / amplify-cli case where the
+    cap was triggered by thousands of package-lock / snapshot / CFN JSON
+    files that aren't IAM policies, silently dropping real policies in
+    non-standard locations.
+    """
+    noise_dir = tmp_path / "services" / "noise"
+    noise_dir.mkdir(parents=True)
+    # 50 obvious non-policy JSON files
+    for i in range(50):
+        (noise_dir / f"package-lock-{i}.json").write_text(
+            '{"name":"foo","version":"1.0.0","dependencies":{}}',
+            encoding="utf-8",
+        )
+
+    # One real policy in a non-standard directory
+    custom = tmp_path / "services" / "ci-deploy"
+    custom.mkdir(parents=True)
+    (custom / "policy.json").write_text(
+        '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow",'
+        ' "Action": "s3:GetObject", "Resource": "*"}]}',
+        encoding="utf-8",
+    )
+
+    # Set the cap very low — the 50 noise files must not push the real
+    # policy out, because they should be filtered out before the cap applies.
+    findings, _errors = scan_policy_files(str(tmp_path), max_other_files=2)
+    sources = {Path(f.source_file).name for f in findings}
+    assert "policy.json" in sources, (
+        "real policy in non-standard location must survive the cap when the "
+        "rest of the JSON files are non-policy noise"
+    )
 
 
 def test_scan_policy_files_zero_cap_means_unlimited(tmp_path: Path) -> None:

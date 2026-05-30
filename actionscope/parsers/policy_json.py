@@ -241,6 +241,38 @@ def _json_candidates(repo: Path) -> list[Path]:
     return candidates
 
 
+_PEEK_BYTES = 4096
+
+
+def _looks_like_iam_policy_by_peek(path: Path) -> bool:
+    """Cheap content sniff: does the first 4 KB of `path` look like it could
+    parse to an IAM policy?
+
+    Real IAM policies always contain both the `Statement` and `Effect` JSON
+    keys. Package locks, snapshots, CloudFormation parameter files, JSON
+    schemas, npm config, … almost never do. Reading the first 4 KB and
+    looking for both substrings is orders of magnitude cheaper than fully
+    parsing the JSON, which lets us pre-filter monorepos with tens of
+    thousands of unrelated JSON files (aws-cdk has ~14k) without inflating
+    the post-filter cap.
+
+    False positives (the file passes the peek but isn't actually a policy)
+    are harmless — the full parse downstream will reject them.
+
+    False negatives (a real policy without both substrings in the first
+    4 KB) are extremely unlikely for any well-formed policy under ~4 KB
+    and impossible for a top-level policy with `Statement` as a top-level
+    key (the leading whitespace + `{"Version":...,"Statement":[{"Effect":`
+    fits in the first ~200 bytes).
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(_PEEK_BYTES)
+    except (OSError, PermissionError):
+        return False
+    return b'"Statement"' in head and b'"Effect"' in head
+
+
 def _apply_cap(
     repo: Path,
     candidates: list[Path],
@@ -263,11 +295,16 @@ def _apply_cap(
     )
     common_files: list[Path] = []
     other_files: list[Path] = []
+    other_files_total = 0  # before content pre-filter
     for path in candidates:
         try:
             resolved = path.resolve()
         except OSError:
-            other_files.append(path)
+            # `path.resolve()` failures are rare; treat them as "other" and
+            # still apply the content pre-filter before counting toward the cap.
+            if _looks_like_iam_policy_by_peek(path):
+                other_files.append(path)
+            other_files_total += 1
             continue
         in_common_dir = False
         for root in common_roots:
@@ -278,17 +315,26 @@ def _apply_cap(
             except ValueError:
                 continue
         if in_common_dir:
+            # Files in well-known policy directories bypass the content
+            # pre-filter — the full parse downstream will validate them.
+            # This preserves the v0.3.3 invariant that common-dir files are
+            # always scanned regardless of cap.
             common_files.append(path)
         else:
-            other_files.append(path)
+            other_files_total += 1
+            if _looks_like_iam_policy_by_peek(path):
+                other_files.append(path)
 
     if len(other_files) > max_other:
         skipped = len(other_files) - max_other
         common_dirs_str = ", ".join(f"{d}/" for d in COMMON_POLICY_DIRS)
         _warn(
-            f"Found {len(candidates)} JSON files; scanning the {len(common_files)} "
-            f"in {common_dirs_str} plus the first {max_other} of {len(other_files)} "
-            f"others ({skipped} skipped). To scan all of them, pass "
+            f"Found {len(candidates)} JSON files ({other_files_total} outside "
+            f"common policy dirs); {len(other_files)} pass the content "
+            f"pre-filter as possible IAM policies. Scanning the "
+            f"{len(common_files)} in {common_dirs_str} plus the first "
+            f"{max_other} of those {len(other_files)} candidates ({skipped} "
+            f"skipped). To scan all candidates, pass "
             f"--max-policy-files <N> with a higher limit, or scan a narrower "
             f"sub-path."
         )
