@@ -2,6 +2,34 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.3.2] - 2026-05-25
+
+### Fixed
+- **Summary risk counts now include every detector, not just IAM policy
+  actions.** Live-scanning real repos showed
+  `Critical: 0 | High: 0 | Medium: 0` even when GITHUB_TOKEN, OIDC trust,
+  script injection, and environment detectors had emitted high/medium
+  findings — because the terminal and Markdown summary panels were
+  counting only IAM-action risk levels. Counts now reflect the actual
+  set of findings shown in the report.
+- **SARIF artifact locations are now repo-relative.** Previously, scans
+  run against an absolute path (e.g. `/tmp/<test-repo>`) emitted SARIF
+  `artifactLocation.uri` values containing that absolute path, which
+  GitHub Code Scanning would not match against repository files. The
+  reporter now resolves locations relative to `scan_path` and uses the
+  `%SRCROOT%` `uriBaseId`, with a graceful fallback when a finding's
+  workflow file is outside the scan path.
+- **Policy JSON parser is quiet for malformed non-policy JSON/JSONC.**
+  Files like `.devcontainer/devcontainer.json` (which contain `//`
+  comments and trailing commas, valid JSONC but invalid JSON) no longer
+  emit a noisy warning when they happen to live under a path
+  ActionScope checks for IAM policies.
+
+All three issues were surfaced by live-scanning the
+[`rubygems/rubygems.org`](https://github.com/rubygems/rubygems.org) repo
+during prep for the upstream ActionScope rollout there
+([rubygems/rubygems.org#6565](https://github.com/rubygems/rubygems.org/pull/6565)).
+
 ## [0.3.1] - 2026-05-23
 
 ### Fixed
