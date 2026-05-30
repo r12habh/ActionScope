@@ -10,7 +10,7 @@ from typing import Any
 from actionscope.analyzers.iam_risk import classify_action, get_overall_risk
 from actionscope.models import IamAction, PolicyFinding, RiskLevel
 
-MAX_JSON_FILES = 200
+DEFAULT_MAX_OTHER_JSON_FILES = 800
 COMMON_POLICY_DIRS = (
     "iam",
     "policies",
@@ -29,18 +29,16 @@ PRIVILEGE_ESCALATION_ACTIONS = {
 }
 
 
-def find_policy_json_files(repo_path: str) -> list[str]:
+def find_policy_json_files(
+    repo_path: str,
+    max_other_files: int = DEFAULT_MAX_OTHER_JSON_FILES,
+) -> list[str]:
     """Find JSON files that look like standalone IAM policy documents."""
     repo = Path(repo_path).expanduser()
     if not repo.is_dir():
         return []
 
-    candidates = _json_candidates(repo)
-    if len(candidates) > MAX_JSON_FILES:
-        _warn(
-            f"Found {len(candidates)} JSON files; scanning first {MAX_JSON_FILES}"
-        )
-        candidates = candidates[:MAX_JSON_FILES]
+    candidates = _apply_cap(repo, _json_candidates(repo), max_other=max_other_files)
 
     policy_files: list[str] = []
     for candidate in candidates:
@@ -176,17 +174,18 @@ def extract_actions_from_policy(
     )
 
 
-def scan_policy_files(repo_path: str) -> tuple[list[PolicyFinding], list[str]]:
+def scan_policy_files(
+    repo_path: str,
+    max_other_files: int = DEFAULT_MAX_OTHER_JSON_FILES,
+) -> tuple[list[PolicyFinding], list[str]]:
     """Find, parse, and analyze standalone IAM policy JSON files."""
     findings: list[PolicyFinding] = []
     errors: list[str] = []
 
-    candidates = _json_candidates(Path(repo_path).expanduser())
-    if len(candidates) > MAX_JSON_FILES:
-        _warn(
-            f"Found {len(candidates)} JSON files; scanning first {MAX_JSON_FILES}"
-        )
-        candidates = candidates[:MAX_JSON_FILES]
+    repo = Path(repo_path).expanduser()
+    candidates = _apply_cap(
+        repo, _json_candidates(repo), max_other=max_other_files
+    )
 
     for policy_file in candidates:
         try:
@@ -210,6 +209,13 @@ def scan_policy_files(repo_path: str) -> tuple[list[PolicyFinding], list[str]]:
 
 
 def _json_candidates(repo: Path) -> list[Path]:
+    """Order JSON candidates for scanning.
+
+    Files under `COMMON_POLICY_DIRS` come first (these are *always* scanned —
+    the cap on line-noise JSON files never applies to them). Everything else
+    is appended afterward and may be subject to the
+    `DEFAULT_MAX_OTHER_JSON_FILES` cap via `_apply_cap`.
+    """
     if not repo.is_dir():
         return []
 
@@ -233,6 +239,62 @@ def _json_candidates(repo: Path) -> list[Path]:
             seen.add(resolved)
 
     return candidates
+
+
+def _apply_cap(
+    repo: Path,
+    candidates: list[Path],
+    max_other: int = DEFAULT_MAX_OTHER_JSON_FILES,
+) -> list[Path]:
+    """Always keep candidates under `COMMON_POLICY_DIRS`; cap only "other" files.
+
+    Prior to this refactor a single flat cap of 200 applied to all candidates,
+    which silently dropped IAM policies in non-standard locations when a repo
+    had >200 JSON files (test fixtures, vendored data, schema files, …).
+    Now the cap only applies to files outside the well-known policy
+    directories, and the warning identifies what was skipped so a user can
+    re-scan a narrower path if needed.
+    """
+    if max_other <= 0:
+        return candidates
+
+    common_roots = tuple(
+        (repo / name).resolve() for name in COMMON_POLICY_DIRS
+    )
+    common_files: list[Path] = []
+    other_files: list[Path] = []
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            other_files.append(path)
+            continue
+        in_common_dir = False
+        for root in common_roots:
+            try:
+                resolved.relative_to(root)
+                in_common_dir = True
+                break
+            except ValueError:
+                continue
+        if in_common_dir:
+            common_files.append(path)
+        else:
+            other_files.append(path)
+
+    if len(other_files) > max_other:
+        skipped = len(other_files) - max_other
+        common_dirs_str = ", ".join(f"{d}/" for d in COMMON_POLICY_DIRS)
+        _warn(
+            f"Found {len(candidates)} JSON files; scanning the {len(common_files)} "
+            f"in {common_dirs_str} plus the first {max_other} of {len(other_files)} "
+            f"others ({skipped} skipped). To scan all of them, pass "
+            f"--max-policy-files <N> with a higher limit, or scan a narrower "
+            f"sub-path."
+        )
+        other_files = other_files[:max_other]
+
+    return common_files + other_files
 
 
 def _should_report_parse_error(path: Path) -> bool:
