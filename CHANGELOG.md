@@ -2,6 +2,33 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.3.4] - 2026-05-30
+
+### Fixed
+- **SHA pins of `tj-actions/changed-files` to non-malicious commits no longer
+  produce false-positive findings.** The bundled DB entry now lists the
+  documented malicious commit (`0e58ed867288e6711d10da9293b8db84f3f3ed85`,
+  per [GHSA-mrrh-fwg8-r2c3](https://github.com/advisories/GHSA-mrrh-fwg8-r2c3))
+  via a new optional `malicious_shas` field. The detector treats SHA pins
+  outside that list as safe when the list is present, instead of flagging
+  all SHA pins as ambiguous. Tag-pin detection and the conservative
+  "ambiguous SHA pin" behavior for actions without documented malicious
+  commits (`actions-cool/maintain-one-comment`, `aquasecurity/trivy-action`)
+  are unchanged.
+
+  Surfaced by live-scanning four production repos (Vault, Prowler,
+  LocalStack, Argo CD) — Prowler and Argo CD both pin
+  `tj-actions/changed-files` to the same pre-compromise SHA
+  (`9426d40962ed5378910ee2e21d5f8c6fcbf2dd96`), which was producing 42
+  false-positive findings between them.
+
+### Added
+- New optional `malicious_shas: [str]` field in the compromised-actions
+  database schema. Entries with documented malicious commits should list
+  them here. The detector uses this list to distinguish "we know this
+  specific SHA is bad" from "we know the action was compromised but cannot
+  say which SHA specifically."
+
 ## [0.3.3] - 2026-05-30
 
 ### Fixed
