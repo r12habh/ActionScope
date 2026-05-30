@@ -142,6 +142,35 @@ def test_scan_policy_files_returns_errors_for_unparseable_files(
     assert len(errors) == 1
 
 
+def test_scan_policy_files_ignores_unparseable_non_policy_json(
+    tmp_path: Path,
+) -> None:
+    devcontainer_dir = tmp_path / ".devcontainer"
+    devcontainer_dir.mkdir()
+    (devcontainer_dir / "devcontainer.json").write_text(
+        "// JSONC comments are valid for devcontainer files\n{}",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_policy_files(str(tmp_path))
+
+    assert findings == []
+    assert errors == []
+
+
+def test_scan_policy_files_reports_unparseable_json_in_iam_dir(
+    tmp_path: Path,
+) -> None:
+    iam_dir = tmp_path / "iam"
+    iam_dir.mkdir()
+    (iam_dir / "broken.json").write_text("{", encoding="utf-8")
+
+    findings, errors = scan_policy_files(str(tmp_path))
+
+    assert findings == []
+    assert len(errors) == 1
+
+
 def test_empty_statement_list_returns_info_overall_risk() -> None:
     finding = extract_actions_from_policy({"Statement": []}, "empty.json")
 
