@@ -48,7 +48,8 @@ def find_policy_json_files(repo_path: str) -> list[str]:
             with candidate.open("r", encoding="utf-8") as file:
                 data = json.load(file)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            _warn(f"Could not parse policy JSON file {candidate}: {exc}")
+            if _should_report_parse_error(candidate):
+                _warn(f"Could not parse policy JSON file {candidate}: {exc}")
             continue
 
         if (
@@ -192,7 +193,10 @@ def scan_policy_files(repo_path: str) -> tuple[list[PolicyFinding], list[str]]:
             with policy_file.open("r", encoding="utf-8") as file:
                 policy_data = json.load(file)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            errors.append(f"Could not parse policy JSON file {policy_file}: {exc}")
+            if _should_report_parse_error(policy_file):
+                errors.append(
+                    f"Could not parse policy JSON file {policy_file}: {exc}"
+                )
             continue
 
         if not isinstance(policy_data, dict) or not is_iam_policy(policy_data):
@@ -229,6 +233,17 @@ def _json_candidates(repo: Path) -> list[Path]:
             seen.add(resolved)
 
     return candidates
+
+
+def _should_report_parse_error(path: Path) -> bool:
+    """Report malformed JSON only when the path looks policy-related."""
+    normalized_parts = {part.lower() for part in path.parts}
+    policy_dirs = {"iam", "policies", "policy", "terraform"}
+    if normalized_parts & policy_dirs:
+        return True
+
+    name = path.name.lower()
+    return any(marker in name for marker in ("policy", "iam", "assume-role"))
 
 
 def _string_list(value: Any) -> list[str]:

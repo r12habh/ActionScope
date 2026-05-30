@@ -6,6 +6,7 @@ from rich.console import Console
 
 from actionscope.models import (
     AwsCredentialSource,
+    EnvironmentFinding,
     GitHubTokenPermission,
     IamAction,
     PolicyFinding,
@@ -147,3 +148,39 @@ def test_render_scan_result_explains_missing_policy_source() -> None:
     assert "actionscope scan . --aws-verify" in output
     assert "iam:GetRole" in output
     assert "iam:ListAttachedRolePolicies" in output
+
+
+def test_render_scan_result_summary_counts_non_policy_findings() -> None:
+    result = ScanResult(
+        github_token_permissions=[
+            GitHubTokenPermission(
+                workflow_file=".github/workflows/scorecard.yml",
+                job_name="analysis",
+                scope="id-token",
+                access="write",
+                risk_level=RiskLevel.HIGH,
+            )
+        ],
+        environment_findings=[
+            EnvironmentFinding(
+                workflow_file=".github/workflows/docker.yml",
+                job_name="build",
+                environment_name=None,
+                has_aws_credentials=True,
+                role_arn="arn:aws:iam::123456789012:role/ecr-pusher",
+                finding_type="deploy_without_environment",
+                risk_level=RiskLevel.MEDIUM,
+                description="Deploy job has no GitHub Environment.",
+                recommendation="Add environment: production.",
+            )
+        ],
+    )
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+
+    render_scan_result(result, console=console)
+
+    output = buf.getvalue()
+    assert "High: 1" in output
+    assert "Medium: 1" in output
