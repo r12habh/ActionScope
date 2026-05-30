@@ -85,6 +85,56 @@ def test_classify_agent_returns_claude_code_for_anthropics_action() -> None:
     assert classify_agent("anthropics/claude-code-action@v1") == "claude_code"
 
 
+def test_detect_ai_agent_steps_finds_gemini_opencode_and_continue_actions() -> None:
+    data = {
+        "jobs": {
+            "review": {
+                "steps": [
+                    {
+                        "name": "Run Gemini review",
+                        "uses": "google-github-actions/run-gemini-cli@v1",
+                    },
+                    {"name": "Run OpenCode", "uses": "opencode/run@v1"},
+                    {"name": "Run Continue", "uses": "continue-dev/continue@v1"},
+                ]
+            }
+        }
+    }
+
+    steps = detect_ai_agent_steps(data)
+
+    assert [step_name for _, step_name, _ in steps] == [
+        "Run Gemini review",
+        "Run OpenCode",
+        "Run Continue",
+    ]
+    assert [classify_agent(step["uses"]) for _, _, step in steps] == [
+        "gemini_cli",
+        "opencode",
+        "continue",
+    ]
+
+
+def test_detect_ai_agent_steps_finds_copilot_named_run_step() -> None:
+    data = {
+        "jobs": {
+            "review": {
+                "steps": [
+                    {
+                        "name": "Run Copilot review",
+                        "run": "echo '${{ github.event.pull_request.body }}'",
+                    }
+                ]
+            }
+        }
+    }
+
+    steps = detect_ai_agent_steps(data)
+
+    assert steps[0][1] == "Run Copilot review"
+    assert classify_agent(steps[0][1]) == "copilot_agent"
+
+
 def test_fixture_workflow_produces_critical_finding() -> None:
     workflow_file = str(FIXTURE_DIR / "ai_agent_test.yml")
     data = _fixture()
@@ -97,6 +147,42 @@ def test_fixture_workflow_produces_critical_finding() -> None:
         perms,
     )
 
+    assert findings[0].risk_level is RiskLevel.CRITICAL
+
+
+def test_gemini_agent_with_untrusted_input_and_write_token_is_critical() -> None:
+    data = {
+        "on": "pull_request",
+        "permissions": {"contents": "write"},
+        "jobs": {
+            "review": {
+                "steps": [
+                    {
+                        "name": "Run Gemini review",
+                        "uses": "google-github-actions/run-gemini-cli@v1",
+                        "with": {
+                            "prompt": (
+                                "Review ${{ github.event.pull_request.body }}"
+                            )
+                        },
+                        "env": {
+                            "GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}"
+                        },
+                    }
+                ]
+            }
+        },
+    }
+    workflow_file = "ai.yml"
+    perms = analyze_workflow_permissions(data, workflow_file)
+
+    findings = analyze_ai_agent_injection_surface(data, workflow_file, [], perms)
+
+    assert len(findings) == 1
+    assert findings[0].agent_type == "gemini_cli"
+    assert findings[0].has_api_key_secret is True
+    assert findings[0].has_write_permissions is True
+    assert findings[0].untrusted_inputs == ["github.event.pull_request.body"]
     assert findings[0].risk_level is RiskLevel.CRITICAL
 
 
