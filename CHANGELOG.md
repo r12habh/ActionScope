@@ -2,6 +2,23 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.3.3] - 2026-05-30
+
+### Fixed
+- **JSON policy file discovery no longer silently truncates at 200 files.**
+  The previous single flat cap of 200 could drop IAM policies in
+  non-standard locations on repos with large numbers of test/schema/fixture
+  JSON files. Files in the well-known policy directories (`iam/`,
+  `policies/`, `.github/`, `infra/`, `infrastructure/`, `terraform/`) are
+  now always scanned in full regardless of total count. The cap on "other"
+  JSON files is raised from `200` to `800` and is configurable via a new
+  `--max-policy-files <N>` CLI flag (use `0` to disable entirely). The
+  warning emitted when the cap is hit now names the count of skipped files
+  and the flag to override it.
+  Surfaced by the live-test scan against
+  [`apache/airflow`](https://github.com/r12habh/ActionScope/pull/67766)
+  (393 JSON files; the old cap silently dropped 193 of them).
+
 ## [0.3.2] - 2026-05-25
 
 ### Fixed
