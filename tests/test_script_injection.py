@@ -82,6 +82,60 @@ def test_github_event_issue_body_detected_as_untrusted() -> None:
     assert find_untrusted_expressions_in_text("${{ github.event.issue.body }}")
 
 
+def test_github_event_comment_body_detected_as_untrusted() -> None:
+    assert find_untrusted_expressions_in_text("${{ github.event.comment.body }}")
+
+
+def test_github_event_discussion_body_detected_as_untrusted() -> None:
+    assert find_untrusted_expressions_in_text("${{ github.event.discussion.body }}")
+
+
+def test_issue_comment_body_direct_run_usage_produces_finding() -> None:
+    data = {
+        "on": "issue_comment",
+        "jobs": {
+            "reply": {
+                "steps": [
+                    {
+                        "name": "echo comment",
+                        "run": "echo ${{ github.event.comment.body }}",
+                    }
+                ]
+            }
+        },
+    }
+
+    findings = scan_workflow_for_injections(data, "issue-comment.yml")
+
+    assert len(findings) == 1
+    assert findings[0].untrusted_expression == "${{ github.event.comment.body }}"
+    assert findings[0].injection_method == "direct"
+    assert findings[0].risk_level is not RiskLevel.INFO
+
+
+def test_discussion_body_direct_run_usage_produces_finding() -> None:
+    data = {
+        "on": "discussion",
+        "jobs": {
+            "triage": {
+                "steps": [
+                    {
+                        "name": "echo discussion",
+                        "run": "echo ${{ github.event.discussion.body }}",
+                    }
+                ]
+            }
+        },
+    }
+
+    findings = scan_workflow_for_injections(data, "discussion.yml")
+
+    assert len(findings) == 1
+    assert findings[0].untrusted_expression == "${{ github.event.discussion.body }}"
+    assert findings[0].injection_method == "direct"
+    assert findings[0].risk_level is not RiskLevel.INFO
+
+
 def test_multiple_injections_in_one_step_produce_multiple_findings() -> None:
     step = {
         "run": (
