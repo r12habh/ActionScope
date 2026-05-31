@@ -118,6 +118,11 @@ def _iam_action_risk_counts(
     return counts
 
 
+def _finding_risk_counts(result: ScanResult) -> dict[RiskLevel, int]:
+    """Count reportable findings by risk across every detector."""
+    return {level: len(result.findings_by_risk(level)) for level in RiskLevel}
+
+
 def render_scan_result(
     result: ScanResult,
     console: Optional[Console] = None,
@@ -616,7 +621,7 @@ def _render_summary_panel(
     policies_not_found = sum(
         1 for b in result.bindings if b.policy_source == "not_found"
     )
-    counts = _iam_action_risk_counts(result.policy_findings)
+    counts = _finding_risk_counts(result)
 
     risk_line = (
         f"Critical: {counts[RiskLevel.CRITICAL]} | "

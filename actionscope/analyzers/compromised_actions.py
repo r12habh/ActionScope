@@ -43,13 +43,30 @@ def is_compromised_ref(
         return False, None
 
     affected_refs = [str(item) for item in entry.get("affected_refs") or []]
+    malicious_shas = [
+        str(item).lower() for item in entry.get("malicious_shas") or []
+    ]
     if _is_full_sha(normalized_ref):
-        if normalized_ref.lower() in {item.lower() for item in affected_refs}:
+        normalized_sha = normalized_ref.lower()
+        if normalized_sha in malicious_shas:
+            # Explicit known-malicious SHA: definitely compromised.
             return True, entry
-        if affected_refs:
-            # Explicit affected_refs list and this SHA isn't in it — safe pin.
+        if normalized_sha in {item.lower() for item in affected_refs}:
+            return True, entry
+        if malicious_shas:
+            # We have a known-bad SHA list and this pin isn't on it — the
+            # consumer pinned to something other than the documented malicious
+            # commit. Treat as safe; cross-references to the advisory show the
+            # known-bad SHA differs from this pin.
             return False, None
-        # No explicit list means all refs are compromised; SHA is ambiguous.
+        if affected_refs:
+            # Explicit affected_refs list (tags) and this SHA isn't on it.
+            # Without a separate `malicious_shas` list we cannot tell whether
+            # an arbitrary SHA was the compromised commit, so treat as safe.
+            return False, None
+        # No malicious_shas and no affected_refs — we know the action was
+        # compromised but cannot say which commit specifically. SHA pin is
+        # ambiguous; flag it so a human can verify.
         return True, entry
 
     if affected_refs:
