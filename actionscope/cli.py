@@ -100,6 +100,17 @@ def version_command() -> None:
     envvar="GITHUB_TOKEN",
     help="GitHub token for pin resolution API calls",
 )
+@click.option(
+    "--max-policy-files",
+    type=int,
+    default=None,
+    help=(
+        "Maximum number of JSON files OUTSIDE common policy directories "
+        "(iam/, policies/, .github/, infra/, infrastructure/, terraform/) to "
+        "scan for IAM policies. Common-dir files are always scanned in full. "
+        "Default 800. Set to 0 to scan unlimited."
+    ),
+)
 def scan(
     path: str,
     output_format: str,
@@ -113,6 +124,7 @@ def scan(
     state_file: str,
     resolve_pins: bool,
     github_token: str | None,
+    max_policy_files: int | None,
 ) -> None:
     """Scan a repository for AWS blast radius in GitHub Actions workflows."""
 
@@ -136,7 +148,14 @@ def scan(
         workflow_errors = [f"Fatal error scanning workflows: {exc}"]
 
     try:
-        json_findings, json_errors = scan_policy_files(repo_path)
+        # Click sets max_policy_files=None when the user does not pass the
+        # flag; in that case, scan_policy_files uses its built-in default.
+        if max_policy_files is None:
+            json_findings, json_errors = scan_policy_files(repo_path)
+        else:
+            json_findings, json_errors = scan_policy_files(
+                repo_path, max_other_files=max_policy_files
+            )
     except Exception as exc:
         json_findings, json_errors = [], [str(exc)]
 

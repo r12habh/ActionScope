@@ -489,11 +489,9 @@ def _signed_delta(current: int, previous: int) -> str:
 
 
 def _summary_table(result: ScanResult) -> str:
-    # Count IAM actions by risk across all policy findings in the scan
-    counts: dict[RiskLevel, int] = {lvl: 0 for lvl in RiskLevel}
-    for pf in result.policy_findings:
-        for a in pf.actions:
-            counts[a.risk_level] += 1
+    counts: dict[RiskLevel, int] = {
+        level: len(result.findings_by_risk(level)) for level in RiskLevel
+    }
 
     rows = [
         "| Risk Level | Count |",
@@ -870,8 +868,23 @@ def to_markdown_from_dict(data: dict) -> str:
 
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for finding in findings:
-        for action in finding.get("actions", []):
-            risk = str(action.get("risk_level", "info")).lower()
+        risk = str(finding.get("overall_risk", "info")).lower()
+        if risk in counts:
+            counts[risk] += 1
+    for permission in token_permissions:
+        risk = str(permission.get("risk_level", "info")).lower()
+        if risk in counts:
+            counts[risk] += 1
+    for key in (
+        "oidc_trust_findings",
+        "environment_findings",
+        "script_injection_findings",
+        "artifact_poisoning_findings",
+        "ai_agent_injection_findings",
+        "compromised_action_findings",
+    ):
+        for finding in data.get(key, []):
+            risk = str(finding.get("risk_level", "info")).lower()
             if risk in counts:
                 counts[risk] += 1
 

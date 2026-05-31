@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "actionscope"
-version = "0.3.1"
+version = "0.3.5"
 description = "Map the AWS blast radius of GitHub Actions workflows"
 readme = "README.md"
 license = {text = "MIT"}

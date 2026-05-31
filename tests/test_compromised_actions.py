@@ -194,3 +194,86 @@ def test_sha_pinned_known_compromised_action_is_high_not_critical() -> None:
 
     assert findings[0].is_sha_pinned is True
     assert findings[0].risk_level is RiskLevel.HIGH
+
+
+PROWLER_TJ_ACTIONS_SHA = "9426d40962ed5378910ee2e21d5f8c6fcbf2dd96"
+TJ_ACTIONS_MALICIOUS_SHA = "0e58ed867288e6711d10da9293b8db84f3f3ed85"
+
+
+def test_sha_pin_outside_malicious_shas_list_is_safe() -> None:
+    """Regression: SHA pins to tj-actions/changed-files that are NOT the known
+    malicious commit must not produce a finding.
+
+    Both Prowler and Argo CD pin to `9426d40962ed5378910ee2e21d5f8c6fcbf2dd96`.
+    The documented malicious commit is `0e58ed867288e6711d10da9293b8db84f3f3ed85`
+    (per https://github.com/advisories/GHSA-mrrh-fwg8-r2c3 and the StepSecurity
+    disclosure). The previous DB entry had empty affected_refs, which caused
+    all SHA pins to be flagged HIGH — producing 41 false positives in the
+    live scan of prowler-cloud/prowler and 1 in argoproj/argo-cd.
+    """
+    workflow = {
+        "jobs": {
+            "ci": {
+                "steps": [
+                    {"uses": f"tj-actions/changed-files@{PROWLER_TJ_ACTIONS_SHA}"},
+                ],
+            }
+        }
+    }
+
+    findings = check_workflow_for_compromised_actions(
+        workflow,
+        "workflow.yml",
+        load_compromised_actions(),
+    )
+
+    assert findings == [], (
+        f"expected no finding for non-malicious SHA pin, got {len(findings)}"
+    )
+
+
+def test_sha_pin_matching_malicious_shas_list_is_flagged() -> None:
+    """Pinning to the documented malicious commit of tj-actions/changed-files
+    must still produce a finding."""
+    workflow = {
+        "jobs": {
+            "ci": {
+                "steps": [
+                    {"uses": f"tj-actions/changed-files@{TJ_ACTIONS_MALICIOUS_SHA}"},
+                ],
+            }
+        }
+    }
+
+    findings = check_workflow_for_compromised_actions(
+        workflow,
+        "workflow.yml",
+        load_compromised_actions(),
+    )
+
+    assert len(findings) == 1
+    assert findings[0].is_sha_pinned is True
+    assert findings[0].action_name == "tj-actions/changed-files"
+
+
+def test_tag_pin_of_action_with_malicious_shas_still_flagged() -> None:
+    """Adding `malicious_shas` to a compromised action entry must NOT silence
+    tag-pin detection — tags are still mutable and historically affected."""
+    workflow = {
+        "jobs": {
+            "ci": {
+                "steps": [
+                    {"uses": "tj-actions/changed-files@v45"},
+                ],
+            }
+        }
+    }
+
+    findings = check_workflow_for_compromised_actions(
+        workflow,
+        "workflow.yml",
+        load_compromised_actions(),
+    )
+
+    assert len(findings) == 1
+    assert findings[0].is_sha_pinned is False
