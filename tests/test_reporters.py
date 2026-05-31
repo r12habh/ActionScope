@@ -5,6 +5,8 @@ from pathlib import Path
 
 from actionscope.models import (
     AwsCredentialSource,
+    EnvironmentFinding,
+    GitHubTokenPermission,
     IamAction,
     PolicyFinding,
     RiskLevel,
@@ -12,7 +14,7 @@ from actionscope.models import (
     WorkflowCredentialBinding,
 )
 from actionscope.reporters.json_reporter import to_json, write_json
-from actionscope.reporters.markdown import to_markdown
+from actionscope.reporters.markdown import to_markdown, to_markdown_from_dict
 
 
 def _sample_binding() -> WorkflowCredentialBinding:
@@ -182,3 +184,87 @@ def test_to_markdown_empty_findings_no_crash() -> None:
     md = to_markdown(result)
     assert "## 🔍 ActionScope — Blast Radius Report" in md
     assert "No workflow credential bindings" in md
+
+
+def test_to_markdown_summary_counts_non_policy_findings() -> None:
+    result = ScanResult(
+        github_token_permissions=[
+            GitHubTokenPermission(
+                workflow_file=".github/workflows/scorecard.yml",
+                job_name="analysis",
+                scope="id-token",
+                access="write",
+                risk_level=RiskLevel.HIGH,
+            )
+        ],
+        environment_findings=[
+            EnvironmentFinding(
+                workflow_file=".github/workflows/docker.yml",
+                job_name="build",
+                environment_name=None,
+                has_aws_credentials=True,
+                role_arn="arn:aws:iam::123456789012:role/ecr-pusher",
+                finding_type="deploy_without_environment",
+                risk_level=RiskLevel.MEDIUM,
+                description="Deploy job has no GitHub Environment.",
+                recommendation="Add environment: production.",
+            )
+        ],
+    )
+
+    md = to_markdown(result)
+
+    assert "| 🟠 High | 1 |" in md
+    assert "| 🟡 Medium | 1 |" in md
+
+
+def test_to_markdown_from_dict_summary_counts_all_finding_shapes() -> None:
+    md = to_markdown_from_dict(
+        {
+            "scan_path": "/repo",
+            "overall_risk": "critical",
+            "workflow_count": 1,
+            "summary": {"credential_sources": 1},
+            "findings": [
+                {
+                    "workflow_file": ".github/workflows/deploy.yml",
+                    "job_name": "deploy",
+                    "role_arn": "arn:aws:iam::123456789012:role/deploy",
+                    "auth_type": "oidc",
+                    "policy_source": "terraform",
+                    "match_confidence": "high",
+                    "overall_risk": "medium",
+                    "has_passrole": False,
+                    "has_privilege_escalation": False,
+                    "actions": [
+                        {
+                            "action": "s3:GetObject",
+                            "access_level": "Read",
+                            "risk_level": "low",
+                        }
+                    ],
+                }
+            ],
+            "github_token_permissions": [
+                {
+                    "workflow_file": ".github/workflows/scorecard.yml",
+                    "job_name": "analysis",
+                    "scope": "id-token",
+                    "access": "write",
+                    "risk_level": "high",
+                }
+            ],
+            "environment_findings": [
+                {
+                    "workflow_file": ".github/workflows/docker.yml",
+                    "job_name": "build",
+                    "finding_type": "deploy_without_environment",
+                    "risk_level": "medium",
+                }
+            ],
+        }
+    )
+
+    assert "| 🟠 High | 1 |" in md
+    assert "| 🟡 Medium | 2 |" in md
+    assert "| 🟢 Low | 0 |" in md

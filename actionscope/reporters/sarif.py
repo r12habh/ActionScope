@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from actionscope import __version__
@@ -44,6 +45,7 @@ def to_sarif(result: ScanResult) -> str:
     """Convert a ScanResult to SARIF 2.1.0 JSON for GitHub Code Scanning."""
     rules = _build_rules()
     results: list[dict[str, Any]] = []
+    _make_result = _make_result_for_root(result.scan_path)
 
     for binding in result.bindings:
         if binding.policy_finding is None:
@@ -99,7 +101,7 @@ def to_sarif(result: ScanResult) -> str:
 
     for permission in result.github_token_permissions:
         if permission.risk_level >= RiskLevel.HIGH:
-            results.append(_github_token_result(permission))
+            results.append(_github_token_result(permission, result.scan_path))
 
     for binding in result.bindings:
         if binding.credential_source.uses_access_keys:
@@ -261,6 +263,7 @@ def write_sarif(result: ScanResult, output_path: str) -> None:
 def to_sarif_from_dict(data: dict[str, Any]) -> str:
     """Convert a saved ActionScope JSON payload to SARIF without re-scanning."""
     results: list[dict[str, Any]] = []
+    _make_result = _make_result_for_root(str(data.get("scan_path", "")))
 
     for finding in data.get("findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
@@ -475,7 +478,10 @@ def _risk_from_string(value: str) -> RiskLevel:
         return RiskLevel.INFO
 
 
-def _github_token_result(permission: GitHubTokenPermission) -> dict[str, Any]:
+def _github_token_result(
+    permission: GitHubTokenPermission,
+    root_path: str | None = None,
+) -> dict[str, Any]:
     return _make_result(
         rule_id="AS004",
         message=(
@@ -487,6 +493,7 @@ def _github_token_result(permission: GitHubTokenPermission) -> dict[str, Any]:
         security_severity=RISK_TO_SECURITY_SEVERITY[permission.risk_level],
         location_path=permission.workflow_file,
         location_line=1,
+        root_path=root_path,
     )
 
 
@@ -497,6 +504,7 @@ def _make_result(
     security_severity: str,
     location_path: str,
     location_line: int,
+    root_path: str | None = None,
 ) -> dict[str, Any]:
     return {
         "ruleId": rule_id,
@@ -509,7 +517,7 @@ def _make_result(
             {
                 "physicalLocation": {
                     "artifactLocation": {
-                        "uri": location_path.lstrip("/"),
+                        "uri": _location_uri(location_path, root_path),
                         "uriBaseId": "%SRCROOT%",
                     },
                     "region": {
@@ -519,6 +527,33 @@ def _make_result(
             }
         ],
     }
+
+
+def _make_result_for_root(root_path: str | None):
+    def make_result(**kwargs: Any) -> dict[str, Any]:
+        return _make_result(**kwargs, root_path=root_path)
+
+    return make_result
+
+
+def _location_uri(location_path: str, root_path: str | None = None) -> str:
+    if not location_path:
+        return ""
+
+    path = Path(location_path).expanduser()
+    if root_path:
+        try:
+            root = Path(root_path).expanduser().resolve()
+            if path.is_absolute():
+                candidate = path.resolve()
+            else:
+                candidate = (root / path).resolve()
+            return candidate.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            pass
+
+    fallback = path.as_posix() if path.is_absolute() else str(path)
+    return fallback.replace("\\", "/")
 
 
 def _build_rules() -> list[dict[str, Any]]:
