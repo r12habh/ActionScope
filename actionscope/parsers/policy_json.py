@@ -10,7 +10,7 @@ from typing import Any
 from actionscope.analyzers.iam_risk import classify_action, get_overall_risk
 from actionscope.models import IamAction, PolicyFinding, RiskLevel
 
-MAX_JSON_FILES = 200
+DEFAULT_MAX_OTHER_JSON_FILES = 800
 COMMON_POLICY_DIRS = (
     "iam",
     "policies",
@@ -29,18 +29,16 @@ PRIVILEGE_ESCALATION_ACTIONS = {
 }
 
 
-def find_policy_json_files(repo_path: str) -> list[str]:
+def find_policy_json_files(
+    repo_path: str,
+    max_other_files: int = DEFAULT_MAX_OTHER_JSON_FILES,
+) -> list[str]:
     """Find JSON files that look like standalone IAM policy documents."""
     repo = Path(repo_path).expanduser()
     if not repo.is_dir():
         return []
 
-    candidates = _json_candidates(repo)
-    if len(candidates) > MAX_JSON_FILES:
-        _warn(
-            f"Found {len(candidates)} JSON files; scanning first {MAX_JSON_FILES}"
-        )
-        candidates = candidates[:MAX_JSON_FILES]
+    candidates = _apply_cap(repo, _json_candidates(repo), max_other=max_other_files)
 
     policy_files: list[str] = []
     for candidate in candidates:
@@ -48,7 +46,8 @@ def find_policy_json_files(repo_path: str) -> list[str]:
             with candidate.open("r", encoding="utf-8") as file:
                 data = json.load(file)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            _warn(f"Could not parse policy JSON file {candidate}: {exc}")
+            if _should_report_parse_error(candidate):
+                _warn(f"Could not parse policy JSON file {candidate}: {exc}")
             continue
 
         if (
@@ -175,24 +174,28 @@ def extract_actions_from_policy(
     )
 
 
-def scan_policy_files(repo_path: str) -> tuple[list[PolicyFinding], list[str]]:
+def scan_policy_files(
+    repo_path: str,
+    max_other_files: int = DEFAULT_MAX_OTHER_JSON_FILES,
+) -> tuple[list[PolicyFinding], list[str]]:
     """Find, parse, and analyze standalone IAM policy JSON files."""
     findings: list[PolicyFinding] = []
     errors: list[str] = []
 
-    candidates = _json_candidates(Path(repo_path).expanduser())
-    if len(candidates) > MAX_JSON_FILES:
-        _warn(
-            f"Found {len(candidates)} JSON files; scanning first {MAX_JSON_FILES}"
-        )
-        candidates = candidates[:MAX_JSON_FILES]
+    repo = Path(repo_path).expanduser()
+    candidates = _apply_cap(
+        repo, _json_candidates(repo), max_other=max_other_files
+    )
 
     for policy_file in candidates:
         try:
             with policy_file.open("r", encoding="utf-8") as file:
                 policy_data = json.load(file)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            errors.append(f"Could not parse policy JSON file {policy_file}: {exc}")
+            if _should_report_parse_error(policy_file):
+                errors.append(
+                    f"Could not parse policy JSON file {policy_file}: {exc}"
+                )
             continue
 
         if not isinstance(policy_data, dict) or not is_iam_policy(policy_data):
@@ -206,6 +209,13 @@ def scan_policy_files(repo_path: str) -> tuple[list[PolicyFinding], list[str]]:
 
 
 def _json_candidates(repo: Path) -> list[Path]:
+    """Order JSON candidates for scanning.
+
+    Files under `COMMON_POLICY_DIRS` come first (these are *always* scanned —
+    the cap on line-noise JSON files never applies to them). Everything else
+    is appended afterward and may be subject to the
+    `DEFAULT_MAX_OTHER_JSON_FILES` cap via `_apply_cap`.
+    """
     if not repo.is_dir():
         return []
 
@@ -229,6 +239,119 @@ def _json_candidates(repo: Path) -> list[Path]:
             seen.add(resolved)
 
     return candidates
+
+
+_PEEK_BYTES = 4096
+
+
+def _looks_like_iam_policy_by_peek(path: Path) -> bool:
+    """Cheap content sniff: does the first 4 KB of `path` look like it could
+    parse to an IAM policy?
+
+    Real IAM policies always contain both the `Statement` and `Effect` JSON
+    keys. Package locks, snapshots, CloudFormation parameter files, JSON
+    schemas, npm config, … almost never do. Reading the first 4 KB and
+    looking for both substrings is orders of magnitude cheaper than fully
+    parsing the JSON, which lets us pre-filter monorepos with tens of
+    thousands of unrelated JSON files (aws-cdk has ~14k) without inflating
+    the post-filter cap.
+
+    False positives (the file passes the peek but isn't actually a policy)
+    are harmless — the full parse downstream will reject them.
+
+    False negatives (a real policy without both substrings in the first
+    4 KB) are extremely unlikely for any well-formed policy under ~4 KB
+    and impossible for a top-level policy with `Statement` as a top-level
+    key (the leading whitespace + `{"Version":...,"Statement":[{"Effect":`
+    fits in the first ~200 bytes).
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(_PEEK_BYTES)
+    except (OSError, PermissionError):
+        return False
+    return b'"Statement"' in head and b'"Effect"' in head
+
+
+def _apply_cap(
+    repo: Path,
+    candidates: list[Path],
+    max_other: int = DEFAULT_MAX_OTHER_JSON_FILES,
+) -> list[Path]:
+    """Always keep candidates under `COMMON_POLICY_DIRS`; cap only "other" files.
+
+    Prior to this refactor a single flat cap of 200 applied to all candidates,
+    which silently dropped IAM policies in non-standard locations when a repo
+    had >200 JSON files (test fixtures, vendored data, schema files, …).
+    Now the cap only applies to files outside the well-known policy
+    directories, and the warning identifies what was skipped so a user can
+    re-scan a narrower path if needed.
+    """
+    if max_other <= 0:
+        return candidates
+
+    common_roots = tuple(
+        (repo / name).resolve() for name in COMMON_POLICY_DIRS
+    )
+    common_files: list[Path] = []
+    other_files: list[Path] = []
+    other_files_total = 0  # before content pre-filter
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            # `path.resolve()` failures are rare; treat them as "other" and
+            # still apply the content pre-filter before counting toward the cap.
+            if _looks_like_iam_policy_by_peek(path):
+                other_files.append(path)
+            other_files_total += 1
+            continue
+        in_common_dir = False
+        for root in common_roots:
+            try:
+                resolved.relative_to(root)
+                in_common_dir = True
+                break
+            except ValueError:
+                continue
+        if in_common_dir:
+            # Files in well-known policy directories bypass the content
+            # pre-filter — the full parse downstream will validate them.
+            # This preserves the v0.3.3 invariant that common-dir files are
+            # always scanned regardless of cap.
+            common_files.append(path)
+        else:
+            other_files_total += 1
+            if _looks_like_iam_policy_by_peek(path):
+                other_files.append(path)
+
+    if len(other_files) > max_other:
+        skipped = len(other_files) - max_other
+        common_dirs_str = ", ".join(f"{d}/" for d in COMMON_POLICY_DIRS)
+        _warn(
+            f"Found {len(candidates)} JSON files ({other_files_total} outside "
+            f"common policy dirs); {len(other_files)} pass the content "
+            f"pre-filter as possible IAM policies. Scanning the "
+            f"{len(common_files)} in {common_dirs_str} plus the first "
+            f"{max_other} of those {len(other_files)} candidates ({skipped} "
+            f"skipped). To scan all candidates, pass "
+            f"--max-policy-files <N> with a higher limit, or scan a narrower "
+            f"sub-path."
+        )
+        other_files = other_files[:max_other]
+
+    return common_files + other_files
+
+
+def _should_report_parse_error(path: Path) -> bool:
+    """Report malformed JSON only when the path looks policy-related."""
+    normalized_parts = {part.lower() for part in path.parts}
+    policy_dirs = {"iam", "policies", "policy", "terraform"}
+    if normalized_parts & policy_dirs:
+        return True
+
+    name = path.name.lower()
+    return any(marker in name for marker in ("policy", "iam", "assume-role"))
 
 
 def _string_list(value: Any) -> list[str]:
