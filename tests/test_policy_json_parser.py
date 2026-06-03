@@ -134,7 +134,47 @@ def test_not_a_policy_returns_none_from_parse_policy_json_file() -> None:
 def test_scan_policy_files_returns_errors_for_unparseable_files(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "broken_policy.json").write_text("{", encoding="utf-8")
+    """A file that LOOKS like an IAM policy (passes the content pre-filter)
+    but is malformed JSON must surface as a parse error.
+
+    The fixture intentionally contains both `"Statement"` and `"Effect"` so
+    it passes the pre-filter, then fails the full JSON parse.
+    """
+    iam_dir = tmp_path / "iam"
+    iam_dir.mkdir()
+    (iam_dir / "broken_policy.json").write_text(
+        '{"Statement": [{"Effect": "Allow", "Action":',  # truncated JSON
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_policy_files(str(tmp_path))
+
+    assert findings == []
+    assert len(errors) == 1
+
+
+def test_scan_policy_files_ignores_unparseable_non_policy_json(
+    tmp_path: Path,
+) -> None:
+    devcontainer_dir = tmp_path / ".devcontainer"
+    devcontainer_dir.mkdir()
+    (devcontainer_dir / "devcontainer.json").write_text(
+        "// JSONC comments are valid for devcontainer files\n{}",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_policy_files(str(tmp_path))
+
+    assert findings == []
+    assert errors == []
+
+
+def test_scan_policy_files_reports_unparseable_json_in_iam_dir(
+    tmp_path: Path,
+) -> None:
+    iam_dir = tmp_path / "iam"
+    iam_dir.mkdir()
+    (iam_dir / "broken.json").write_text("{", encoding="utf-8")
 
     findings, errors = scan_policy_files(str(tmp_path))
 
@@ -203,3 +243,133 @@ def test_malformed_allow_statement_is_skipped_with_warning(capsys) -> None:
 
     assert finding.overall_risk is RiskLevel.INFO
     assert "missing Action or Resource" in capsys.readouterr().err
+
+
+def test_scan_policy_files_does_not_cap_common_dir_policies(tmp_path: Path) -> None:
+    """A real IAM policy in a non-standard location must still be discovered
+    even when the repo has more than `DEFAULT_MAX_OTHER_JSON_FILES` line-noise
+    JSON files elsewhere.
+
+    Regression guard for the silent-truncation bug surfaced when scanning a
+    repo with 393 JSON files: the old single flat cap of 200 could drop
+    policies whose path was not under iam/, policies/, .github/, infra/,
+    infrastructure/, or terraform/.
+    """
+    # 5 unrelated noise files in a non-policy dir; cap is set to 2 so the
+    # cap is exercised in test without needing hundreds of files.
+    noise_dir = tmp_path / "services" / "noise"
+    noise_dir.mkdir(parents=True)
+    for i in range(5):
+        (noise_dir / f"data-{i}.json").write_text(
+            '{"some": "irrelevant", "data": ' + str(i) + "}", encoding="utf-8"
+        )
+
+    # A real IAM policy in a non-standard dir — must still be found.
+    custom_policy_dir = tmp_path / "services" / "ci-deploy"
+    custom_policy_dir.mkdir(parents=True)
+    (custom_policy_dir / "policy.json").write_text(
+        '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow",'
+        ' "Action": "s3:GetObject", "Resource": "*"}]}',
+        encoding="utf-8",
+    )
+
+    # And another real IAM policy in the common policies/ dir — must always
+    # be found regardless of cap.
+    common_dir = tmp_path / "policies"
+    common_dir.mkdir()
+    (common_dir / "common.json").write_text(
+        '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow",'
+        ' "Action": "iam:PassRole", "Resource": "*"}]}',
+        encoding="utf-8",
+    )
+
+    findings, _errors = scan_policy_files(str(tmp_path), max_other_files=2)
+
+    sources = {Path(f.source_file).name for f in findings}
+    assert "common.json" in sources, (
+        "policies under policies/ must always be scanned regardless of cap"
+    )
+
+
+def test_scan_policy_files_warns_actionably_when_other_cap_truncates(
+    tmp_path: Path, capsys
+) -> None:
+    """The cap warning must name how many files were skipped and the CLI flag.
+
+    The fixture creates 10 files that all pass the content pre-filter (each
+    contains both `"Statement"` and `"Effect"` substrings) so the cap
+    actually triggers.
+    """
+    noise_dir = tmp_path / "services" / "noise"
+    noise_dir.mkdir(parents=True)
+    for i in range(10):
+        (noise_dir / f"policyish-{i}.json").write_text(
+            '{"Statement": [{"Effect": "Allow", "Action": "s3:Get*",'
+            f' "Resource": "*", "_n": {i}}}',
+            encoding="utf-8",
+        )
+
+    scan_policy_files(str(tmp_path), max_other_files=3)
+    err = capsys.readouterr().err
+    assert "skipped" in err
+    assert "--max-policy-files" in err
+
+
+def test_scan_policy_files_pre_filter_excludes_non_policy_json(
+    tmp_path: Path,
+) -> None:
+    """Files that don't contain `"Statement"`/`"Effect"` in their first 4 KB
+    must be excluded from the candidate set BEFORE the cap is applied.
+
+    Regression guard for the aws-cdk / boto3 / amplify-cli case where the
+    cap was triggered by thousands of package-lock / snapshot / CFN JSON
+    files that aren't IAM policies, silently dropping real policies in
+    non-standard locations.
+    """
+    noise_dir = tmp_path / "services" / "noise"
+    noise_dir.mkdir(parents=True)
+    # 50 obvious non-policy JSON files
+    for i in range(50):
+        (noise_dir / f"package-lock-{i}.json").write_text(
+            '{"name":"foo","version":"1.0.0","dependencies":{}}',
+            encoding="utf-8",
+        )
+
+    # One real policy in a non-standard directory
+    custom = tmp_path / "services" / "ci-deploy"
+    custom.mkdir(parents=True)
+    (custom / "policy.json").write_text(
+        '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow",'
+        ' "Action": "s3:GetObject", "Resource": "*"}]}',
+        encoding="utf-8",
+    )
+
+    # Set the cap very low — the 50 noise files must not push the real
+    # policy out, because they should be filtered out before the cap applies.
+    findings, _errors = scan_policy_files(str(tmp_path), max_other_files=2)
+    sources = {Path(f.source_file).name for f in findings}
+    assert "policy.json" in sources, (
+        "real policy in non-standard location must survive the cap when the "
+        "rest of the JSON files are non-policy noise"
+    )
+
+
+def test_scan_policy_files_zero_cap_means_unlimited(tmp_path: Path) -> None:
+    """`max_other_files=0` skips the cap entirely (and the warning)."""
+    noise_dir = tmp_path / "services" / "noise"
+    noise_dir.mkdir(parents=True)
+    for i in range(5):
+        (noise_dir / f"data-{i}.json").write_text(
+            '{"x": ' + str(i) + "}", encoding="utf-8"
+        )
+
+    (tmp_path / "services" / "ci-deploy").mkdir(parents=True)
+    (tmp_path / "services" / "ci-deploy" / "policy.json").write_text(
+        '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow",'
+        ' "Action": "iam:PassRole", "Resource": "*"}]}',
+        encoding="utf-8",
+    )
+
+    findings, _errors = scan_policy_files(str(tmp_path), max_other_files=0)
+    sources = {Path(f.source_file).name for f in findings}
+    assert "policy.json" in sources
