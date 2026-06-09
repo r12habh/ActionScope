@@ -123,3 +123,11 @@ repositories** and **3,981 AWS-enabled workflows**:
   permissions — the pattern behind the April 2026 prt-scan attack
 
 [Full research findings](https://github.com/r12habh/ActionScope/blob/main/research/FINDINGS.md){ .md-button }
+
+## Limitations and calibration
+
+Not every finding is a confirmed vulnerability. Some are exposure signals
+that need human review, and some are context-dependent. Understanding the
+difference is key to trusting ActionScope's output.
+
+[Read the limitations guide](limitations.md){ .md-button }
