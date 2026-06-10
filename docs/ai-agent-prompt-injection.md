@@ -117,8 +117,8 @@ For defense in depth, teams running agentic CI can pair ActionScope's static
 detection with a runtime memory or context guard that scans dynamic inputs
 before they enter the agent context window, such as
 [OWASP Agent Memory Guard](https://github.com/OWASP/www-project-agent-memory-guard).
-For adversarial test cases, see the CI injection scenarios in
-[OWASP Agent Threat Bench](https://github.com/OWASP/www-project-agent-threat-bench).
+For broader threat modeling guidance, see
+[OWASP Agentic AI Threats and Mitigations](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/).
 
 ## SARIF Rules
 
