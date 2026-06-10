@@ -45,7 +45,10 @@
       "advisory_url": "https://github.com/advisories/GHSA-mrrh-fwg8-r2c3",
       "description": "All version tags redirected to malicious commit. Exfiltrated secrets via workflow logs. Affected 23,000+ repositories.",
       "status": "historical",
-      "affected_refs": []
+      "affected_refs": [],
+      "malicious_shas": [
+        "0e58ed867288e6711d10da9293b8db84f3f3ed85"
+      ]
     },
     {
       "action": "aquasecurity/trivy-action",

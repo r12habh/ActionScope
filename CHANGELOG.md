@@ -2,6 +2,98 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.3.5] - 2026-05-30
+
+### Fixed
+- **JSON policy file discovery now pre-filters by content before applying
+  the cap.** Each candidate file's first 4 KB is checked for both
+  `"Statement"` and `"Effect"` substrings; only files that pass count toward
+  the `--max-policy-files` cap. Live impact on monorepos:
+
+  | Repo | Before | After |
+  |---|---|---|
+  | `aws/aws-cdk` (13,860 JSON files) | 13,060 silently dropped | 1,591 dropped (87% reduction) |
+  | `boto/boto3` (2,056 JSON files) | 1,256 silently dropped | cap warning silent |
+  | `aws-amplify/amplify-cli` (2,371 JSON files) | 1,571 silently dropped | cap warning silent |
+
+  Files in the well-known policy directories (`iam/`, `policies/`,
+  `.github/`, `infra/`, `infrastructure/`, `terraform/`) bypass the
+  pre-filter entirely so the v0.3.3 "always scan common dirs" invariant
+  is preserved. Surfaced by live-scanning 8 production repos (aws-cdk,
+  karpenter, sentry, serverless, goreleaser, boto3, iceberg, amplify-cli).
+
+## [0.3.4] - 2026-05-30
+
+### Fixed
+- **SHA pins of `tj-actions/changed-files` to non-malicious commits no longer
+  produce false-positive findings.** The bundled DB entry now lists the
+  documented malicious commit (`0e58ed867288e6711d10da9293b8db84f3f3ed85`,
+  per [GHSA-mrrh-fwg8-r2c3](https://github.com/advisories/GHSA-mrrh-fwg8-r2c3))
+  via a new optional `malicious_shas` field. The detector treats SHA pins
+  outside that list as safe when the list is present, instead of flagging
+  all SHA pins as ambiguous. Tag-pin detection and the conservative
+  "ambiguous SHA pin" behavior for actions without documented malicious
+  commits (`actions-cool/maintain-one-comment`, `aquasecurity/trivy-action`)
+  are unchanged.
+
+  Surfaced by live-scanning four production repos (Vault, Prowler,
+  LocalStack, Argo CD) — Prowler and Argo CD both pin
+  `tj-actions/changed-files` to the same pre-compromise SHA
+  (`9426d40962ed5378910ee2e21d5f8c6fcbf2dd96`), which was producing 42
+  false-positive findings between them.
+
+### Added
+- New optional `malicious_shas: [str]` field in the compromised-actions
+  database schema. Entries with documented malicious commits should list
+  them here. The detector uses this list to distinguish "we know this
+  specific SHA is bad" from "we know the action was compromised but cannot
+  say which SHA specifically."
+
+## [0.3.3] - 2026-05-30
+
+### Fixed
+- **JSON policy file discovery no longer silently truncates at 200 files.**
+  The previous single flat cap of 200 could drop IAM policies in
+  non-standard locations on repos with large numbers of test/schema/fixture
+  JSON files. Files in the well-known policy directories (`iam/`,
+  `policies/`, `.github/`, `infra/`, `infrastructure/`, `terraform/`) are
+  now always scanned in full regardless of total count. The cap on "other"
+  JSON files is raised from `200` to `800` and is configurable via a new
+  `--max-policy-files <N>` CLI flag (use `0` to disable entirely). The
+  warning emitted when the cap is hit now names the count of skipped files
+  and the flag to override it.
+  Surfaced by the live-test scan against
+  [`apache/airflow`](https://github.com/r12habh/ActionScope/pull/67766)
+  (393 JSON files; the old cap silently dropped 193 of them).
+
+## [0.3.2] - 2026-05-25
+
+### Fixed
+- **Summary risk counts now include every detector, not just IAM policy
+  actions.** Live-scanning real repos showed
+  `Critical: 0 | High: 0 | Medium: 0` even when GITHUB_TOKEN, OIDC trust,
+  script injection, and environment detectors had emitted high/medium
+  findings — because the terminal and Markdown summary panels were
+  counting only IAM-action risk levels. Counts now reflect the actual
+  set of findings shown in the report.
+- **SARIF artifact locations are now repo-relative.** Previously, scans
+  run against an absolute path (e.g. `/tmp/<test-repo>`) emitted SARIF
+  `artifactLocation.uri` values containing that absolute path, which
+  GitHub Code Scanning would not match against repository files. The
+  reporter now resolves locations relative to `scan_path` and uses the
+  `%SRCROOT%` `uriBaseId`, with a graceful fallback when a finding's
+  workflow file is outside the scan path.
+- **Policy JSON parser is quiet for malformed non-policy JSON/JSONC.**
+  Files like `.devcontainer/devcontainer.json` (which contain `//`
+  comments and trailing commas, valid JSONC but invalid JSON) no longer
+  emit a noisy warning when they happen to live under a path
+  ActionScope checks for IAM policies.
+
+All three issues were surfaced by live-scanning the
+[`rubygems/rubygems.org`](https://github.com/rubygems/rubygems.org) repo
+during prep for the upstream ActionScope rollout there
+([rubygems/rubygems.org#6565](https://github.com/rubygems/rubygems.org/pull/6565)).
+
 ## [0.3.1] - 2026-05-23
 
 ### Fixed
