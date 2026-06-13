@@ -156,6 +156,85 @@ def test_sarif_results_have_correct_location_uri_base_id() -> None:
     assert location["artifactLocation"]["uriBaseId"] == "%SRCROOT%"
 
 
+def test_sarif_results_use_repo_relative_locations(tmp_path: Path) -> None:
+    workflow_file = tmp_path / ".github" / "workflows" / "deploy.yml"
+    workflow_file.parent.mkdir(parents=True)
+    workflow_file.write_text("name: deploy\n", encoding="utf-8")
+    credential = AwsCredentialSource(
+        workflow_file=str(workflow_file),
+        job_name="deploy",
+        step_name="Configure AWS credentials",
+        role_arn="arn:aws:iam::123456789012:role/github-deploy-role",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+    )
+    permission = GitHubTokenPermission(
+        workflow_file=str(workflow_file),
+        job_name="deploy",
+        scope="contents",
+        access="write",
+        risk_level=RiskLevel.HIGH,
+    )
+    result = ScanResult(
+        scan_path=str(tmp_path),
+        workflow_count=1,
+        credential_sources=[credential],
+        github_token_permissions=[permission],
+    )
+
+    data = _sarif_data(result)
+    location = _results(data)[0]["locations"][0]["physicalLocation"]
+
+    assert location["artifactLocation"]["uri"] == ".github/workflows/deploy.yml"
+
+
+def test_sarif_location_falls_back_when_path_is_outside_repo(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path.parent / "outside.yml"
+    outside.write_text("name: outside\n", encoding="utf-8")
+    result = ScanResult(
+        scan_path=str(tmp_path),
+        github_token_permissions=[
+            GitHubTokenPermission(
+                workflow_file=str(outside),
+                job_name="deploy",
+                scope="contents",
+                access="write",
+                risk_level=RiskLevel.HIGH,
+            )
+        ],
+    )
+
+    data = _sarif_data(result)
+    location = _results(data)[0]["locations"][0]["physicalLocation"]
+
+    assert location["artifactLocation"]["uri"] == outside.as_posix()
+
+
+def test_sarif_location_allows_empty_path() -> None:
+    data = json.loads(
+        to_sarif_from_dict(
+            {
+                "scan_path": "/repo",
+                "github_token_permissions": [
+                    {
+                        "workflow_file": "",
+                        "scope": "contents",
+                        "access": "write",
+                        "risk_level": "high",
+                    }
+                ],
+            }
+        )
+    )
+
+    location = _results(data)[0]["locations"][0]["physicalLocation"]
+
+    assert location["artifactLocation"]["uri"] == ""
+
+
 def test_all_rule_ids_are_present_in_rules_list() -> None:
     data = _sarif_data(_result())
 
