@@ -81,7 +81,6 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Getting Started:
-      - Getting Started:
       - Quick Start: getting-started.md
       - First Scan Tutorial: tutorials/first-scan.md
       - Output Formats: output-formats.md

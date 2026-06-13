@@ -18,8 +18,8 @@ actionscope scan .
 Machine-readable output for CI pipelines and custom tooling.
 
 ```bash
-actionscope scan . --format json
-actionscope scan . --format json --output-file scan.json
+actionscope scan . --output-format json
+actionscope scan . --output-format json --output-file scan.json
 ```
 
 ### markdown
@@ -27,7 +27,7 @@ actionscope scan . --format json --output-file scan.json
 Formatted output for PR comments and reports.
 
 ```bash
-actionscope scan . --format markdown
+actionscope scan . --output-format markdown
 actionscope report --from-json scan.json --format markdown
 ```
 
@@ -36,7 +36,7 @@ actionscope report --from-json scan.json --format markdown
 SARIF 2.1.0 output for GitHub Code Scanning and other SAST tools.
 
 ```bash
-actionscope scan . --format sarif
+actionscope scan . --output-format sarif
 actionscope report --from-json scan.json --format sarif
 ```
 
@@ -45,8 +45,8 @@ actionscope report --from-json scan.json --format sarif
 Save any format to a file instead of stdout:
 
 ```bash
-actionscope scan . --format json --output-file scan.json
-actionscope scan . --format sarif --output-file results.sarif
+actionscope scan . --output-format json --output-file scan.json
+actionscope scan . --output-format sarif --output-file results.sarif
 ```
 
 ## Rendering Reports from Saved JSON
@@ -55,6 +55,7 @@ Use `actionscope report` to convert a saved JSON scan into another format
 without re-scanning:
 
 ```bash
+actionscope report scan.json --format markdown
 actionscope report --from-json scan.json --format markdown
 actionscope report --from-json scan.json --format sarif
 ```
