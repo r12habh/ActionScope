@@ -83,11 +83,14 @@ nav:
   - Getting Started:
       - Quick Start: getting-started.md
       - First Scan Tutorial: tutorials/first-scan.md
+      - Output Formats: output-formats.md
       - FAQ: faq.md
       - CLI Reference: cli-reference.md
   - Detectors:
       - Compromised Actions: compromised-actions.md
       - OIDC Trust Policy: oidc-trust.md
+      - Script Injection: script-injection.md
+      - AI Agent Prompt Injection: ai-agent-prompt-injection.md
       - SARIF and Code Scanning: sarif.md
   - Compromised Actions Database: compromised-actions-database.md
   - Operations:
