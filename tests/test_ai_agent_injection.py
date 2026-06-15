@@ -100,8 +100,8 @@ def test_classify_agent_returns_claude_code_for_anthropics_action() -> None:
 
 def test_classify_agent_returns_expected_labels_for_supported_actions() -> None:
     assert classify_agent("google-github-actions/run-gemini-cli@v1") == "gemini_cli"
-    assert classify_agent("opencode/run@v1") == "opencode"
-    assert classify_agent("continue-dev/continue@v1") == "continue"
+    assert classify_agent("opencode-ai/opencode@v1") == "opencode"
+    assert classify_agent("continuedev/continue@v1") == "continue"
 
 
 def test_detect_ai_agent_steps_finds_supported_action_patterns() -> None:
@@ -113,8 +113,8 @@ def test_detect_ai_agent_steps_finds_supported_action_patterns() -> None:
                         "name": "Run Gemini",
                         "uses": "google-github-actions/run-gemini-cli@v1",
                     },
-                    {"name": "Run OpenCode", "uses": "opencode/run@v1"},
-                    {"name": "Run Continue", "uses": "continue-dev/continue@v1"},
+                    {"name": "Run OpenCode", "uses": "opencode-ai/opencode@v1"},
+                    {"name": "Run Continue", "uses": "continuedev/continue@v1"},
                 ]
             }
         }
@@ -139,7 +139,9 @@ def test_pull_request_agent_with_write_token_and_untrusted_input_is_critical() -
                     {
                         "name": "Run Gemini",
                         "uses": "google-github-actions/run-gemini-cli@v1",
-                        "with": {"prompt": "Review ${{ github.event.pull_request.body }}"},
+                        "with": {
+                            "prompt": "Review ${{ github.event.pull_request.body }}",
+                        },
                     }
                 ]
             }
