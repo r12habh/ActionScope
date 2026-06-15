@@ -252,3 +252,23 @@ def test_detect_ai_agent_steps_finds_continue_by_step_name() -> None:
     }
 
     assert detect_ai_agent_steps(data)
+
+
+def test_detect_ai_agent_steps_finds_copilot_named_run_step() -> None:
+    data = {
+        "jobs": {
+            "review": {
+                "steps": [
+                    {
+                        "name": "Run Copilot review",
+                        "run": "echo '${{ github.event.pull_request.body }}'",
+                    }
+                ]
+            }
+        }
+    }
+
+    steps = detect_ai_agent_steps(data)
+
+    assert steps[0][1] == "Run Copilot review"
+    assert classify_agent(steps[0][1]) == "copilot_agent"
