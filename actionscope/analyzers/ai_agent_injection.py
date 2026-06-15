@@ -27,8 +27,9 @@ AI_AGENT_ACTIONS = [
     "github/copilot-action",
     "google-github-actions/run-gemini-cli",
     "google-gemini/gemini-cli-action",
-    "opencode/run",
-    "continue-dev/continue",
+    "opencode-ai/opencode",
+    "sst/opencode",
+    "continuedev/continue",
     "cline/cline",
 ]
 
