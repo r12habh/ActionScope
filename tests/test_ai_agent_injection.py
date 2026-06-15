@@ -10,7 +10,7 @@ from actionscope.analyzers.ai_agent_injection import (
     has_untrusted_trigger,
 )
 from actionscope.analyzers.github_token import analyze_workflow_permissions
-from actionscope.models import AwsCredentialSource, RiskLevel
+from actionscope.models import AwsCredentialSource, GitHubTokenPermission, RiskLevel
 from actionscope.parsers.workflow import parse_workflow_file
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "workflows"
@@ -31,6 +31,19 @@ def _credential(workflow_file: str) -> AwsCredentialSource:
         uses_access_keys=False,
         uses_oidc=True,
         aws_region="us-east-1",
+    )
+
+
+def _write_permission(
+    workflow_file: str,
+    job_name: str = "ai",
+) -> GitHubTokenPermission:
+    return GitHubTokenPermission(
+        workflow_file=workflow_file,
+        job_name=job_name,
+        scope="contents",
+        access="write",
+        risk_level=RiskLevel.HIGH,
     )
 
 
@@ -83,6 +96,68 @@ def test_find_untrusted_inputs_detects_pr_body_in_run_block() -> None:
 
 def test_classify_agent_returns_claude_code_for_anthropics_action() -> None:
     assert classify_agent("anthropics/claude-code-action@v1") == "claude_code"
+
+
+def test_classify_agent_returns_expected_labels_for_supported_actions() -> None:
+    assert classify_agent("google-github-actions/run-gemini-cli@v1") == "gemini_cli"
+    assert classify_agent("opencode-ai/opencode@v1") == "opencode"
+    assert classify_agent("continuedev/continue@v1") == "continue"
+
+
+def test_detect_ai_agent_steps_finds_supported_action_patterns() -> None:
+    data = {
+        "jobs": {
+            "ai": {
+                "steps": [
+                    {
+                        "name": "Run Gemini",
+                        "uses": "google-github-actions/run-gemini-cli@v1",
+                    },
+                    {"name": "Run OpenCode", "uses": "opencode-ai/opencode@v1"},
+                    {"name": "Run Continue", "uses": "continuedev/continue@v1"},
+                ]
+            }
+        }
+    }
+
+    steps = detect_ai_agent_steps(data)
+
+    assert [step[1] for step in steps] == [
+        "Run Gemini",
+        "Run OpenCode",
+        "Run Continue",
+    ]
+
+
+def test_pull_request_agent_with_write_token_and_untrusted_input_is_critical() -> None:
+    workflow_file = "agent.yml"
+    data = {
+        "on": "pull_request",
+        "jobs": {
+            "ai": {
+                "steps": [
+                    {
+                        "name": "Run Gemini",
+                        "uses": "google-github-actions/run-gemini-cli@v1",
+                        "with": {
+                            "prompt": "Review ${{ github.event.pull_request.body }}",
+                        },
+                    }
+                ]
+            }
+        },
+    }
+
+    findings = analyze_ai_agent_injection_surface(
+        data,
+        workflow_file,
+        [],
+        [_write_permission(workflow_file)],
+    )
+
+    assert findings[0].agent_type == "gemini_cli"
+    assert findings[0].has_write_permissions is True
+    assert findings[0].risk_level is RiskLevel.CRITICAL
 
 
 def test_fixture_workflow_produces_critical_finding() -> None:
