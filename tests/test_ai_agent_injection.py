@@ -255,6 +255,7 @@ def test_detect_ai_agent_steps_finds_continue_by_step_name() -> None:
 
 
 def test_detect_ai_agent_steps_finds_copilot_named_run_step() -> None:
+    """Detect a `run` step whose name matches the Copilot review pattern."""
     data = {
         "jobs": {
             "review": {
