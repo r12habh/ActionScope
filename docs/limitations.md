@@ -37,7 +37,8 @@ ActionScope has two analysis modes:
 
 ### What `--aws-verify` cannot do
 
-- It cannot read **private IAM policies** unless the attached role has `iam:Get*` permissions
+- It cannot read IAM policies that the verification role cannot access
+  (requires read-only `iam:Get*`/`iam:List*` permissions)
 - It cannot inspect **organization-level SCPs** (Service Control Policies) unless the role has `organizations:Describe*`
 - It cannot verify **cross-account trust relationships** unless the role has access to the trusted account
 
@@ -48,7 +49,8 @@ ActionScope has two analysis modes:
 When ActionScope reports `policy_source: not_found`, it means:
 
 1. The workflow references an IAM role (e.g., `role-to-assume: arn:aws:iam::123456789012:role/my-role`)
-2. ActionScope could not fetch the live policy for that role (static mode) or the AWS API returned access denied
+2. ActionScope could not find a matching policy file in the repository
+   (static mode), or the AWS API returned access denied (`--aws-verify` mode)
 
 ### What to do next
 
@@ -62,6 +64,7 @@ When ActionScope reports `policy_source: not_found`, it means:
 
 | Label | Meaning | Action |
 |---|---|---|
+| **CRITICAL** | Confirmed, severe vulnerability or known-compromised dependency requiring immediate remediation. | Fix immediately / emergency remediation |
 | **HIGH** | Confirmed vulnerability. The workflow pattern is a known attack vector and the IAM permissions confirm exploitability. | Fix immediately |
 | **MEDIUM** | Security exposure. The pattern is concerning but may require additional context (e.g., branch protection, environment rules) to exploit. | Review within 1 sprint |
 | **LOW** | Hardening opportunity. The finding represents a defense-in-depth improvement rather than an immediate risk. | Add to backlog |
@@ -94,7 +97,7 @@ ActionScope can analyze the **calling** workflow but cannot inspect the
 
 **Mitigation:** Run ActionScope in the repository that defines the reusable workflow, or pin to a known SHA.
 
-### Private IAM policies
+### IAM policy context ActionScope cannot read
 
 ActionScope can read inline policies and managed policies attached to
 the calling role. It cannot read:
@@ -103,7 +106,12 @@ the calling role. It cannot read:
 - Session policies applied at assume-role time
 - SCPs that restrict the role's effective permissions
 
-**Mitigation:** Use `--aws-verify` with a role that has `iam:SimulatePrincipalPolicy`.
+**Mitigation:** Use `--aws-verify` with the read-only IAM permissions listed in
+[AWS Verify Permissions](aws-verify-permissions.md):
+`iam:GetRole`, `iam:ListAttachedRolePolicies`, `iam:GetPolicy`,
+`iam:GetPolicyVersion`, `iam:ListRolePolicies`, and `iam:GetRolePolicy`.
+To evaluate permissions boundaries or SCP effects, use AWS's
+`iam:SimulatePrincipalPolicy` separately as a manual follow-up.
 
 ### YAML expression edge cases
 
@@ -134,23 +142,18 @@ ActionScope does not currently check:
 
 ## Suppression and configuration
 
-Individual findings can be suppressed via `.actionscope-suppressions.yml`:
+ActionScope does not currently support repository-local suppressions or
+custom risk tuning. That work is tracked in
+[issue #23](https://github.com/r12habh/ActionScope/issues/23).
 
-```yaml
-suppressions:
-  - rule: "oidc-wildcard-subject"
-    workflow: ".github/workflows/deploy.yml"
-    reason: "OIDC subject is scoped to main branch via environment protection rules"
-    expires: "2026-09-01"
-```
-
-See [Configuration](cli-reference.md) for the full suppression schema.
+Until that lands, treat accepted findings as documented risk decisions in
+your own security review process rather than hiding them from the scan.
 
 ---
 
 ## Examples
 
-### Example 1: OIDC wildcard subject (HIGH)
+### Example 1: OIDC wildcard subject (CRITICAL)
 
 ```yaml
 # .github/workflows/deploy.yml
@@ -166,11 +169,38 @@ jobs:
 
 **Finding:** `oidc-wildcard-subject` — The OIDC subject claim allows any repo in the org.
 
-**Why it's HIGH:** Any fork in the org can assume this role and access AWS.
+The vulnerable configuration is in the AWS IAM role trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:my-org/*"
+        }
+      }
+    }
+  ]
+}
+```
+
+**Why it's CRITICAL:** Any repository in `my-org` can assume this role and
+access AWS, not just the intended production repository.
 
 **Fix:** Scope the subject to the specific repo and branch:
-```yaml
-subject: "repo:my-org/my-repo:ref:refs/heads/main"
+```json
+{
+  "StringLike": {
+    "token.actions.githubusercontent.com:sub": "repo:my-org/my-repo:ref:refs/heads/main"
+  }
+}
 ```
 
 ### Example 2: Script injection in run block (MEDIUM)
