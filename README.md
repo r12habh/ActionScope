@@ -29,8 +29,12 @@ It also detects:
 - 🤖 **AI agent prompt injection surfaces** (Claude Code, Copilot in CI)
 - 📌 **Unpinned actions** with SHA resolution
 
-<!-- Demo GIF placeholder: add docs/demo.gif after recording. -->
-<!-- To generate: `pip install -e . && vhs docs/demo.tape` -->
+![ActionScope mapping a workflow's AWS blast radius](docs/demo.gif)
+
+The workflow only says it *assumes a role*. ActionScope joins it to the IAM
+behind it and shows what that role can actually do if CI is compromised — here:
+pass any IAM role (privilege escalation), wipe S3, and terminate EC2.
+**[Reproduce this scan yourself »](examples/aws-blast-radius-demo/)**
 
 ## Try it on your repo in 30 seconds
 
