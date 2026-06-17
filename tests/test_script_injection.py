@@ -85,8 +85,7 @@ def test_github_event_issue_body_detected_as_untrusted() -> None:
 def test_multiple_injections_in_one_step_produce_multiple_findings() -> None:
     step = {
         "run": (
-            "echo ${{ github.event.pull_request.title }} "
-            "${{ github.event.issue.body }}"
+            "echo ${{ github.event.pull_request.title }} ${{ github.event.issue.body }}"
         )
     }
 
@@ -108,11 +107,7 @@ def test_push_trigger_head_commit_is_high_not_critical() -> None:
     data = {
         "on": "push",
         "jobs": {
-            "test": {
-                "steps": [
-                    {"run": "echo ${{ github.event.head_commit.message }}"}
-                ]
-            }
+            "test": {"steps": [{"run": "echo ${{ github.event.head_commit.message }}"}]}
         },
     }
 
@@ -158,3 +153,56 @@ def test_injection_method_is_direct_for_direct_injection() -> None:
 
 def test_is_run_step_detects_run_steps() -> None:
     assert is_run_step({"run": "echo hi"})
+
+
+# --- Tests for issue #58: issue_comment and discussion injection contexts ---
+
+
+def test_github_event_comment_body_detected_as_untrusted() -> None:
+    """Direct test that the comment.body context is recognized (per issue #58)."""
+    assert find_untrusted_expressions_in_text("${{ github.event.comment.body }}")
+
+
+def test_github_event_discussion_body_detected_as_untrusted() -> None:
+    """Direct test that the discussion.body context is recognized (per issue #58)."""
+    assert find_untrusted_expressions_in_text("${{ github.event.discussion.body }}")
+
+
+def test_issue_comment_direct_injection_produces_finding() -> None:
+    """scan_workflow reports direct injection for issue_comment (issue #58)."""
+    data = {
+        "on": "issue_comment",
+        "jobs": {
+            "notify": {
+                "steps": [{"run": 'echo "Comment: ${{ github.event.comment.body }}"'}]
+            }
+        },
+    }
+
+    findings = scan_workflow_for_injections(data, "issue-comment.yml")
+
+    assert len(findings) == 1
+    assert findings[0].injection_method == "direct"
+    assert findings[0].risk_level is not RiskLevel.INFO
+    assert "github.event.comment.body" in findings[0].untrusted_expression
+
+
+def test_discussion_direct_injection_produces_finding() -> None:
+    """scan_workflow reports direct injection for discussion (issue #58)."""
+    data = {
+        "on": {"discussion": {"types": ["created"]}},
+        "jobs": {
+            "summarize": {
+                "steps": [
+                    {"run": 'echo "Discussion: ${{ github.event.discussion.body }}"'}
+                ]
+            }
+        },
+    }
+
+    findings = scan_workflow_for_injections(data, "discussion.yml")
+
+    assert len(findings) == 1
+    assert findings[0].injection_method == "direct"
+    assert findings[0].risk_level is not RiskLevel.INFO
+    assert "github.event.discussion.body" in findings[0].untrusted_expression
