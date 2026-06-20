@@ -27,7 +27,7 @@ jobs:
     name: Local action against coverage_repo fixture
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Run the local action against the coverage_repo fixture
         id: scan
