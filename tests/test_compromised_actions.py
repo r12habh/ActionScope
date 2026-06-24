@@ -175,7 +175,7 @@ def test_workflow_scan_unknown_sha_produces_no_finding_when_refs_explicit() -> N
     assert findings == []
 
 
-def test_sha_pinned_known_compromised_action_is_high_not_critical() -> None:
+def test_sha_pinned_action_with_no_known_bad_sha_produces_no_finding() -> None:
     workflow = {
         "jobs": {
             "triage": {
@@ -192,8 +192,7 @@ def test_sha_pinned_known_compromised_action_is_high_not_critical() -> None:
         load_compromised_actions(),
     )
 
-    assert findings[0].is_sha_pinned is True
-    assert findings[0].risk_level is RiskLevel.HIGH
+    assert findings == []
 
 
 PROWLER_TJ_ACTIONS_SHA = "9426d40962ed5378910ee2e21d5f8c6fcbf2dd96"

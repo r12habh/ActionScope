@@ -23,6 +23,7 @@ from actionscope.parsers.workflow import (
 )
 
 DEPLOY_JOB_NAME_HINTS = ("deploy", "release", "publish", "prod", "production")
+DEPLOY_CREDENTIAL_HINTS = ("deploy", "release", "publish")
 DEPLOY_STEP_HINTS = (
     "terraform apply",
     "aws s3 sync",
@@ -31,6 +32,10 @@ DEPLOY_STEP_HINTS = (
     "serverless deploy",
     "kubectl apply",
     "helm upgrade",
+)
+DEPLOY_ACTION_HINTS = (
+    "aws-actions/aws-cloudformation-github-deploy",
+    "aws-actions/amazon-ecs-deploy-task-definition",
 )
 
 
@@ -73,12 +78,6 @@ def is_deploy_job(
     if job_name and any(hint in job_name for hint in DEPLOY_JOB_NAME_HINTS):
         return True
 
-    if any(
-        getattr(source, "job_name", None) == job_data.get("__job_name")
-        for source in credential_sources
-    ):
-        return True
-
     for step in _steps(job_data):
         run_block = step.get("run")
         if isinstance(run_block, str):
@@ -86,10 +85,22 @@ def is_deploy_job(
             if any(hint in lowered for hint in DEPLOY_STEP_HINTS):
                 return True
         uses = step.get("uses")
-        if (
-            isinstance(uses, str)
-            and "aws-actions/configure-aws-credentials" in uses.lower()
+        if isinstance(uses, str) and any(
+            hint in uses.lower() for hint in DEPLOY_ACTION_HINTS
         ):
+            return True
+
+    for source in credential_sources:
+        if getattr(source, "job_name", None) != job_data.get("__job_name"):
+            continue
+        source_text = " ".join(
+            str(part or "").lower()
+            for part in (
+                getattr(source, "role_arn", ""),
+                getattr(source, "step_name", ""),
+            )
+        )
+        if any(hint in source_text for hint in DEPLOY_CREDENTIAL_HINTS):
             return True
 
     return False

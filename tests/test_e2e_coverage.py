@@ -93,16 +93,16 @@ def test_ai_agent_with_write_perms_detected(scan_json: dict) -> None:
     assert "ai-review" in findings[0]["workflow_file"]
 
 
-def test_two_environment_findings_one_per_deploy_job(scan_json: dict) -> None:
-    """Two deploy-style jobs without proper environment scoping.
+def test_environment_finding_for_deploy_job(scan_json: dict) -> None:
+    """The deploy-style job without proper trust-policy scoping is reported.
 
     Regression guard for risk_engine.py: an earlier version filtered
-    environment findings to >= HIGH, which silently dropped these MEDIUM
-    findings out of overall_risk. Locking both the count and the risk level
-    catches that class of bug.
+    environment findings to >= HIGH, which silently dropped MEDIUM findings out
+    of overall_risk. Locking the count and risk level catches that class of bug.
     """
     findings = scan_json["environment_findings"]
-    assert len(findings) == 2
+    assert len(findings) == 1
+    assert findings[0]["job_name"] == "deploy"
     assert {f["risk_level"] for f in findings} == {"medium"}
 
 

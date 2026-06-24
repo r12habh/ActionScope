@@ -2,6 +2,23 @@
 
 All notable changes to ActionScope are documented here.
 
+## [0.3.6] - 2026-06-24
+
+### Fixed
+- **Known-compromised action findings now stay focused on actually risky
+  refs.** Full 40-character SHA pins are no longer reported for historical
+  compromised actions unless the exact SHA is listed in the bundled database
+  as known malicious. Mutable tag refs remain CRITICAL.
+- **`id-token: write` calibration now recognizes common non-AWS OIDC
+  consumers.** PyPI trusted publishing, GitHub Pages deployment, GCP/Azure
+  auth actions, Atlas, Sigstore, SLSA generator actions, and explicit OIDC
+  request patterns now downgrade intentional token minting to informational
+  instead of HIGH.
+- **GitHub Environment findings are less noisy.** Jobs are no longer treated
+  as deploy jobs solely because they configure AWS credentials; the detector
+  now looks for deploy-oriented job names, deploy commands/actions, or deploy
+  role naming before recommending environment protection.
+
 ## [0.3.5] - 2026-05-30
 
 ### Fixed

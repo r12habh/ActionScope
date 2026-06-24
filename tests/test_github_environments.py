@@ -72,8 +72,46 @@ def test_is_deploy_job_true_for_deploy_name() -> None:
     assert is_deploy_job({"__job_name": "deploy"}, []) is True
 
 
-def test_is_deploy_job_true_for_aws_credentials() -> None:
-    assert is_deploy_job({"__job_name": "build"}, [_credential("build")]) is True
+def test_is_deploy_job_false_for_aws_credentials_alone() -> None:
+    credential = AwsCredentialSource(
+        workflow_file="deploy.yml",
+        job_name="build",
+        step_name="Configure AWS",
+        role_arn="arn:aws:iam::123456789012:role/read-only-ci",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+    )
+
+    assert is_deploy_job({"__job_name": "build"}, [credential]) is False
+
+
+def test_is_deploy_job_true_for_deploy_role_name() -> None:
+    credential = AwsCredentialSource(
+        workflow_file="deploy.yml",
+        job_name="build",
+        step_name="Configure AWS",
+        role_arn="arn:aws:iam::123456789012:role/github-deploy-role",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+    )
+
+    assert is_deploy_job({"__job_name": "build"}, [credential]) is True
+
+
+def test_is_deploy_job_false_for_production_audit_role_name() -> None:
+    credential = AwsCredentialSource(
+        workflow_file="deploy.yml",
+        job_name="audit",
+        step_name="Configure production audit role",
+        role_arn="arn:aws:iam::123456789012:role/prod-read-only",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+    )
+
+    assert is_deploy_job({"__job_name": "audit"}, [credential]) is False
 
 
 def test_is_deploy_job_false_for_test_only_job() -> None:
@@ -144,6 +182,39 @@ def test_environment_finding_recommendation_is_non_empty() -> None:
     findings = analyze_environment_usage(workflow, "deploy.yml", [_credential()], [])
 
     assert findings[0].recommendation
+
+
+def test_aws_credential_read_only_job_without_deploy_hints_has_no_finding() -> None:
+    workflow = {
+        "jobs": {
+            "validate": {
+                "steps": [
+                    {
+                        "uses": "aws-actions/configure-aws-credentials@v4",
+                        "with": {
+                            "role-to-assume": (
+                                "arn:aws:iam::123456789012:role/read-only-ci"
+                            )
+                        },
+                    },
+                    {"run": "aws sts get-caller-identity"},
+                ]
+            }
+        }
+    }
+    credential = AwsCredentialSource(
+        workflow_file="deploy.yml",
+        job_name="validate",
+        step_name="Configure AWS",
+        role_arn="arn:aws:iam::123456789012:role/read-only-ci",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+    )
+
+    findings = analyze_environment_usage(workflow, "deploy.yml", [credential], [])
+
+    assert findings == []
 
 
 def test_multiple_jobs_are_analyzed_independently() -> None:

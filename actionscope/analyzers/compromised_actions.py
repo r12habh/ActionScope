@@ -64,10 +64,10 @@ def is_compromised_ref(
             # Without a separate `malicious_shas` list we cannot tell whether
             # an arbitrary SHA was the compromised commit, so treat as safe.
             return False, None
-        # No malicious_shas and no affected_refs — we know the action was
-        # compromised but cannot say which commit specifically. SHA pin is
-        # ambiguous; flag it so a human can verify.
-        return True, entry
+        # No malicious_shas and no affected_refs means the database only knows
+        # that mutable refs were compromised. A full SHA pin is not vulnerable
+        # to tag redirection unless the exact SHA is known bad.
+        return False, None
 
     if affected_refs:
         if normalized_ref in affected_refs:
