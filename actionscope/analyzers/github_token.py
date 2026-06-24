@@ -24,6 +24,27 @@ KNOWN_PERMISSION_SCOPES = (
 
 HIGH_WRITE_SCOPES = {"pull-requests", "packages", "id-token"}
 MEDIUM_WRITE_SCOPES = {"contents", "actions", "deployments"}
+AWS_OIDC_ACTION = "aws-actions/configure-aws-credentials"
+KNOWN_OIDC_CONSUMER_ACTIONS = {
+    "actions/deploy-pages",
+    "ariga/atlas-action",
+    "azure/login",
+    "docker/login-action",
+    "google-github-actions/auth",
+    "hashicorp/vault-action",
+    "pypa/gh-action-pypi-publish",
+    "sigstore/gh-action-sigstore-python",
+    "snowflakedb/snowflake-cli-action",
+}
+KNOWN_OIDC_CONSUMER_PREFIXES = (
+    "slsa-framework/slsa-github-generator/",
+)
+OIDC_RUN_HINTS = (
+    "actions_id_token_request_url",
+    "core.getidtoken",
+    "getidtoken(",
+    "npm publish --provenance",
+)
 
 
 def analyze_workflow_permissions(
@@ -42,7 +63,7 @@ def analyze_workflow_permissions(
                 permissions=workflow_data["permissions"],
                 workflow_file=workflow_file,
                 job_name="",
-                oidc_expected=_workflow_uses_role_to_assume(workflow_data),
+                oidc_expected=_workflow_uses_oidc_consumer(workflow_data),
             )
         )
 
@@ -60,7 +81,7 @@ def analyze_workflow_permissions(
                     permissions=job_data["permissions"],
                     workflow_file=workflow_file,
                     job_name=str(job_name),
-                    oidc_expected=_job_uses_role_to_assume(job_data),
+                    oidc_expected=_job_uses_oidc_consumer(job_data),
                 )
             )
 
@@ -175,19 +196,27 @@ def _classify_permission(scope: str, access: str, oidc_expected: bool) -> RiskLe
     return RiskLevel.LOW
 
 
-def _workflow_uses_role_to_assume(workflow_data: dict) -> bool:
+def _workflow_uses_oidc_consumer(workflow_data: dict) -> bool:
     jobs = workflow_data.get("jobs")
     if jobs is None:
         jobs = {}
     if not isinstance(jobs, dict):
         return False
     return any(
-        isinstance(job_data, dict) and _job_uses_role_to_assume(job_data)
+        isinstance(job_data, dict) and _job_uses_oidc_consumer(job_data)
         for job_data in jobs.values()
     )
 
 
-def _job_uses_role_to_assume(job_data: dict) -> bool:
+def _job_uses_oidc_consumer(job_data: dict) -> bool:
+    job_action = _action_name(job_data.get("uses"))
+    if job_action in KNOWN_OIDC_CONSUMER_ACTIONS:
+        return True
+    if any(
+        job_action.startswith(prefix) for prefix in KNOWN_OIDC_CONSUMER_PREFIXES
+    ):
+        return True
+
     steps = job_data.get("steps", [])
     if not isinstance(steps, list):
         return False
@@ -195,7 +224,30 @@ def _job_uses_role_to_assume(job_data: dict) -> bool:
     for step in steps:
         if not isinstance(step, dict):
             continue
+        action = _action_name(step.get("uses"))
         step_with = step.get("with", {})
-        if isinstance(step_with, dict) and step_with.get("role-to-assume"):
+        if (
+            action == AWS_OIDC_ACTION
+            and isinstance(step_with, dict)
+            and step_with.get("role-to-assume")
+        ):
             return True
+        if action in KNOWN_OIDC_CONSUMER_ACTIONS:
+            return True
+        if any(action.startswith(prefix) for prefix in KNOWN_OIDC_CONSUMER_PREFIXES):
+            return True
+        run_block = step.get("run")
+        if isinstance(run_block, str):
+            lowered = run_block.lower()
+            if any(hint in lowered for hint in OIDC_RUN_HINTS):
+                return True
     return False
+
+
+def _action_name(uses: object) -> str:
+    if not isinstance(uses, str):
+        return ""
+    if uses.startswith(("./", "../", "docker://")):
+        return ""
+    action = uses.strip().split("@", 1)[0].lower()
+    return action

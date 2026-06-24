@@ -8,6 +8,8 @@ from actionscope.analyzers.github_token import (
 )
 from actionscope.models import RiskLevel
 
+FULL_SHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
+
 
 def test_write_all_at_workflow_level_has_high_overall_risk() -> None:
     perms = analyze_workflow_permissions(
@@ -62,7 +64,7 @@ def test_pull_requests_write_is_high() -> None:
     assert perms[0].risk_level is RiskLevel.HIGH
 
 
-def test_id_token_write_is_noted_as_high_without_role_to_assume() -> None:
+def test_id_token_write_is_high_without_detected_oidc_consumer() -> None:
     perms = analyze_workflow_permissions(
         {"permissions": {"id-token": "write", "contents": "read"}},
         ".github/workflows/deploy.yml",
@@ -74,7 +76,7 @@ def test_id_token_write_is_noted_as_high_without_role_to_assume() -> None:
     assert by_scope["contents"].risk_level is RiskLevel.LOW
 
 
-def test_id_token_write_with_role_to_assume_is_info() -> None:
+def test_id_token_write_with_aws_role_to_assume_is_info() -> None:
     perms = analyze_workflow_permissions(
         {
             "permissions": {"id-token": "write"},
@@ -94,6 +96,175 @@ def test_id_token_write_with_role_to_assume_is_info() -> None:
             },
         },
         ".github/workflows/deploy.yml",
+    )
+
+    assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_id_token_write_with_pypi_trusted_publishing_is_info() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "permissions": {"id-token": "write"},
+            "jobs": {
+                "publish": {
+                    "steps": [
+                        {"uses": "pypa/gh-action-pypi-publish@release/v1"},
+                    ]
+                }
+            },
+        },
+        ".github/workflows/release.yml",
+    )
+
+    assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_id_token_write_with_sha_pinned_oidc_consumer_is_info() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "permissions": {"id-token": "write"},
+            "jobs": {
+                "publish": {
+                    "steps": [
+                        {"uses": f"pypa/gh-action-pypi-publish@{FULL_SHA}"},
+                    ]
+                }
+            },
+        },
+        ".github/workflows/release.yml",
+    )
+
+    assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_id_token_write_with_npm_provenance_run_step_is_info() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "permissions": {"id-token": "write"},
+            "jobs": {
+                "publish": {
+                    "steps": [
+                        {"run": "npm publish --provenance"},
+                    ]
+                }
+            },
+        },
+        ".github/workflows/npm-release.yml",
+    )
+
+    assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_id_token_write_with_github_pages_deploy_is_info() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "permissions": {"id-token": "write"},
+            "jobs": {
+                "deploy": {
+                    "steps": [
+                        {"uses": "actions/deploy-pages@v5"},
+                    ]
+                }
+            },
+        },
+        ".github/workflows/docs.yml",
+    )
+
+    assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_id_token_write_with_vault_docker_or_snowflake_consumer_is_info() -> None:
+    for action in (
+        "hashicorp/vault-action@v3",
+        "docker/login-action@v3",
+        "snowflakedb/snowflake-cli-action@v1",
+    ):
+        perms = analyze_workflow_permissions(
+            {
+                "permissions": {"id-token": "write"},
+                "jobs": {
+                    "auth": {
+                        "steps": [{"uses": action}],
+                    }
+                },
+            },
+            ".github/workflows/auth.yml",
+        )
+
+        assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_id_token_write_with_non_aws_cloud_auth_is_info() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "permissions": {"id-token": "write"},
+            "jobs": {
+                "deploy": {
+                    "steps": [
+                        {"uses": "google-github-actions/auth@v2"},
+                        {"uses": "azure/login@v2"},
+                    ]
+                }
+            },
+        },
+        ".github/workflows/cloud.yml",
+    )
+
+    assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_job_level_id_token_calibration_is_scoped_to_same_job() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "jobs": {
+                "build": {
+                    "permissions": {"id-token": "write"},
+                    "steps": [{"run": "pytest"}],
+                },
+                "publish": {
+                    "steps": [
+                        {"uses": "pypa/gh-action-pypi-publish@release/v1"},
+                    ]
+                },
+            }
+        },
+        ".github/workflows/release.yml",
+    )
+
+    assert perms[0].job_name == "build"
+    assert perms[0].risk_level is RiskLevel.HIGH
+
+
+def test_job_level_id_token_with_atlas_action_is_info() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "jobs": {
+                "atlas": {
+                    "permissions": {"id-token": "write"},
+                    "steps": [{"uses": "ariga/atlas-action@v1"}],
+                },
+            }
+        },
+        ".github/workflows/atlas-ci-public.yml",
+    )
+
+    assert perms[0].risk_level is RiskLevel.INFO
+
+
+def test_job_level_id_token_with_slsa_reusable_workflow_is_info() -> None:
+    perms = analyze_workflow_permissions(
+        {
+            "jobs": {
+                "provenance": {
+                    "permissions": {"id-token": "write"},
+                    "uses": (
+                        "slsa-framework/slsa-github-generator/"
+                        ".github/workflows/generator_generic_slsa3.yml@v2.1.0"
+                    ),
+                },
+            }
+        },
+        ".github/workflows/provenance.yml",
     )
 
     assert perms[0].risk_level is RiskLevel.INFO
