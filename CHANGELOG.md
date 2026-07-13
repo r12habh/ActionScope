@@ -12,6 +12,14 @@ All notable changes to ActionScope are documented here.
 - OIDC subject analysis now recognizes broad patterns including `repo:*`,
   wildcard owners, repository-wide contexts, branch wildcards, and environment
   wildcards.
+- Reusable workflow inspection now discovers `jobs.<id>.uses` calls, follows
+  local workflows recursively, reports mutable external refs, and optionally
+  fetches external workflow YAML through the GitHub API when `--github-token`
+  or `GITHUB_TOKEN` is supplied. Traversal is cycle-safe, caches duplicate
+  targets, and preserves caller/callee provenance in terminal, JSON, Markdown,
+  and SARIF output (AS015 reports delegated workflows that were not inspected).
+- `--resolve-pins` now resolves tagged reusable-workflow refs while preserving
+  the full `.github/workflows/<file>` path in the suggested SHA replacement.
 
 ### Fixed
 - GitHub OIDC `Deny` statements and statements that do not grant

@@ -16,6 +16,7 @@ from actionscope import __version__
 from actionscope.models import (
     GitHubTokenPermission,
     PolicyFinding,
+    ReusableWorkflowReference,
     RiskLevel,
     ScanResult,
     WorkflowCredentialBinding,
@@ -53,18 +54,23 @@ def to_sarif(result: ScanResult) -> str:
 
         workflow_file = binding.credential_source.workflow_file
         policy_finding = binding.policy_finding
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            workflow_file,
+        )
 
         if policy_finding.overall_risk >= RiskLevel.MEDIUM:
             results.append(
                 _make_result(
                     rule_id="AS001",
-                    message=_blast_radius_message(binding),
+                    message=origin + _blast_radius_message(binding),
                     level=RISK_TO_SARIF_SEVERITY[policy_finding.overall_risk],
                     security_severity=RISK_TO_SECURITY_SEVERITY[
                         policy_finding.overall_risk
                     ],
-                    location_path=workflow_file,
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -72,14 +78,15 @@ def to_sarif(result: ScanResult) -> str:
             results.append(
                 _make_result(
                     rule_id="AS002",
-                    message=(
+                    message=origin + (
                         f"{privesc.path_name}: {privesc.description}. "
                         f"Attack: {privesc.example_attack}"
                     ),
                     level="error",
                     security_severity="9.5",
-                    location_path=workflow_file,
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -87,28 +94,45 @@ def to_sarif(result: ScanResult) -> str:
             results.append(
                 _make_result(
                     rule_id="AS003",
-                    message=(
+                    message=origin + (
                         "iam:PassRole is allowed on this role. This can create "
                         "a privilege escalation path if the resource is '*' or "
                         "overly broad."
                     ),
                     level="error",
                     security_severity="9.0",
-                    location_path=workflow_file,
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for permission in result.github_token_permissions:
         if permission.risk_level >= RiskLevel.HIGH:
-            results.append(_github_token_result(permission, result.scan_path))
+            location_path, origin, related_locations = _reusable_origin(
+                result,
+                permission.workflow_file,
+            )
+            results.append(
+                _github_token_result(
+                    permission,
+                    result.scan_path,
+                    location_path=location_path,
+                    message_prefix=origin,
+                    additional_location_paths=related_locations,
+                )
+            )
 
     for binding in result.bindings:
         if binding.credential_source.uses_access_keys:
+            location_path, origin, related_locations = _reusable_origin(
+                result,
+                binding.credential_source.workflow_file,
+            )
             results.append(
                 _make_result(
                     rule_id="AS005",
-                    message=(
+                    message=origin + (
                         "This workflow uses static AWS access keys stored as "
                         "GitHub secrets. Consider migrating to OIDC role "
                         "assumption, which does not require storing long-lived "
@@ -116,17 +140,22 @@ def to_sarif(result: ScanResult) -> str:
                     ),
                     level="warning",
                     security_severity="5.0",
-                    location_path=binding.credential_source.workflow_file,
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for finding in result.unpinned_actions:
         short_sha = finding.pin_type == "short_sha"
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS006",
-                message=(
+                message=origin + (
                     f"External action '{finding.uses}' is not pinned to a full "
                     "40-character commit SHA. "
                     + (
@@ -138,8 +167,9 @@ def to_sarif(result: ScanResult) -> str:
                 ),
                 level="warning",
                 security_severity="4.0",
-                location_path=finding.workflow_file,
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
@@ -159,77 +189,126 @@ def to_sarif(result: ScanResult) -> str:
         )
 
     for finding in result.script_injection_findings:
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS009",
-                message=(
+                message=origin + (
                     f"Direct script injection risk: {finding.untrusted_expression}. "
                     f"{finding.description}"
                 ),
                 level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
-                location_path=finding.workflow_file,
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.artifact_poisoning_findings:
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS010",
-                message=f"Artifact poisoning risk: {finding.description}",
+                message=origin
+                + f"Artifact poisoning risk: {finding.description}",
                 level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
-                location_path=finding.workflow_file,
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.ai_agent_injection_findings:
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS012" if finding.has_aws_secret_access else "AS011",
-                message=(
+                message=origin + (
                     f"AI agent prompt injection surface ({finding.agent_type}): "
                     f"{finding.description}"
                 ),
                 level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
-                location_path=finding.workflow_file,
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.compromised_action_findings:
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS013",
-                message=(
+                message=origin + (
                     f"Known-compromised action {finding.uses_ref}: "
                     f"{finding.description} Advisory: {finding.advisory_url}"
                 ),
                 level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
-                location_path=finding.workflow_file,
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.environment_findings:
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS014",
-                message=(
+                message=origin + (
                     f"GitHub Environment issue ({finding.finding_type}): "
                     f"{finding.description}"
                 ),
                 level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
-                location_path=finding.workflow_file,
+                location_path=location_path,
+                location_line=1,
+                additional_location_paths=related_locations,
+            )
+        )
+
+    for reference in result.reusable_workflows:
+        if reference.status in {"inspected", "cycle"}:
+            continue
+        detail = reference.error or (
+            "The delegated workflow may contain findings that are not "
+            "represented in this scan."
+        )
+        results.append(
+            _make_result(
+                rule_id="AS015",
+                message=(
+                    f"Reusable workflow '{reference.uses}' was not inspected "
+                    f"({reference.status.replace('_', ' ')}). "
+                    f"{detail}"
+                ),
+                level="note",
+                security_severity="2.0",
+                location_path=reference.caller_workflow,
                 location_line=1,
             )
         )
 
+    results = _expand_multi_location_results(results)
     sarif_doc = {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -270,19 +349,24 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
 
     for finding in data.get("findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("overall_risk", "info")))
         if risk >= RiskLevel.MEDIUM:
             results.append(
                 _make_result(
                     rule_id="AS001",
-                    message=(
+                    message=origin + (
                         f"[{risk.name}] Workflow '{workflow_file}' assumes "
                         f"{finding.get('role_arn') or 'an AWS role'}."
                     ),
                     level=RISK_TO_SARIF_SEVERITY[risk],
                     security_severity=RISK_TO_SECURITY_SEVERITY[risk],
-                    location_path=workflow_file,
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -290,15 +374,16 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
             results.append(
                 _make_result(
                     rule_id="AS003",
-                    message=(
+                    message=origin + (
                         "iam:PassRole is allowed on this role. This can create "
                         "a privilege escalation path if the resource is '*' or "
                         "overly broad."
                     ),
                     level="error",
                     security_severity="9.0",
-                    location_path=workflow_file,
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -306,42 +391,54 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
             results.append(
                 _make_result(
                     rule_id="AS005",
-                    message=(
+                    message=origin + (
                         "This workflow uses static AWS access keys stored as "
                         "GitHub secrets. Consider migrating to OIDC role "
                         "assumption."
                     ),
                     level="warning",
                     security_severity="5.0",
-                    location_path=workflow_file,
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for permission in data.get("github_token_permissions", []):
+        workflow_file = str(permission.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(permission.get("risk_level", "info")))
         if risk >= RiskLevel.HIGH:
             results.append(
                 _make_result(
                     rule_id="AS004",
-                    message=(
+                    message=origin + (
                         f"GITHUB_TOKEN has '{permission.get('scope')}: "
                         f"{permission.get('access')}' permission in "
                         f"{permission.get('workflow_file')}"
                     ),
                     level=RISK_TO_SARIF_SEVERITY[risk],
                     security_severity=RISK_TO_SECURITY_SEVERITY[risk],
-                    location_path=str(permission.get("workflow_file", "")),
+                    location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for finding in data.get("unpinned_actions", []):
+        workflow_file = str(finding.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         short_sha = finding.get("pin_type") == "short_sha"
         results.append(
             _make_result(
                 rule_id="AS006",
-                message=(
+                message=origin + (
                     f"External action '{finding.get('uses')}' is not pinned "
                     "to a full 40-character commit SHA. "
                     + (
@@ -353,8 +450,9 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 ),
                 level="warning",
                 security_severity="4.0",
-                location_path=str(finding.get("workflow_file", "")),
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
@@ -376,78 +474,130 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
         )
 
     for finding in data.get("script_injection_findings", []):
+        workflow_file = str(finding.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
                 rule_id="AS009",
-                message=str(finding.get("description", "Script injection risk")),
+                message=origin
+                + str(finding.get("description", "Script injection risk")),
                 level=RISK_TO_SARIF_SEVERITY[risk],
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
-                location_path=str(finding.get("workflow_file", "")),
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("artifact_poisoning_findings", []):
+        workflow_file = str(finding.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
                 rule_id="AS010",
-                message=str(finding.get("description", "Artifact poisoning risk")),
+                message=origin
+                + str(finding.get("description", "Artifact poisoning risk")),
                 level=RISK_TO_SARIF_SEVERITY[risk],
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
-                location_path=str(finding.get("workflow_file", "")),
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("ai_agent_injection_findings", []):
+        workflow_file = str(finding.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
                 rule_id="AS012" if finding.get("has_aws_secret_access") else "AS011",
-                message=str(
+                message=origin
+                + str(
                     finding.get("description", "AI agent prompt injection surface")
                 ),
                 level=RISK_TO_SARIF_SEVERITY[risk],
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
-                location_path=str(finding.get("workflow_file", "")),
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("compromised_action_findings", []):
+        workflow_file = str(finding.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "critical")))
         results.append(
             _make_result(
                 rule_id="AS013",
-                message=(
+                message=origin + (
                     f"Known-compromised action {finding.get('uses_ref')}: "
                     f"{finding.get('description', '')} "
                     f"Advisory: {finding.get('advisory_url', '')}"
                 ),
                 level=RISK_TO_SARIF_SEVERITY[risk],
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
-                location_path=str(finding.get("workflow_file", "")),
+                location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("environment_findings", []):
+        workflow_file = str(finding.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
                 rule_id="AS014",
-                message=str(
-                    finding.get("description", "GitHub Environment issue")
-                ),
+                message=origin
+                + str(finding.get("description", "GitHub Environment issue")),
                 level=RISK_TO_SARIF_SEVERITY[risk],
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
-                location_path=str(finding.get("workflow_file", "")),
+                location_path=location_path,
+                location_line=1,
+                additional_location_paths=related_locations,
+            )
+        )
+
+    for reference in data.get("reusable_workflows", []):
+        if reference.get("status") in {"inspected", "cycle"}:
+            continue
+        status = str(reference.get("status", "")).replace("_", " ")
+        results.append(
+            _make_result(
+                rule_id="AS015",
+                message=(
+                    f"Reusable workflow '{reference.get('uses', '')}' was not "
+                    f"inspected ({status}). "
+                    f"{reference.get('error') or 'Delegated findings may be absent.'}"
+                ),
+                level="note",
+                security_severity="2.0",
+                location_path=str(reference.get("caller_workflow", "")),
                 location_line=1,
             )
         )
 
+    results = _expand_multi_location_results(results)
     sarif_doc = {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -484,20 +634,130 @@ def _risk_from_string(value: str) -> RiskLevel:
 def _github_token_result(
     permission: GitHubTokenPermission,
     root_path: str | None = None,
+    location_path: str | None = None,
+    message_prefix: str = "",
+    additional_location_paths: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return _make_result(
         rule_id="AS004",
-        message=(
+        message=message_prefix + (
             f"GITHUB_TOKEN has '{permission.scope}: {permission.access}' "
             f"permission in {permission.workflow_file}"
             + (f" (job: {permission.job_name})" if permission.job_name else "")
         ),
         level=RISK_TO_SARIF_SEVERITY[permission.risk_level],
         security_severity=RISK_TO_SECURITY_SEVERITY[permission.risk_level],
-        location_path=permission.workflow_file,
+        location_path=location_path or permission.workflow_file,
         location_line=1,
         root_path=root_path,
+        additional_location_paths=additional_location_paths,
     )
+
+
+def _reusable_origin(
+    result: ScanResult,
+    workflow_file: str,
+) -> tuple[str, str, tuple[str, ...]]:
+    references = result.reusable_workflows
+    matching = [
+        item
+        for item in references
+        if item.repository is not None and item.target_workflow == workflow_file
+    ]
+    if matching:
+        callers: list[str] = []
+        for reference in matching:
+            caller = reference.root_workflow or _legacy_root_caller(
+                reference.caller_workflow,
+                workflow_file,
+                references,
+            )
+            if caller not in callers:
+                callers.append(caller)
+        return (
+            callers[0],
+            f"Finding originates from reusable workflow '{matching[0].uses}'. ",
+            tuple(callers[1:]),
+        )
+    return workflow_file, "", ()
+
+
+def _reusable_origin_from_dict(
+    data: dict[str, Any],
+    workflow_file: str,
+) -> tuple[str, str, tuple[str, ...]]:
+    references = data.get("reusable_workflows", [])
+    matching = [
+        item
+        for item in references
+        if item.get("repository") is not None
+        and str(item.get("target_workflow", "")) == workflow_file
+    ]
+    if matching:
+        callers: list[str] = []
+        for reference in matching:
+            caller = str(reference.get("root_workflow") or "")
+            if not caller:
+                caller = _legacy_root_caller_from_dict(
+                    str(reference.get("caller_workflow", workflow_file)),
+                    workflow_file,
+                    references,
+                )
+            if caller not in callers:
+                callers.append(caller)
+        uses = str(matching[0].get("uses", ""))
+        return (
+            callers[0],
+            f"Finding originates from reusable workflow '{uses}'. ",
+            tuple(callers[1:]),
+        )
+    return workflow_file, "", ()
+
+
+def _legacy_root_caller(
+    caller: str,
+    workflow_file: str,
+    references: list[ReusableWorkflowReference],
+) -> str:
+    visited = {workflow_file}
+    while caller not in visited:
+        visited.add(caller)
+        parent = next(
+            (
+                item
+                for item in references
+                if item.repository is not None
+                and item.target_workflow == caller
+            ),
+            None,
+        )
+        if parent is None:
+            break
+        caller = parent.caller_workflow
+    return caller
+
+
+def _legacy_root_caller_from_dict(
+    caller: str,
+    workflow_file: str,
+    references: list[dict[str, Any]],
+) -> str:
+    visited = {workflow_file}
+    while caller not in visited:
+        visited.add(caller)
+        parent = next(
+            (
+                item
+                for item in references
+                if item.get("repository") is not None
+                and str(item.get("target_workflow", "")) == caller
+            ),
+            None,
+        )
+        if parent is None:
+            break
+        caller = str(parent.get("caller_workflow", caller))
+    return caller
 
 
 def _make_result(
@@ -508,7 +768,11 @@ def _make_result(
     location_path: str,
     location_line: int,
     root_path: str | None = None,
+    additional_location_paths: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    location_paths = list(
+        dict.fromkeys((location_path, *additional_location_paths))
+    )
     return {
         "ruleId": rule_id,
         "level": level,
@@ -517,19 +781,42 @@ def _make_result(
             "security-severity": security_severity,
         },
         "locations": [
-            {
-                "physicalLocation": {
-                    "artifactLocation": {
-                        "uri": _location_uri(location_path, root_path),
-                        "uriBaseId": "%SRCROOT%",
-                    },
-                    "region": {
-                        "startLine": location_line,
-                    },
-                }
-            }
+            _sarif_location(path, location_line, root_path)
+            for path in location_paths
         ],
     }
+
+
+def _sarif_location(
+    location_path: str,
+    location_line: int,
+    root_path: str | None,
+) -> dict[str, Any]:
+    return {
+        "physicalLocation": {
+            "artifactLocation": {
+                "uri": _location_uri(location_path, root_path),
+                "uriBaseId": "%SRCROOT%",
+            },
+            "region": {
+                "startLine": location_line,
+            },
+        }
+    }
+
+
+def _expand_multi_location_results(
+    results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Emit one result per caller because GitHub only uses the first location."""
+    expanded: list[dict[str, Any]] = []
+    for result in results:
+        locations = result.get("locations", [])
+        if len(locations) <= 1:
+            expanded.append(result)
+            continue
+        expanded.extend({**result, "locations": [location]} for location in locations)
+    return expanded
 
 
 def _make_result_for_root(root_path: str | None):
@@ -803,6 +1090,24 @@ def _build_rules() -> list[dict[str, Any]]:
             "helpUri": "https://github.com/r12habh/ActionScope#readme",
             "properties": {
                 "tags": ["security", "github-actions", "oidc", "environment"]
+            },
+        },
+        {
+            "id": "AS015",
+            "name": "ReusableWorkflowNotInspected",
+            "shortDescription": {
+                "text": "Reusable workflow contents were not inspected"
+            },
+            "fullDescription": {
+                "text": (
+                    "A job delegates execution to a reusable workflow that "
+                    "ActionScope could not inspect. Findings inside the called "
+                    "workflow may therefore be absent from the scan."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": ["security", "github-actions", "reusable-workflow"]
             },
         },
     ]

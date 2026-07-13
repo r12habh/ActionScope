@@ -6,7 +6,7 @@ import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from actionscope.analyzers.ai_agent_injection import scan_for_ai_agent_injection
 from actionscope.analyzers.artifact_poisoning import scan_for_artifact_poisoning
@@ -31,6 +31,9 @@ from actionscope.models import (
     WorkflowCredentialBinding,
     get_unmatched_findings,
 )
+
+if TYPE_CHECKING:
+    from actionscope.analyzers.reusable_workflows import ReusableWorkflowScan
 
 
 @dataclass(frozen=True)
@@ -188,6 +191,7 @@ def build_scan_result(
     policy_findings: list[PolicyFinding],
     unpinned_actions: list[UnpinnedActionFinding] | list[str] | None = None,
     errors: list[str] | None = None,
+    reusable_scan: ReusableWorkflowScan | None = None,
 ) -> ScanResult:
     """Build the final correlated scan result."""
     if errors is None:
@@ -226,6 +230,20 @@ def build_scan_result(
         credential_sources,
         oidc_trust_findings,
     )
+    if reusable_scan is not None:
+        script_injection_findings.extend(
+            reusable_scan.script_injection_findings
+        )
+        artifact_poisoning_findings.extend(
+            reusable_scan.artifact_poisoning_findings
+        )
+        ai_agent_injection_findings.extend(
+            reusable_scan.ai_agent_injection_findings
+        )
+        compromised_action_findings.extend(
+            reusable_scan.compromised_action_findings
+        )
+        environment_findings.extend(reusable_scan.environment_findings)
     errors.extend(
         oidc_errors
         + script_errors
@@ -257,6 +275,15 @@ def build_scan_result(
         | {finding.workflow_file for finding in ai_agent_injection_findings}
         | {finding.workflow_file for finding in compromised_action_findings}
         | {finding.workflow_file for finding in environment_findings}
+        | {
+            reference.caller_workflow
+            for reference in (reusable_scan.references if reusable_scan else [])
+        }
+        | {
+            reference.target_workflow
+            for reference in (reusable_scan.references if reusable_scan else [])
+            if reference.status == "inspected"
+        }
     )
 
     result = ScanResult(
@@ -265,6 +292,9 @@ def build_scan_result(
         credential_sources=credential_sources,
         github_token_permissions=github_token_perms,
         unpinned_actions=normalized_unpinned,
+        reusable_workflows=(
+            list(reusable_scan.references) if reusable_scan is not None else []
+        ),
         oidc_trust_findings=oidc_trust_findings,
         script_injection_findings=script_injection_findings,
         artifact_poisoning_findings=artifact_poisoning_findings,

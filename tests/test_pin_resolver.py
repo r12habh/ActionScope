@@ -117,6 +117,55 @@ def test_resolve_pins_for_workflow_skips_sha_pinned_actions() -> None:
     assert pins == []
 
 
+def test_resolve_pins_preserves_reusable_workflow_path() -> None:
+    workflow = {
+        "jobs": {
+            "deploy": {
+                "uses": "acme/platform/.github/workflows/deploy.yml@v1"
+            }
+        }
+    }
+    payload = {"object": {"type": "commit", "sha": FULL_SHA}}
+
+    with patch("urllib.request.urlopen", return_value=FakeResponse(payload)):
+        pins = resolve_pins_for_workflow(
+            workflow,
+            "caller.yml",
+            delay_seconds=0,
+        )
+
+    assert len(pins) == 1
+    assert pins[0].original_ref == (
+        "acme/platform/.github/workflows/deploy.yml@v1"
+    )
+    assert pins[0].pinned_ref == (
+        f"acme/platform/.github/workflows/deploy.yml@{FULL_SHA}  # v1"
+    )
+
+
+def test_reusable_workflow_resolution_error_preserves_original_path() -> None:
+    workflow = {
+        "jobs": {
+            "deploy": {
+                "uses": "acme/platform/.github/workflows/deploy.yml@missing"
+            }
+        }
+    }
+    error = urllib.error.HTTPError("url", 404, "not found", {}, None)
+
+    with patch("urllib.request.urlopen", side_effect=error):
+        pins = resolve_pins_for_workflow(
+            workflow,
+            "caller.yml",
+            delay_seconds=0,
+        )
+
+    assert pins[0].error == "tag not found"
+    assert pins[0].original_ref == (
+        "acme/platform/.github/workflows/deploy.yml@missing"
+    )
+
+
 def test_format_pinned_replacement_includes_original_tag_comment() -> None:
     pin = ResolvedPin(
         "actions/checkout@v4",

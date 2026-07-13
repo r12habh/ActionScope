@@ -92,6 +92,7 @@ nav:
       - OIDC Trust Policy: oidc-trust.md
       - Script Injection: script-injection.md
       - AI Agent Prompt Injection: ai-agent-prompt-injection.md
+      - Reusable Workflows: reusable-workflows.md
       - SARIF and Code Scanning: sarif.md
   - Compromised Actions Database: compromised-actions-database.md
   - Operations:

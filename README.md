@@ -28,6 +28,7 @@ It also detects:
 - 🎭 **Artifact poisoning** (`workflow_run` + untrusted artifact execution)
 - 🤖 **AI agent prompt injection surfaces** (Claude Code, Copilot in CI)
 - 📌 **Unpinned actions** with SHA resolution
+- 🔁 **Reusable workflow inspection** (local recursion and authenticated external fetches)
 
 ![ActionScope mapping a workflow's AWS blast radius](docs/demo.gif)
 
@@ -58,6 +59,7 @@ see exactly what and why.
 ```bash
 actionscope scan . --aws-verify        # fetch live IAM policies (read-only)
 actionscope scan . --resolve-pins      # suggest full-SHA pins for unpinned actions
+actionscope scan . --github-token "$GITHUB_TOKEN"  # inspect external reusable workflows
 actionscope scan . --fail-on high      # exit 1 if any finding is HIGH or above
 actionscope scan . --output-format sarif --output-file results.sarif
 actionscope scan . --save-state        # save state for PR delta comparison
@@ -135,13 +137,15 @@ ActionScope answers a question no other tool answers:
 | **Blast radius in plain English** | ❌ | ❌ | ❌ | **✅** |
 | **OIDC trust policy analysis** | ❌ | ❌ | ❌ | **✅** |
 | **Script injection detection** | ❌ | Partial | ❌ | **✅** |
+| **Reusable workflow inspection** | ❌ | Partial | ❌ | **✅** |
 | SARIF / GitHub Security tab | ❌ | ✅ | ✅ | **✅** |
 
 ## How It Works
 
 ActionScope performs **static analysis only** by default. It never sends your
 code to an external service and does not require AWS credentials unless you
-explicitly enable live AWS verification.
+explicitly enable live AWS verification. When a GitHub token is supplied, it
+can fetch referenced external reusable workflow YAML from GitHub for analysis.
 
 ```text
 .github/workflows/*.yml
@@ -151,12 +155,13 @@ policies/**/*.json                              + PR Comment
 ```
 
 1. Find `aws-actions/configure-aws-credentials` in workflows
-2. Extract role ARNs and credential patterns
-3. Match roles to IAM policies in Terraform or JSON files
-4. Classify IAM actions using the `policy-sentry` action database
-5. Detect privilege escalation paths
-6. Check for known-compromised actions in the bundled database
-7. Output a plain-English blast radius report
+2. Follow local reusable workflows and optionally inspect external calls
+3. Extract role ARNs and credential patterns
+4. Match roles to IAM policies in Terraform or JSON files
+5. Classify IAM actions using the `policy-sentry` action database
+6. Detect privilege escalation paths
+7. Check for known-compromised actions in the bundled database
+8. Output a plain-English blast radius report
 
 ### Live AWS Verification (`--aws-verify`)
 
@@ -211,6 +216,17 @@ agents configured with write permissions in untrusted PR contexts.
 Detects unpinned actions and resolves tags to current SHAs via the GitHub API.
 Distinguishes full SHAs (safe) from short SHAs (still mutable) and tags.
 
+### 🔁 Reusable Workflow Inspection
+
+Detects job-level `uses:` calls, reports mutable reusable-workflow refs, and
+recursively inspects local workflows. Supply `--github-token` (or
+`GITHUB_TOKEN`) to fetch external reusable workflow YAML through GitHub's API;
+without a token, ActionScope reports the delegated workflow as uninspected
+instead of treating it as clean. Traversal is cycle-safe and follows GitHub's
+10-level and 50-workflow limits.
+
+[Reusable workflow inspection guide](docs/reusable-workflows.md)
+
 ### ⚡ IAM Privilege Escalation Paths
 
 Detects documented escalation paths including PassRole, CreatePolicyVersion,
@@ -262,8 +278,9 @@ report — every IAM action the workflow can perform, classified by risk. Add
 ### How do I scan a GitHub Actions workflow for security issues without AWS credentials?
 
 `actionscope scan .` runs as pure static analysis by default. It needs no AWS
-credentials, no GitHub token (except for `--resolve-pins`), and never sends
-your code to an external service.
+credentials and no GitHub token. A token is optional for `--resolve-pins` and
+for inspecting external reusable workflows; local workflow analysis never
+needs one.
 
 ### How do I find script injection or `pull_request_target` risks?
 
@@ -278,7 +295,7 @@ prt-scan attack.
 Run `actionscope scan . --output-format sarif --output-file results.sarif`
 and upload `results.sarif` to the GitHub Security tab via the
 `github/codeql-action/upload-sarif` action. ActionScope emits SARIF rules
-AS001–AS014 covering AWS exposure, OIDC trust, unpinned actions,
+AS001–AS015 covering AWS exposure, OIDC trust, unpinned actions,
 compromised actions, script injection, and environment hardening.
 
 ### How do I pin GitHub Actions to a full commit SHA?
@@ -311,6 +328,7 @@ exact permission set required.
 - [Compromised Actions Database](https://r12habh.github.io/ActionScope/compromised-actions-database/) — every action ActionScope flags, with permalinks
 - [CLI reference](docs/cli-reference.md)
 - [OIDC trust policy analysis](docs/oidc-trust.md)
+- [Reusable workflow inspection](docs/reusable-workflows.md)
 - [Known-compromised actions detector](docs/compromised-actions.md)
 - [SARIF and GitHub Security tab](docs/sarif.md)
 - [AWS verification permissions](docs/aws-verify-permissions.md)
