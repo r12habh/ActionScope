@@ -2,6 +2,22 @@
 
 All notable changes to ActionScope are documented here.
 
+## [Unreleased]
+
+### Added
+- GitHub OIDC trust-policy analysis now flags `ForAllValues:StringLike` and
+  `ForAllValues:StringEquals` on single-valued claims such as `sub` and `aud`,
+  while allowing the multivalued `amr` claim. Findings include a corrected
+  condition block in terminal, JSON, Markdown, and SARIF reports.
+- OIDC subject analysis now recognizes broad patterns including `repo:*`,
+  wildcard owners, repository-wide contexts, branch wildcards, and environment
+  wildcards.
+
+### Fixed
+- GitHub OIDC `Deny` statements and statements that do not grant
+  `sts:AssumeRoleWithWebIdentity` are no longer treated as role-assumption
+  trust grants.
+
 ## [0.3.6] - 2026-06-24
 
 ### Fixed

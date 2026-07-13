@@ -23,7 +23,7 @@ pipeline can do in AWS if it is compromised.
 
 It also detects:
 - 🚨 **Known-compromised actions** (`actions-cool`, `tj-actions`, `trivy-action`)
-- 🔓 **OIDC trust policy misconfigurations** (wildcard org subjects, missing sub/aud)
+- 🔓 **OIDC trust policy misconfigurations** (wildcards, missing claims, unsafe set operators)
 - 💉 **Script injection** (PR titles, issue bodies in `run:` blocks)
 - 🎭 **Artifact poisoning** (`workflow_run` + untrusted artifact execution)
 - 🤖 **AI agent prompt injection surfaces** (Claude Code, Copilot in CI)
@@ -186,8 +186,9 @@ Current entries: `actions-cool/issues-helper` (2026-05-18),
 
 ### 🔓 OIDC Trust Policy Analysis
 
-Detects wildcard org subjects, missing `sub`/`aud` conditions, and
-insufficient branch/environment scoping in GitHub OIDC trust policies.
+Detects wildcard subjects, missing `sub`/`aud` conditions, unsafe
+`ForAllValues` use, and insufficient branch/environment scoping in GitHub
+OIDC trust policies.
 
 ### 💉 Script Injection Detection
 

@@ -62,6 +62,65 @@ created repositories, may be able to assume the role.
 
 ActionScope reports this as `AS007 OIDCWildcardSubject`.
 
+ActionScope also catches broader variants that are easy to overlook:
+
+```json
+{
+  "StringLike": {
+    "token.actions.githubusercontent.com:sub": [
+      "repo:*",
+      "repo:acme-corp/api:*",
+      "repo:acme-corp/api:ref:refs/heads/*"
+    ]
+  }
+}
+```
+
+The first pattern crosses repository and organization boundaries. The latter
+two stay within one repository but allow every workflow context or branch.
+
+## `ForAllValues` on Single-Valued Claims
+
+`ForAllValues` and `ForAnyValue` are IAM set operators. They are intended for
+request context keys that can carry multiple values. GitHub's OIDC `sub` and
+`aud` claims are single-valued, so a trust policy should use scalar
+`StringLike` or `StringEquals` operators instead.
+
+Risky trust policy:
+
+```json
+{
+  "ForAllValues:StringLike": {
+    "token.actions.githubusercontent.com:sub":
+      "repo:acme-corp/api:ref:refs/heads/main"
+  }
+}
+```
+
+AWS warns that `ForAllValues` in an `Allow` statement evaluates to true when
+the request context key is absent. ActionScope reports this as a medium-risk
+operator error and includes a corrected condition block in terminal, JSON,
+Markdown, and SARIF output:
+
+```json
+{
+  "StringLike": {
+    "token.actions.githubusercontent.com:sub":
+      "repo:acme-corp/api:ref:refs/heads/main"
+  }
+}
+```
+
+The `amr` claim is multivalued and is not flagged when it legitimately uses a
+set operator. ActionScope also ignores `Deny` statements for this check; the
+overly permissive behavior is relevant to statements that grant role
+assumption.
+
+See AWS's documentation on
+[single-valued and multivalued context keys](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_condition-single-vs-multi-valued-context-keys.html)
+and
+[GitHub OIDC role trust policies](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html#idp_oidc_Create_GitHub).
+
 ## Branch vs Environment Scoping
 
 Branch scoping is better than organization-wide scoping:
@@ -150,4 +209,3 @@ actionscope scan .
 
 ActionScope automatically scans Terraform `aws_iam_role.assume_role_policy`
 values and standalone JSON trust-policy files.
-

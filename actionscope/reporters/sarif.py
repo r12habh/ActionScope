@@ -147,7 +147,10 @@ def to_sarif(result: ScanResult) -> str:
         results.append(
             _make_result(
                 rule_id="AS008" if finding.issue_id == "missing_sub" else "AS007",
-                message=f"{finding.issue_description}. Evidence: {finding.evidence}",
+                message=(
+                    f"{finding.issue_description}. Evidence: {finding.evidence}. "
+                    f"Recommendation: {finding.recommendation}"
+                ),
                 level=RISK_TO_SARIF_SEVERITY[finding.risk_level],
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=finding.source_file,

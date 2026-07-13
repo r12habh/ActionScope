@@ -381,6 +381,7 @@ def test_oidc_wildcard_finding_produces_as007_result() -> None:
     data = _sarif_data(result)
 
     assert "AS007" in {result["ruleId"] for result in _results(data)}
+    assert "Recommendation: Scope down" in _results(data)[0]["message"]["text"]
 
 
 def test_ai_agent_without_aws_credentials_produces_as011_result() -> None:

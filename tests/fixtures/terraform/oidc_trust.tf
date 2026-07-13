@@ -103,6 +103,29 @@ resource "aws_iam_role" "missing_aud" {
   })
 }
 
+resource "aws_iam_role" "forallvalues_sub" {
+  name = "forallvalues-sub-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = "token.actions.githubusercontent.com"
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+        "ForAllValues:StringLike" = {
+          "token.actions.githubusercontent.com:sub" = "repo:acme-corp/app:ref:refs/heads/main"
+        }
+      }
+    }]
+  })
+}
+
 resource "aws_iam_role" "non_oidc" {
   name = "ec2-role"
 
