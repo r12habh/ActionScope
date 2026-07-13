@@ -9,6 +9,7 @@ from actionscope.analyzers.oidc_trust import (
     analyze_json_oidc_trust,
     analyze_oidc_trust_conditions,
     analyze_terraform_oidc_trust,
+    extract_github_oidc_statements,
     is_github_oidc_trust,
     scan_oidc_trust_policies,
 )
@@ -111,6 +112,7 @@ def test_analyze_terraform_oidc_trust_finds_issues_in_fixture() -> None:
         "missing_sub",
         "no_branch_scope",
         "missing_aud",
+        "forallvalues_single_valued_claim",
     }
 
 
@@ -160,6 +162,7 @@ def test_jsonencode_terraform_block_parsed_correctly() -> None:
     findings = analyze_terraform_oidc_trust(_load_fixture(), str(FIXTURE))
 
     assert any(f.role_name == "wildcard-org-role" for f in findings)
+    assert any(f.role_name == "forallvalues-sub-role" for f in findings)
 
 
 def test_environment_condition_not_flagged_as_no_branch_scope() -> None:
@@ -306,3 +309,193 @@ data "aws_iam_policy_document" "trust" {
         "missing_sub",
         "missing_aud",
     ]
+
+
+def test_forallvalues_stringlike_on_sub_is_reported() -> None:
+    policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
+    condition = policy["Statement"][0]["Condition"]
+    condition["ForAllValues:StringLike"] = condition.pop("StringLike")
+
+    findings = analyze_json_oidc_trust(policy, "iam.tf")
+    finding = next(
+        item
+        for item in findings
+        if item.issue_id == "forallvalues_single_valued_claim"
+    )
+
+    assert finding.risk_level is RiskLevel.MEDIUM
+    assert "ForAllValues:StringLike" in finding.evidence
+    assert "ForAllValues" not in finding.recommendation
+    assert '"StringLike"' in finding.recommendation
+
+
+def test_forallvalues_stringequals_on_aud_is_reported() -> None:
+    policy = _trust_policy("repo:acme/app:environment:production")
+    condition = policy["Statement"][0]["Condition"]
+    condition["ForAllValues:StringEquals"] = condition.pop("StringEquals")
+
+    findings = analyze_json_oidc_trust(policy, "iam.tf")
+
+    assert any(
+        finding.issue_id == "forallvalues_single_valued_claim"
+        and "token.actions.githubusercontent.com:aud" in finding.evidence
+        for finding in findings
+    )
+
+
+def test_forallvalues_on_multivalued_amr_is_not_reported() -> None:
+    policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
+    policy["Statement"][0]["Condition"]["ForAllValues:StringEquals"] = {
+        "token.actions.githubusercontent.com:amr": ["authenticated"]
+    }
+
+    findings = analyze_json_oidc_trust(policy, "iam.tf")
+
+    assert not any(
+        finding.issue_id == "forallvalues_single_valued_claim"
+        for finding in findings
+    )
+
+
+def test_deny_statement_is_not_treated_as_oidc_trust() -> None:
+    policy = _trust_policy("repo:acme/*")
+    policy["Statement"][0]["Effect"] = "Deny"
+
+    assert not is_github_oidc_trust(policy)
+    assert analyze_json_oidc_trust(policy, "iam.tf") == []
+
+
+def test_non_web_identity_action_is_not_treated_as_oidc_trust() -> None:
+    policy = _trust_policy("repo:acme/*")
+    policy["Statement"][0]["Action"] = "sts:AssumeRole"
+
+    assert not is_github_oidc_trust(policy)
+    assert analyze_json_oidc_trust(policy, "iam.tf") == []
+
+
+def test_notaction_that_keeps_web_identity_is_analyzed() -> None:
+    for key in ("NotAction", "notAction"):
+        policy = _trust_policy("repo:acme/*")
+        statement = policy["Statement"][0]
+        statement.pop("Action")
+        statement[key] = "sts:AssumeRole"
+
+        extracted = extract_github_oidc_statements(policy)
+        findings = analyze_json_oidc_trust(policy, "iam.tf")
+
+        assert extracted == [statement]
+        assert any(finding.issue_id == "wildcard_repo" for finding in findings)
+
+
+def test_notaction_that_excludes_web_identity_is_not_analyzed() -> None:
+    policy = _trust_policy("repo:acme/*")
+    statement = policy["Statement"][0]
+    statement.pop("Action")
+    statement["NotAction"] = ["sts:AssumeRoleWithWebIdentity", "sts:TagSession"]
+
+    assert extract_github_oidc_statements(policy) == []
+    assert analyze_json_oidc_trust(policy, "iam.tf") == []
+
+
+def test_repo_star_subject_is_critical() -> None:
+    findings = analyze_json_oidc_trust(_trust_policy("repo:*"), "iam.tf")
+
+    assert any(
+        finding.issue_id == "wildcard_repo"
+        and finding.risk_level is RiskLevel.CRITICAL
+        for finding in findings
+    )
+
+
+def test_wildcard_owner_subject_is_critical() -> None:
+    findings = analyze_json_oidc_trust(
+        _trust_policy("repo:*/app:ref:refs/heads/main"),
+        "iam.tf",
+    )
+
+    assert any(finding.issue_id == "wildcard_repo" for finding in findings)
+
+
+def test_repo_wide_context_wildcard_is_high() -> None:
+    findings = analyze_json_oidc_trust(_trust_policy("repo:acme/app:*"), "iam.tf")
+
+    assert any(
+        finding.issue_id == "broad_subject"
+        and finding.risk_level is RiskLevel.HIGH
+        for finding in findings
+    )
+
+
+def test_branch_wildcard_is_high() -> None:
+    findings = analyze_json_oidc_trust(
+        _trust_policy("repo:acme/app:ref:refs/heads/*"),
+        "iam.tf",
+    )
+
+    assert [finding.issue_id for finding in findings] == ["broad_subject"]
+
+
+def test_environment_wildcard_is_high() -> None:
+    findings = analyze_json_oidc_trust(
+        _trust_policy("repo:acme/app:environment:*"),
+        "iam.tf",
+    )
+
+    assert [finding.issue_id for finding in findings] == ["broad_subject"]
+
+
+def test_partial_environment_wildcard_is_high() -> None:
+    findings = analyze_json_oidc_trust(
+        _trust_policy("repo:acme/app:environment:prod-*"),
+        "iam.tf",
+    )
+
+    assert [finding.issue_id for finding in findings] == ["broad_subject"]
+
+
+def test_constrained_release_tag_wildcard_is_not_reported() -> None:
+    findings = analyze_json_oidc_trust(
+        _trust_policy("repo:acme/app:ref:refs/tags/v*"),
+        "iam.tf",
+    )
+
+    assert findings == []
+
+
+def test_terraform_forallvalues_condition_is_reported() -> None:
+    tf_data = hcl2.loads(
+        """
+data "aws_iam_policy_document" "trust" {
+  statement {
+    effect = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type = "Federated"
+      identifiers = ["token.actions.githubusercontent.com"]
+    }
+    condition {
+      test = "ForAllValues:StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = ["repo:acme/app:ref:refs/heads/main"]
+    }
+    condition {
+      test = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values = ["sts.amazonaws.com"]
+    }
+  }
+}
+"""
+    )
+
+    findings = analyze_terraform_oidc_trust(tf_data, "iam.tf")
+
+    assert [finding.issue_id for finding in findings] == [
+        "forallvalues_single_valued_claim"
+    ]
+
+
+def test_oidc_findings_include_condition_block_remediation() -> None:
+    findings = analyze_json_oidc_trust(_trust_policy("repo:acme/*"), "iam.tf")
+
+    assert all("Condition:" in finding.recommendation for finding in findings)

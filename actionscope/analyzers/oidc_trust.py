@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -19,6 +20,7 @@ from actionscope.models import OidcTrustFinding, RiskLevel
 
 GITHUB_OIDC_ISSUER = "token.actions.githubusercontent.com"
 GITHUB_OIDC_PROVIDER_URL = "https://token.actions.githubusercontent.com"
+GITHUB_MULTIVALUED_CLAIMS = {"amr"}
 
 
 def is_github_oidc_trust(assume_role_policy: dict) -> bool:
@@ -32,7 +34,9 @@ def extract_github_oidc_statements(assume_role_policy: dict) -> list[dict]:
     return [
         statement
         for statement in statements
-        if isinstance(statement, dict) and _principal_mentions_github(statement)
+        if isinstance(statement, dict)
+        and _principal_mentions_github(statement)
+        and _allows_web_identity_assumption(statement)
     ]
 
 
@@ -42,11 +46,30 @@ def analyze_oidc_trust_conditions(
     role_name: str,
 ) -> list[OidcTrustFinding]:
     """Analyze one GitHub OIDC trust statement for common misconfigurations."""
+    if not _is_allow_statement(statement):
+        return []
+
     findings: list[OidcTrustFinding] = []
     condition = statement.get("Condition") or statement.get("condition")
     condition_display = _compact(condition) if condition else "no Condition block found"
     sub_values = _condition_values(condition, ":sub")
     aud_values = _condition_values(condition, ":aud")
+
+    unsafe_forallvalues = _unsafe_forallvalues_claims(condition)
+    if unsafe_forallvalues:
+        corrected = _replace_unsafe_forallvalues(condition)
+        findings.append(
+            _finding(
+                source_file,
+                role_name,
+                "forallvalues_single_valued_claim",
+                "ForAllValues is used with a single-valued GitHub OIDC claim",
+                RiskLevel.MEDIUM,
+                _compact(unsafe_forallvalues),
+                "Use the scalar StringEquals or StringLike operator for these "
+                f"claims. Corrected Condition: {_compact(corrected)}",
+            )
+        )
 
     if not sub_values:
         findings.append(
@@ -57,8 +80,8 @@ def analyze_oidc_trust_conditions(
                 "Missing GitHub OIDC subject condition",
                 RiskLevel.CRITICAL,
                 condition_display,
-                "Add a token.actions.githubusercontent.com:sub condition scoped "
-                "to a specific repository and protected branch or environment.",
+                "Add a subject condition scoped to one repository and protected "
+                f"branch or environment. Example Condition: {_safe_condition()}",
             )
         )
     else:
@@ -73,8 +96,21 @@ def analyze_oidc_trust_conditions(
                         "Wildcard repo in GitHub OIDC subject condition",
                         RiskLevel.CRITICAL,
                         normalized,
-                        "Scope the subject to a specific repo, for example "
-                        "repo:ORG/REPO:ref:refs/heads/main or an environment.",
+                        "Scope the subject to one repository and protected branch "
+                        f"or environment. Example Condition: {_safe_condition()}",
+                    )
+                )
+            elif _is_broad_repo_context_subject(normalized):
+                findings.append(
+                    _finding(
+                        source_file,
+                        role_name,
+                        "broad_subject",
+                        "GitHub OIDC subject uses a wildcard workflow context",
+                        RiskLevel.HIGH,
+                        normalized,
+                        "Replace the wildcard context with a protected branch or "
+                        f"environment. Example Condition: {_safe_condition()}",
                     )
                 )
             elif _is_repo_without_branch_or_environment(normalized):
@@ -87,7 +123,7 @@ def analyze_oidc_trust_conditions(
                         RiskLevel.HIGH,
                         normalized,
                         "For deploy roles, scope the subject to a protected branch "
-                        "or GitHub environment.",
+                        f"or environment. Example Condition: {_safe_condition()}",
                     )
                 )
             elif _is_non_protected_branch_without_environment(normalized):
@@ -100,8 +136,9 @@ def analyze_oidc_trust_conditions(
                         "environment scoping",
                         RiskLevel.MEDIUM,
                         normalized,
-                        "Use GitHub environment protection rules for deploy roles, "
-                        "or restrict to main/master where appropriate.",
+                        "Use a protected GitHub environment for deploy roles, or "
+                        "restrict to main/master where appropriate. Example "
+                        f"Condition: {_safe_condition()}",
                     )
                 )
 
@@ -114,7 +151,8 @@ def analyze_oidc_trust_conditions(
                 "Missing GitHub OIDC audience condition",
                 RiskLevel.MEDIUM,
                 condition_display,
-                "Add token.actions.githubusercontent.com:aud == sts.amazonaws.com.",
+                "Constrain the audience to AWS STS. Example Condition: "
+                f"{_safe_condition()}",
             )
         )
 
@@ -238,6 +276,33 @@ def _principal_mentions_github(statement: dict) -> bool:
     return GITHUB_OIDC_ISSUER in _compact(principal)
 
 
+def _is_allow_statement(statement: dict) -> bool:
+    effect = statement.get("Effect", statement.get("effect", "Allow"))
+    return str(effect).strip().lower() == "allow"
+
+
+def _allows_web_identity_assumption(statement: dict) -> bool:
+    if not _is_allow_statement(statement):
+        return False
+    target = "sts:assumerolewithwebidentity"
+    actions = statement.get("Action")
+    if actions is None:
+        actions = statement.get("action")
+    if actions is not None:
+        return any(
+            fnmatchcase(target, action.lower()) for action in _string_values(actions)
+        )
+
+    not_actions = statement.get("NotAction")
+    if not_actions is None:
+        not_actions = statement.get("notAction", statement.get("notaction"))
+    if not_actions is None:
+        return False
+    return not any(
+        fnmatchcase(target, action.lower()) for action in _string_values(not_actions)
+    )
+
+
 def _condition_values(condition: Any, suffix: str) -> list[str]:
     values: list[str] = []
     if not isinstance(condition, dict):
@@ -251,6 +316,54 @@ def _condition_values(condition: Any, suffix: str) -> list[str]:
     return values
 
 
+def _unsafe_forallvalues_claims(condition: Any) -> dict[str, dict[str, Any]]:
+    unsafe: dict[str, dict[str, Any]] = {}
+    if not isinstance(condition, dict):
+        return unsafe
+    for operator, operator_value in condition.items():
+        if str(operator).lower() not in {
+            "forallvalues:stringequals",
+            "forallvalues:stringlike",
+        }:
+            continue
+        if not isinstance(operator_value, dict):
+            continue
+        for key, value in operator_value.items():
+            if _is_single_valued_github_claim(key):
+                unsafe.setdefault(str(operator), {})[str(key)] = value
+    return unsafe
+
+
+def _is_single_valued_github_claim(key: Any) -> bool:
+    normalized = str(key).strip().lower()
+    prefix = f"{GITHUB_OIDC_ISSUER}:"
+    if not normalized.startswith(prefix):
+        return False
+    claim = normalized.removeprefix(prefix)
+    return bool(claim) and claim not in GITHUB_MULTIVALUED_CLAIMS
+
+
+def _replace_unsafe_forallvalues(condition: Any) -> dict[str, dict[str, Any]]:
+    corrected: dict[str, dict[str, Any]] = {}
+    if not isinstance(condition, dict):
+        return corrected
+
+    for operator, operator_value in condition.items():
+        operator_name = str(operator)
+        if not isinstance(operator_value, dict):
+            continue
+        is_forall = operator_name.lower() in {
+            "forallvalues:stringequals",
+            "forallvalues:stringlike",
+        }
+        for key, value in operator_value.items():
+            target_operator = operator_name
+            if is_forall and _is_single_valued_github_claim(key):
+                target_operator = operator_name.split(":", 1)[1]
+            corrected.setdefault(target_operator, {})[str(key)] = value
+    return corrected
+
+
 def _string_values(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -260,7 +373,34 @@ def _string_values(value: Any) -> list[str]:
 
 
 def _is_repo_wildcard_subject(sub_value: str) -> bool:
-    return bool(re.match(r"^repo:[^/]+/\*(?::|$)", sub_value))
+    repo_scope, _ = _subject_parts(sub_value)
+    return repo_scope is not None and any(char in repo_scope for char in "*?")
+
+
+def _is_broad_repo_context_subject(sub_value: str) -> bool:
+    repo_scope, context = _subject_parts(sub_value)
+    if not repo_scope or any(char in repo_scope for char in "*?") or not context:
+        return False
+    normalized = context.lower()
+    if normalized in {"*", "?", "**", "ref:*", "ref:refs/*"}:
+        return True
+    for prefix in ("ref:refs/heads/", "ref:refs/tags/", "environment:"):
+        if normalized.startswith(prefix):
+            remainder = normalized.removeprefix(prefix)
+            if prefix == "environment:":
+                return any(char in remainder for char in "*?")
+            return remainder in {"*", "?", "**"}
+    return False
+
+
+def _subject_parts(sub_value: str) -> tuple[str | None, str | None]:
+    if not sub_value.lower().startswith("repo:"):
+        return None, None
+    remainder = sub_value[5:]
+    if ":" not in remainder:
+        return remainder, None
+    repo_scope, context = remainder.split(":", 1)
+    return repo_scope, context
 
 
 def _is_repo_without_branch_or_environment(sub_value: str) -> bool:
@@ -278,6 +418,18 @@ def _is_non_protected_branch_without_environment(sub_value: str) -> bool:
     if not match:
         return False
     return match.group(1) not in {"main", "master"}
+
+
+def _safe_condition(subject: str | None = None) -> str:
+    safe_subject = subject or "repo:ORG/REPO:environment:production"
+    return _compact(
+        {
+            "StringEquals": {
+                f"{GITHUB_OIDC_ISSUER}:aud": "sts.amazonaws.com",
+                f"{GITHUB_OIDC_ISSUER}:sub": safe_subject,
+            }
+        }
+    )
 
 
 def _iter_blocks(blocks: Any) -> Iterator[tuple[str, str, dict]]:

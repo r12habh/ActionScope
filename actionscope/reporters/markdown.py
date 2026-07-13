@@ -252,7 +252,12 @@ def _oidc_trust_section(findings: list[OidcTrustFinding]) -> str:
             f"| `{role}` | {issue} | "
             f"{RISK_DISPLAY[finding.risk_level]} | `{evidence}` |"
         )
-    lines.extend(["", "---", ""])
+    lines.extend(["", "<details>", "<summary>Suggested fixes</summary>", ""])
+    for finding in findings:
+        role = _md_cell(finding.role_name)
+        recommendation = finding.recommendation.replace("\n", " ")
+        lines.append(f"- **`{role}`:** {recommendation}")
+    lines.extend(["", "</details>", "", "---", ""])
     return "\n".join(lines)
 
 

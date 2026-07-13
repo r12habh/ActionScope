@@ -37,7 +37,7 @@ actually do in AWS, and which workflow-layer attack surfaces it exposes.
 
     ---
 
-    Wildcard org subjects, missing `sub`/`aud` conditions, branch scoping
+    Wildcard subjects, missing `sub`/`aud`, unsafe set operators, branch scoping
     instead of environment scoping. SARIF rule AS007/AS008.
 
     [Read the guide :material-arrow-right:](oidc-trust.md)

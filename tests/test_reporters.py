@@ -8,6 +8,7 @@ from actionscope.models import (
     EnvironmentFinding,
     GitHubTokenPermission,
     IamAction,
+    OidcTrustFinding,
     PolicyFinding,
     RiskLevel,
     ScanResult,
@@ -216,6 +217,33 @@ def test_to_markdown_summary_counts_non_policy_findings() -> None:
 
     assert "| 🟠 High | 1 |" in md
     assert "| 🟡 Medium | 1 |" in md
+
+
+def test_to_markdown_includes_oidc_condition_remediation() -> None:
+    result = ScanResult(
+        oidc_trust_findings=[
+            OidcTrustFinding(
+                source_file="terraform/iam.tf",
+                role_name="deploy-role",
+                role_arn=None,
+                issue_id="forallvalues_single_valued_claim",
+                issue_description="ForAllValues used with a scalar claim",
+                risk_level=RiskLevel.MEDIUM,
+                evidence="ForAllValues:StringLike",
+                recommendation=(
+                    'Corrected Condition: {"StringLike": '
+                    '{"token.actions.githubusercontent.com:sub": '
+                    '"repo:acme/app:environment:production"}}'
+                ),
+            )
+        ]
+    )
+
+    md = to_markdown(result)
+
+    assert "<summary>Suggested fixes</summary>" in md
+    assert "Corrected Condition" in md
+    assert "repo:acme/app:environment:production" in md
 
 
 def test_to_markdown_from_dict_summary_counts_all_finding_shapes() -> None:
