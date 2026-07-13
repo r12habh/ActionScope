@@ -11,6 +11,11 @@ All notable changes to ActionScope are documented here.
 - `actionscope scan --offline` guarantees scan-time GitHub and AWS API calls
   are disabled while still allowing bundled or cached advisory data.
 
+### Changed
+- ActionScope's own CI, release, documentation, and Marketplace composite
+  action dependencies are pinned to verified full commit SHAs. A regression
+  test prevents mutable action tags from returning.
+
 ## [0.4.0] - 2026-07-12
 
 ### Added

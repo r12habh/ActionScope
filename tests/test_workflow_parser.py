@@ -4,6 +4,7 @@ import io
 from pathlib import Path
 from shutil import copyfile
 
+import yaml
 from rich.console import Console
 
 from actionscope.models import ScanResult, UnpinnedActionFinding
@@ -21,6 +22,24 @@ from actionscope.parsers.workflow import (
 from actionscope.reporters.terminal import render_scan_result
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "workflows"
+
+
+def _collect_uses_values(value: object) -> list[str]:
+    """Collect every uses value from a parsed workflow or action document."""
+    if isinstance(value, dict):
+        collected: list[str] = []
+        for key, child in value.items():
+            if key == "uses" and isinstance(child, str):
+                collected.append(child)
+            else:
+                collected.extend(_collect_uses_values(child))
+        return collected
+    if isinstance(value, list):
+        collected = []
+        for child in value:
+            collected.extend(_collect_uses_values(child))
+        return collected
+    return []
 
 
 def make_repo(tmp_path: Path, *fixture_names: str) -> Path:
@@ -66,6 +85,23 @@ def test_find_workflow_files_returns_empty_list_without_github_dir(
     tmp_path: Path,
 ) -> None:
     assert find_workflow_files(str(tmp_path)) == []
+
+
+def test_repository_automation_pins_external_actions_to_full_shas() -> None:
+    repo_root = Path(__file__).parents[1]
+    automation_files = [
+        repo_root / "action.yml",
+        *sorted((repo_root / ".github" / "workflows").glob("*.y*ml")),
+    ]
+    unpinned: list[str] = []
+
+    for path in automation_files:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for uses_ref in _collect_uses_values(data):
+            if not is_pinned_to_sha(uses_ref):
+                unpinned.append(f"{path.relative_to(repo_root)}: {uses_ref}")
+
+    assert unpinned == []
 
 
 def test_parse_workflow_file_returns_none_for_invalid_yaml(
