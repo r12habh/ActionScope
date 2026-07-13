@@ -4,6 +4,8 @@ All notable changes to ActionScope are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-12
+
 ### Added
 - GitHub OIDC trust-policy analysis now flags `ForAllValues:StringLike` and
   `ForAllValues:StringEquals` on single-valued claims such as `sub` and `aud`,
