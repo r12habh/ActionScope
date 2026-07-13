@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from actionscope.models import CompromisedActionFinding, RiskLevel, ScanResult
+from actionscope.models import (
+    CompromisedActionFinding,
+    ExposurePath,
+    RiskLevel,
+    ScanResult,
+)
 from actionscope.state import compute_delta, load_scan_state, save_scan_state
 
 
@@ -97,6 +102,32 @@ def test_compute_delta_resolved_finding_types() -> None:
     delta = compute_delta(previous, _result(RiskLevel.INFO))
 
     assert delta.resolved_finding_types == ["compromised:actions-cool/issues-helper"]
+
+
+def test_compute_delta_tracks_new_exposure_path() -> None:
+    path = ExposurePath(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        action_kind="unpinned",
+        action_ref="third-party/deploy@v1",
+        action_step="Deploy helper",
+        credential_step="Configure AWS credentials",
+        role_arn="arn:aws:iam::123456789012:role/deploy",
+        auth_type="oidc",
+        policy_source="not_found",
+        policy_source_file=None,
+        match_confidence="none",
+    )
+
+    delta = compute_delta(
+        {"overall_risk": "info", "finding_counts": {}, "finding_types": []},
+        ScanResult(exposure_paths=[path]),
+    )
+
+    assert delta.new_finding_types == [
+        "exposure:unpinned:third-party/deploy@v1:"
+        "arn:aws:iam::123456789012:role/deploy"
+    ]
 
 
 def test_compute_delta_handles_malformed_previous_state() -> None:

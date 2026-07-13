@@ -11,6 +11,7 @@ from actionscope.models import (
     AwsCredentialSource,
     CompromisedActionFinding,
     EnvironmentFinding,
+    ExposurePath,
     GitHubTokenPermission,
     IamAction,
     OidcTrustFinding,
@@ -276,6 +277,50 @@ def _reusable_workflows_section(
             ]
         )
     lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def _exposure_paths_section(paths: list[ExposurePath]) -> str:
+    if not paths:
+        return ""
+
+    lines = [
+        "### Correlated Exposure Paths",
+        "",
+        "| Risk | Workflow / Job | Risky action | AWS credential | "
+        "Policy context | Reachable IAM |",
+        "|------|----------------|--------------|----------------|"
+        "----------------|---------------|",
+    ]
+    for path in paths:
+        workflow = _md_cell(_workflow_basename(path.workflow_file))
+        role = _md_cell(path.role_arn or f"{path.auth_type} credentials")
+        reachable = (
+            ", ".join(f"`{_md_cell(action)}`" for action in path.reachable_actions)
+            if path.reachable_actions
+            else "Unknown (policy unavailable)"
+        )
+        confidence = (
+            f" ({path.match_confidence} confidence)"
+            if path.match_confidence not in {"", "none"}
+            else ""
+        )
+        lines.append(
+            f"| {RISK_DISPLAY[path.risk_level]} | {workflow} / "
+            f"{_md_cell(path.job_name)} | `{_md_cell(path.action_ref)}` | "
+            f"`{role}` | {_md_cell(path.policy_source + confidence)} | "
+            f"{reachable} |"
+        )
+    lines.extend(
+        [
+            "",
+            "> Paths are emitted only when the action and AWS credential "
+            "source occur in the same workflow job.",
+            "",
+            "---",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -572,6 +617,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     )
     delta_part = _delta_section(delta)
     reusable_part = _reusable_workflows_section(result.reusable_workflows)
+    exposure_part = _exposure_paths_section(result.exposure_paths)
     findings_body = "### Workflow Findings\n\n"
     if result.bindings:
         sections = [_binding_section(b) for b in result.bindings]
@@ -599,6 +645,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
         + compromised_part
         + delta_part
         + reusable_part
+        + exposure_part
         + findings_body
         + token_part
         + oidc_part
@@ -829,6 +876,55 @@ def to_markdown_from_dict(data: dict) -> str:
                     "Pass `--github-token` or set `GITHUB_TOKEN` to enable "
                     "authenticated inspection.",
                 ]
+            )
+        lines.extend(["", "---", ""])
+
+    exposure_paths = data.get("exposure_paths", [])
+    if exposure_paths:
+        lines.extend(
+            [
+                "### Correlated Exposure Paths",
+                "",
+                "| Risk | Workflow / Job | Risky action | AWS credential | "
+                "Policy context | Reachable IAM |",
+                "|------|----------------|--------------|----------------|"
+                "----------------|---------------|",
+            ]
+        )
+        for path in exposure_paths:
+            risk = str(path.get("risk_level", "high")).lower()
+            risk_display = {
+                "critical": "🔴 CRITICAL",
+                "high": "🟠 HIGH",
+                "medium": "🟡 MEDIUM",
+                "low": "🟢 LOW",
+                "info": "ℹ️ INFO",
+            }.get(risk, risk.upper())
+            workflow = _md_cell(
+                _workflow_basename(str(path.get("workflow_file", "")))
+            )
+            role = _md_cell(
+                path.get("role_arn")
+                or f"{path.get('auth_type', 'unknown')} credentials"
+            )
+            reachable_items = path.get("reachable_actions") or []
+            reachable = (
+                ", ".join(f"`{_md_cell(item)}`" for item in reachable_items)
+                if reachable_items
+                else "Unknown (policy unavailable)"
+            )
+            confidence_value = str(path.get("match_confidence", "none"))
+            confidence = (
+                f" ({confidence_value} confidence)"
+                if confidence_value not in {"", "none"}
+                else ""
+            )
+            policy_context = str(path.get("policy_source", "unknown")) + confidence
+            lines.append(
+                f"| {risk_display} | {workflow} / "
+                f"{_md_cell(path.get('job_name', ''))} | "
+                f"`{_md_cell(path.get('action_ref', ''))}` | `{role}` | "
+                f"{_md_cell(policy_context)} | {reachable} |"
             )
         lines.extend(["", "---", ""])
 

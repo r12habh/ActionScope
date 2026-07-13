@@ -32,6 +32,7 @@ This posts findings to the GitHub Security → Code Scanning Alerts tab.
 | AS013 | Known-compromised action | Error |
 | AS014 | GitHub Environment OIDC hardening issue | Warning |
 | AS015 | Reusable workflow was not inspected | Note |
+| AS016 | Correlated action-to-AWS exposure path | Error |
 
 Findings discovered inside an authenticated external reusable workflow point
 to the caller workflow in the scanned repository. The SARIF message names the

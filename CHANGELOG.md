@@ -20,6 +20,10 @@ All notable changes to ActionScope are documented here.
   and SARIF output (AS015 reports delegated workflows that were not inspected).
 - `--resolve-pins` now resolves tagged reusable-workflow refs while preserving
   the full `.github/workflows/<file>` path in the suggested SHA replacement.
+- Correlated exposure paths now connect mutable or known-compromised actions
+  to AWS credentials and high-risk IAM permissions in the same workflow job.
+  Terminal, JSON, Markdown, and SARIF reports expose the path; AS016 links a
+  matched IAM policy as a related location when available.
 
 ### Fixed
 - GitHub OIDC `Deny` statements and statements that do not grant

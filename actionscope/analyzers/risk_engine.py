@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Optional
 from actionscope.analyzers.ai_agent_injection import scan_for_ai_agent_injection
 from actionscope.analyzers.artifact_poisoning import scan_for_artifact_poisoning
 from actionscope.analyzers.compromised_actions import scan_for_compromised_actions
+from actionscope.analyzers.exposure_paths import build_exposure_paths
 from actionscope.analyzers.github_environments import scan_environment_usage
 from actionscope.analyzers.oidc_trust import scan_oidc_trust_policies
 from actionscope.analyzers.privesc_detector import detect_privesc_paths
@@ -21,6 +22,7 @@ from actionscope.models import (
     AwsCredentialSource,
     CompromisedActionFinding,
     EnvironmentFinding,
+    ExposurePath,
     GitHubTokenPermission,
     OidcTrustFinding,
     PolicyFinding,
@@ -150,6 +152,7 @@ def compute_overall_risk(
     ai_agent_injection_findings: list[AiAgentInjectionFinding] | None = None,
     compromised_action_findings: list[CompromisedActionFinding] | None = None,
     environment_findings: list[EnvironmentFinding] | None = None,
+    exposure_paths: list[ExposurePath] | None = None,
 ) -> RiskLevel:
     """Compute the highest risk across bindings, token perms, and policies."""
     binding_risks = [
@@ -174,6 +177,7 @@ def compute_overall_risk(
             ai_agent_injection_findings or [],
             compromised_action_findings or [],
             environment_findings or [],
+            exposure_paths or [],
         )
         for finding in findings
     ]
@@ -254,6 +258,11 @@ def build_scan_result(
     )
 
     bindings = build_bindings(credential_sources, policy_findings, repo_path)
+    exposure_paths = build_exposure_paths(
+        bindings,
+        normalized_unpinned,
+        compromised_action_findings,
+    )
     unmatched_findings = get_unmatched_findings(bindings, policy_findings)
     overall_risk = compute_overall_risk(
         bindings,
@@ -265,6 +274,7 @@ def build_scan_result(
         ai_agent_injection_findings,
         compromised_action_findings,
         environment_findings,
+        exposure_paths,
     )
     workflow_count = len(
         {source.workflow_file for source in credential_sources}
@@ -303,6 +313,7 @@ def build_scan_result(
         environment_findings=environment_findings,
         policy_findings=policy_findings,
         bindings=bindings,
+        exposure_paths=exposure_paths,
         errors=errors,
     )
     result.overall_risk = overall_risk

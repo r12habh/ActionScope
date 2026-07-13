@@ -11,6 +11,7 @@ from actionscope.models import (
     AwsCredentialSource,
     CompromisedActionFinding,
     EnvironmentFinding,
+    ExposurePath,
     GitHubTokenPermission,
     IamAction,
     OidcTrustFinding,
@@ -256,6 +257,7 @@ def test_all_rule_ids_are_present_in_rules_list() -> None:
         "AS013",
         "AS014",
         "AS015",
+        "AS016",
     }
 
 
@@ -281,6 +283,88 @@ def test_unpinned_action_produces_as006_result() -> None:
     data = _sarif_data(result)
 
     assert "AS006" in {result["ruleId"] for result in _results(data)}
+
+
+def test_exposure_path_produces_as016_with_policy_related_location() -> None:
+    path = ExposurePath(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        action_kind="unpinned",
+        action_ref="third-party/deploy@v1",
+        action_step="Deploy helper",
+        credential_step="Configure AWS credentials",
+        role_arn="arn:aws:iam::123456789012:role/deploy",
+        auth_type="oidc",
+        policy_source="terraform",
+        policy_source_file="terraform/deploy.tf",
+        match_confidence="high",
+        reachable_actions=["iam:PassRole"],
+        risk_level=RiskLevel.CRITICAL,
+    )
+    result = ScanResult(scan_path="/repo", exposure_paths=[path])
+
+    direct = _sarif_data(result)
+    saved = json.loads(to_sarif_from_dict(json.loads(to_json(result))))
+
+    for data in (direct, saved):
+        finding = next(
+            item for item in _results(data) if item["ruleId"] == "AS016"
+        )
+        assert finding["level"] == "error"
+        assert "third-party/deploy@v1" in finding["message"]["text"]
+        assert "iam:PassRole" in finding["message"]["text"]
+        assert "terraform (high confidence)" in finding["message"]["text"]
+        assert finding["relatedLocations"][0]["physicalLocation"][
+            "artifactLocation"
+        ]["uri"] == "terraform/deploy.tf"
+
+
+def test_reusable_workflow_exposure_path_maps_to_root_caller() -> None:
+    target = "acme/platform/.github/workflows/deploy.yml@v1"
+    result = ScanResult(
+        scan_path="/repo",
+        reusable_workflows=[
+            ReusableWorkflowReference(
+                caller_workflow=".github/workflows/caller.yml",
+                caller_job="release",
+                uses=target,
+                target_workflow=target,
+                repository="acme/platform",
+                ref="v1",
+                pin_type="tag",
+                is_local=False,
+                status="inspected",
+                depth=1,
+            )
+        ],
+        exposure_paths=[
+            ExposurePath(
+                workflow_file=target,
+                job_name="deploy",
+                action_kind="unpinned",
+                action_ref="third-party/deploy@v1",
+                action_step="Deploy helper",
+                credential_step="Configure AWS credentials",
+                role_arn="arn:aws:iam::123456789012:role/deploy",
+                auth_type="oidc",
+                policy_source="not_found",
+                policy_source_file=None,
+                match_confidence="none",
+                risk_level=RiskLevel.HIGH,
+            )
+        ],
+    )
+
+    finding = next(
+        item
+        for item in _results(_sarif_data(result))
+        if item["ruleId"] == "AS016"
+    )
+
+    assert finding["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ] == ".github/workflows/caller.yml"
+    assert "originates from reusable workflow" in finding["message"]["text"]
 
 
 def test_github_token_permission_produces_as004_result() -> None:

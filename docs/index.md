@@ -73,7 +73,7 @@ actually do in AWS, and which workflow-layer attack surfaces it exposes.
 
     ---
 
-    Native SARIF 2.1.0 output with 15 rules (AS001-AS015). Upload to the
+    Native SARIF 2.1.0 output with 16 rules (AS001-AS016). Upload to the
     GitHub Security tab for first-class alerts.
 
     [SARIF integration :material-arrow-right:](sarif.md)
@@ -86,6 +86,15 @@ actually do in AWS, and which workflow-layer attack surfaces it exposes.
     refs, and can inspect external workflow YAML with a GitHub token.
 
     [Reusable workflow inspection :material-arrow-right:](reusable-workflows.md)
+
+-   :material-link-variant:{ .lg .middle } **Correlated exposure paths**
+
+    ---
+
+    Connects mutable or known-compromised actions to AWS credentials and
+    reachable IAM permissions in the same workflow job.
+
+    [Exposure path model :material-arrow-right:](exposure-paths.md)
 
 </div>
 

@@ -29,6 +29,7 @@ It also detects:
 - 🤖 **AI agent prompt injection surfaces** (Claude Code, Copilot in CI)
 - 📌 **Unpinned actions** with SHA resolution
 - 🔁 **Reusable workflow inspection** (local recursion and authenticated external fetches)
+- 🔗 **Correlated exposure paths** (risky action → AWS role → reachable IAM)
 
 ![ActionScope mapping a workflow's AWS blast radius](docs/demo.gif)
 
@@ -76,6 +77,14 @@ Path: /my-repo  |  Workflows: 2  |  Overall Risk: 🔴 CRITICAL
 ⛔ CRITICAL: actions-cool/issues-helper@v3 (issue-triage.yml)
    Compromised 2026-05-18 — mutable tags may run credential-stealing code
    Fix: Remove this action or pin to a verified pre-compromise SHA
+
+Correlated Exposure Paths (1 found)
+──────────────────────────────────────────────────────────────
+🔴 CRITICAL: mutable action → AWS credentials
+   Workflow: deploy.yml → deploy
+   Action: third-party/deploy-helper@v1
+   Credential: arn:aws:iam::123456789012:role/github-deploy-role
+   Reachable IAM: iam:PassRole, ec2:TerminateInstances, s3:PutObject
 
 ─────────────────────────────────────────────────────────────
 
@@ -133,6 +142,7 @@ ActionScope answers a question no other tool answers:
 | **Known-compromised action detection** | ❌ | ❌ | ❌ | **✅** |
 | **AWS credential source detection** | ❌ | ❌ | ❌ | **✅** |
 | **Workflow → IAM role correlation** | ❌ | ❌ | ❌ | **✅** |
+| **Action → AWS exposure-path correlation** | ❌ | ❌ | ❌ | **✅** |
 | **Live AWS IAM policy verification** | ❌ | ❌ | ❌ | **✅** |
 | **Blast radius in plain English** | ❌ | ❌ | ❌ | **✅** |
 | **OIDC trust policy analysis** | ❌ | ❌ | ❌ | **✅** |
@@ -159,9 +169,10 @@ policies/**/*.json                              + PR Comment
 3. Extract role ARNs and credential patterns
 4. Match roles to IAM policies in Terraform or JSON files
 5. Classify IAM actions using the `policy-sentry` action database
-6. Detect privilege escalation paths
-7. Check for known-compromised actions in the bundled database
-8. Output a plain-English blast radius report
+6. Correlate risky actions with AWS credentials in the same job
+7. Detect privilege escalation paths
+8. Check for known-compromised actions in the bundled database
+9. Output a plain-English blast radius report
 
 ### Live AWS Verification (`--aws-verify`)
 
@@ -226,6 +237,15 @@ instead of treating it as clean. Traversal is cycle-safe and follows GitHub's
 10-level and 50-workflow limits.
 
 [Reusable workflow inspection guide](docs/reusable-workflows.md)
+
+### 🔗 Correlated Exposure Paths
+
+Connects mutable or known-compromised actions to AWS credentials configured in
+the same workflow job. When IAM policy context is available, the path includes
+the highest-risk permissions that action could reach; otherwise it explicitly
+marks the blast radius as unknown.
+
+[Correlated exposure paths guide](docs/exposure-paths.md)
 
 ### ⚡ IAM Privilege Escalation Paths
 
@@ -295,8 +315,9 @@ prt-scan attack.
 Run `actionscope scan . --output-format sarif --output-file results.sarif`
 and upload `results.sarif` to the GitHub Security tab via the
 `github/codeql-action/upload-sarif` action. ActionScope emits SARIF rules
-AS001–AS015 covering AWS exposure, OIDC trust, unpinned actions,
-compromised actions, script injection, and environment hardening.
+AS001–AS016 covering AWS exposure, OIDC trust, unpinned actions,
+compromised actions, script injection, environment hardening, and correlated
+action-to-AWS exposure paths.
 
 ### How do I pin GitHub Actions to a full commit SHA?
 
@@ -329,6 +350,7 @@ exact permission set required.
 - [CLI reference](docs/cli-reference.md)
 - [OIDC trust policy analysis](docs/oidc-trust.md)
 - [Reusable workflow inspection](docs/reusable-workflows.md)
+- [Correlated exposure paths](docs/exposure-paths.md)
 - [Known-compromised actions detector](docs/compromised-actions.md)
 - [SARIF and GitHub Security tab](docs/sarif.md)
 - [AWS verification permissions](docs/aws-verify-permissions.md)
