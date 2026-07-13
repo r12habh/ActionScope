@@ -18,7 +18,7 @@ All notable changes to ActionScope are documented here.
   or `GITHUB_TOKEN` is supplied. Traversal is cycle-safe, caches duplicate
   targets, and preserves caller/callee provenance in terminal, JSON, Markdown,
   and SARIF output (AS015 reports delegated workflows that were not inspected).
-- `--resolve-pins` now resolves mutable reusable-workflow refs while preserving
+- `--resolve-pins` now resolves tagged reusable-workflow refs while preserving
   the full `.github/workflows/<file>` path in the suggested SHA replacement.
 
 ### Fixed

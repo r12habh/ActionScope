@@ -117,6 +117,7 @@ class ReusableWorkflowReference:
     status: str
     depth: int
     error: Optional[str] = None
+    root_workflow: Optional[str] = None
 
 
 @dataclass

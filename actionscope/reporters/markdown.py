@@ -245,19 +245,24 @@ def _reusable_workflows_section(
     lines = [
         "### Reusable Workflows",
         "",
-        "| Caller | Job | Reusable workflow | Pin | Inspection |",
-        "|--------|-----|-------------------|-----|------------|",
+        "| Root | Caller | Job | Reusable workflow | Pin | Inspection |",
+        "|------|--------|-----|-------------------|-----|------------|",
     ]
     for reference in references:
         caller = _md_cell(_workflow_basename(reference.caller_workflow))
+        root = _md_cell(
+            _workflow_basename(
+                reference.root_workflow or reference.caller_workflow
+            )
+        )
         lines.append(
-            f"| {caller} | {_md_cell(reference.caller_job)} | "
+            f"| {root} | {caller} | {_md_cell(reference.caller_job)} | "
             f"`{_md_cell(reference.uses)}` | {_md_cell(reference.pin_type)} | "
             f"{_md_cell(reference.status.replace('_', ' '))} |"
         )
         if reference.error:
             lines.append(
-                f"|  |  | _{_md_cell(reference.error)}_ |  |  |"
+                f"|  |  |  | _{_md_cell(reference.error)}_ |  |  |"
             )
     if any(reference.status == "no_token" for reference in references):
         lines.extend(
@@ -784,23 +789,33 @@ def to_markdown_from_dict(data: dict) -> str:
             [
                 "### Reusable Workflows",
                 "",
-                "| Caller | Job | Reusable workflow | Pin | Inspection |",
-                "|--------|-----|-------------------|-----|------------|",
+                "| Root | Caller | Job | Reusable workflow | Pin | Inspection |",
+                "|------|--------|-----|-------------------|-----|------------|",
             ]
         )
         for reference in reusable:
             caller = _md_cell(
                 _workflow_basename(str(reference.get("caller_workflow", "")))
             )
+            root = _md_cell(
+                _workflow_basename(
+                    str(
+                        reference.get("root_workflow")
+                        or reference.get("caller_workflow", "")
+                    )
+                )
+            )
             lines.append(
-                f"| {caller} | {_md_cell(reference.get('caller_job', ''))} | "
+                f"| {root} | {caller} | "
+                f"{_md_cell(reference.get('caller_job', ''))} | "
                 f"`{_md_cell(reference.get('uses', ''))}` | "
                 f"{_md_cell(reference.get('pin_type', ''))} | "
                 f"{_md_cell(str(reference.get('status', '')).replace('_', ' '))} |"
             )
             if reference.get("error"):
                 lines.append(
-                    f"|  |  | _{_md_cell(reference.get('error', ''))}_ |  |  |"
+                    "|  |  |  | "
+                    f"_{_md_cell(reference.get('error', ''))}_ |  |  |"
                 )
         if any(reference.get("status") == "no_token" for reference in reusable):
             lines.extend(

@@ -405,6 +405,14 @@ def _render_reusable_workflows_section(
             f"   Status: {reference.status.replace('_', ' ')} | "
             f"Pin: {reference.pin_type} | Depth: {reference.depth}"
         )
+        if (
+            reference.root_workflow
+            and reference.root_workflow != reference.caller_workflow
+        ):
+            c.print(
+                "   Root caller: "
+                f"{_workflow_basename(reference.root_workflow)}"
+            )
         if reference.error:
             c.print(f"   [dim]{reference.error}[/]")
 
@@ -822,6 +830,13 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                     f"   Status: {reference.get('status', 'unknown')} | "
                     f"Pin: {reference.get('pin_type', 'unknown')}"
                 )
+                root_workflow = str(reference.get("root_workflow") or "")
+                caller_workflow = str(reference.get("caller_workflow") or "")
+                if root_workflow and root_workflow != caller_workflow:
+                    c.print(
+                        "   Root caller: "
+                        f"{_workflow_basename(root_workflow)}"
+                    )
                 if reference.get("error"):
                     c.print(f"   {reference.get('error')}")
 

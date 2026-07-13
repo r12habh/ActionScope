@@ -372,6 +372,57 @@ def test_external_workflow_fetches_each_unique_target_once(
 @patch(
     "actionscope.analyzers.reusable_workflows._fetch_external_workflow"
 )
+def test_shared_external_workflow_retains_each_root_caller(
+    fetch_workflow,
+    tmp_path: Path,
+) -> None:
+    for name in ("caller-a.yml", "caller-b.yml"):
+        _write_workflow(
+            tmp_path,
+            name,
+            """
+on: push
+jobs:
+  deploy:
+    uses: acme/platform/.github/workflows/deploy.yml@v1
+""",
+        )
+    fetch_workflow.return_value = (
+        {
+            "on": "workflow_call",
+            "jobs": {
+                "review": {
+                    "runs-on": "ubuntu-latest",
+                    "steps": [
+                        {
+                            "run": (
+                                "echo '${{ github.event.pull_request.title }}'"
+                            )
+                        }
+                    ],
+                }
+            },
+        },
+        None,
+    )
+
+    result = scan_reusable_workflows(str(tmp_path), github_token="token")
+
+    fetch_workflow.assert_called_once()
+    root_names = {
+        Path(reference.root_workflow or "").name
+        for reference in result.references
+    }
+    assert root_names == {
+        "caller-a.yml",
+        "caller-b.yml",
+    }
+    assert len(result.script_injection_findings) == 1
+
+
+@patch(
+    "actionscope.analyzers.reusable_workflows._fetch_external_workflow"
+)
 def test_fetch_error_is_reported_without_crashing(
     fetch_workflow,
     tmp_path: Path,

@@ -31,8 +31,8 @@ ActionScope builds a call graph from every `jobs.<job_id>.uses` reference.
 
 Findings retain both sides of the call. Terminal, Markdown, and JSON reports
 show the caller job and reusable target. SARIF findings discovered inside an
-external workflow point to the caller file in the scanned repository and name
-the external source in the message.
+external workflow produce one result at each root caller file in the scanned
+repository and name the external source in the message.
 
 ## Local Workflows
 

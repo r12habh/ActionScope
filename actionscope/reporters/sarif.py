@@ -16,6 +16,7 @@ from actionscope import __version__
 from actionscope.models import (
     GitHubTokenPermission,
     PolicyFinding,
+    ReusableWorkflowReference,
     RiskLevel,
     ScanResult,
     WorkflowCredentialBinding,
@@ -53,7 +54,10 @@ def to_sarif(result: ScanResult) -> str:
 
         workflow_file = binding.credential_source.workflow_file
         policy_finding = binding.policy_finding
-        location_path, origin = _reusable_origin(result, workflow_file)
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            workflow_file,
+        )
 
         if policy_finding.overall_risk >= RiskLevel.MEDIUM:
             results.append(
@@ -66,6 +70,7 @@ def to_sarif(result: ScanResult) -> str:
                     ],
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -81,6 +86,7 @@ def to_sarif(result: ScanResult) -> str:
                     security_severity="9.5",
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -97,12 +103,13 @@ def to_sarif(result: ScanResult) -> str:
                     security_severity="9.0",
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for permission in result.github_token_permissions:
         if permission.risk_level >= RiskLevel.HIGH:
-            location_path, origin = _reusable_origin(
+            location_path, origin, related_locations = _reusable_origin(
                 result,
                 permission.workflow_file,
             )
@@ -112,12 +119,13 @@ def to_sarif(result: ScanResult) -> str:
                     result.scan_path,
                     location_path=location_path,
                     message_prefix=origin,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for binding in result.bindings:
         if binding.credential_source.uses_access_keys:
-            location_path, origin = _reusable_origin(
+            location_path, origin, related_locations = _reusable_origin(
                 result,
                 binding.credential_source.workflow_file,
             )
@@ -134,12 +142,16 @@ def to_sarif(result: ScanResult) -> str:
                     security_severity="5.0",
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for finding in result.unpinned_actions:
         short_sha = finding.pin_type == "short_sha"
-        location_path, origin = _reusable_origin(result, finding.workflow_file)
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS006",
@@ -157,6 +169,7 @@ def to_sarif(result: ScanResult) -> str:
                 security_severity="4.0",
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
@@ -176,7 +189,10 @@ def to_sarif(result: ScanResult) -> str:
         )
 
     for finding in result.script_injection_findings:
-        location_path, origin = _reusable_origin(result, finding.workflow_file)
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS009",
@@ -188,11 +204,15 @@ def to_sarif(result: ScanResult) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.artifact_poisoning_findings:
-        location_path, origin = _reusable_origin(result, finding.workflow_file)
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS010",
@@ -202,11 +222,15 @@ def to_sarif(result: ScanResult) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.ai_agent_injection_findings:
-        location_path, origin = _reusable_origin(result, finding.workflow_file)
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS012" if finding.has_aws_secret_access else "AS011",
@@ -218,11 +242,15 @@ def to_sarif(result: ScanResult) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.compromised_action_findings:
-        location_path, origin = _reusable_origin(result, finding.workflow_file)
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS013",
@@ -234,11 +262,15 @@ def to_sarif(result: ScanResult) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in result.environment_findings:
-        location_path, origin = _reusable_origin(result, finding.workflow_file)
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            finding.workflow_file,
+        )
         results.append(
             _make_result(
                 rule_id="AS014",
@@ -250,6 +282,7 @@ def to_sarif(result: ScanResult) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[finding.risk_level],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
@@ -275,6 +308,7 @@ def to_sarif(result: ScanResult) -> str:
             )
         )
 
+    results = _expand_multi_location_results(results)
     sarif_doc = {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -315,7 +349,10 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
 
     for finding in data.get("findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("overall_risk", "info")))
         if risk >= RiskLevel.MEDIUM:
             results.append(
@@ -329,6 +366,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                     security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -345,6 +383,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                     security_severity="9.0",
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
@@ -361,12 +400,16 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                     security_severity="5.0",
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for permission in data.get("github_token_permissions", []):
         workflow_file = str(permission.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(permission.get("risk_level", "info")))
         if risk >= RiskLevel.HIGH:
             results.append(
@@ -381,12 +424,16 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                     security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                     location_path=location_path,
                     location_line=1,
+                    additional_location_paths=related_locations,
                 )
             )
 
     for finding in data.get("unpinned_actions", []):
         workflow_file = str(finding.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         short_sha = finding.get("pin_type") == "short_sha"
         results.append(
             _make_result(
@@ -405,6 +452,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 security_severity="4.0",
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
@@ -427,7 +475,10 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
 
     for finding in data.get("script_injection_findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
@@ -438,12 +489,16 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("artifact_poisoning_findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
@@ -454,12 +509,16 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("ai_agent_injection_findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
@@ -472,12 +531,16 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("compromised_action_findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "critical")))
         results.append(
             _make_result(
@@ -491,12 +554,16 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
     for finding in data.get("environment_findings", []):
         workflow_file = str(finding.get("workflow_file", ""))
-        location_path, origin = _reusable_origin_from_dict(data, workflow_file)
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
         risk = _risk_from_string(str(finding.get("risk_level", "info")))
         results.append(
             _make_result(
@@ -507,6 +574,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 security_severity=RISK_TO_SECURITY_SEVERITY[risk],
                 location_path=location_path,
                 location_line=1,
+                additional_location_paths=related_locations,
             )
         )
 
@@ -529,6 +597,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
             )
         )
 
+    results = _expand_multi_location_results(results)
     sarif_doc = {
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -567,6 +636,7 @@ def _github_token_result(
     root_path: str | None = None,
     location_path: str | None = None,
     message_prefix: str = "",
+    additional_location_paths: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return _make_result(
         rule_id="AS004",
@@ -580,84 +650,114 @@ def _github_token_result(
         location_path=location_path or permission.workflow_file,
         location_line=1,
         root_path=root_path,
+        additional_location_paths=additional_location_paths,
     )
 
 
 def _reusable_origin(
     result: ScanResult,
     workflow_file: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, tuple[str, ...]]:
     references = result.reusable_workflows
-    reference = next(
-        (
-            item
-            for item in references
-            if item.repository is not None
-            and item.target_workflow == workflow_file
-        ),
-        None,
-    )
-    if reference is not None:
-        caller = reference.caller_workflow
-        visited = {workflow_file}
-        while caller not in visited:
-            visited.add(caller)
-            parent = next(
-                (
-                    item
-                    for item in references
-                    if item.repository is not None
-                    and item.target_workflow == caller
-                ),
-                None,
+    matching = [
+        item
+        for item in references
+        if item.repository is not None and item.target_workflow == workflow_file
+    ]
+    if matching:
+        callers: list[str] = []
+        for reference in matching:
+            caller = reference.root_workflow or _legacy_root_caller(
+                reference.caller_workflow,
+                workflow_file,
+                references,
             )
-            if parent is None:
-                break
-            caller = parent.caller_workflow
+            if caller not in callers:
+                callers.append(caller)
         return (
-            caller,
-            f"Finding originates from reusable workflow '{reference.uses}'. ",
+            callers[0],
+            f"Finding originates from reusable workflow '{matching[0].uses}'. ",
+            tuple(callers[1:]),
         )
-    return workflow_file, ""
+    return workflow_file, "", ()
 
 
 def _reusable_origin_from_dict(
     data: dict[str, Any],
     workflow_file: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, tuple[str, ...]]:
     references = data.get("reusable_workflows", [])
-    reference = next(
-        (
-            item
-            for item in references
-            if item.get("repository") is not None
-            and str(item.get("target_workflow", "")) == workflow_file
-        ),
-        None,
-    )
-    if reference is not None:
-        caller = str(reference.get("caller_workflow", workflow_file))
-        visited = {workflow_file}
-        while caller not in visited:
-            visited.add(caller)
-            parent = next(
-                (
-                    item
-                    for item in references
-                    if item.get("repository") is not None
-                    and str(item.get("target_workflow", "")) == caller
-                ),
-                None,
-            )
-            if parent is None:
-                break
-            caller = str(parent.get("caller_workflow", caller))
-        uses = str(reference.get("uses", ""))
+    matching = [
+        item
+        for item in references
+        if item.get("repository") is not None
+        and str(item.get("target_workflow", "")) == workflow_file
+    ]
+    if matching:
+        callers: list[str] = []
+        for reference in matching:
+            caller = str(reference.get("root_workflow") or "")
+            if not caller:
+                caller = _legacy_root_caller_from_dict(
+                    str(reference.get("caller_workflow", workflow_file)),
+                    workflow_file,
+                    references,
+                )
+            if caller not in callers:
+                callers.append(caller)
+        uses = str(matching[0].get("uses", ""))
         return (
-            caller,
+            callers[0],
             f"Finding originates from reusable workflow '{uses}'. ",
+            tuple(callers[1:]),
         )
-    return workflow_file, ""
+    return workflow_file, "", ()
+
+
+def _legacy_root_caller(
+    caller: str,
+    workflow_file: str,
+    references: list[ReusableWorkflowReference],
+) -> str:
+    visited = {workflow_file}
+    while caller not in visited:
+        visited.add(caller)
+        parent = next(
+            (
+                item
+                for item in references
+                if item.repository is not None
+                and item.target_workflow == caller
+            ),
+            None,
+        )
+        if parent is None:
+            break
+        caller = parent.caller_workflow
+    return caller
+
+
+def _legacy_root_caller_from_dict(
+    caller: str,
+    workflow_file: str,
+    references: list[dict[str, Any]],
+) -> str:
+    visited = {workflow_file}
+    while caller not in visited:
+        visited.add(caller)
+        parent = next(
+            (
+                item
+                for item in references
+                if item.get("repository") is not None
+                and str(item.get("target_workflow", "")) == caller
+            ),
+            None,
+        )
+        if parent is None:
+            break
+        caller = str(parent.get("caller_workflow", caller))
+    return caller
 
 
 def _make_result(
@@ -668,7 +768,11 @@ def _make_result(
     location_path: str,
     location_line: int,
     root_path: str | None = None,
+    additional_location_paths: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    location_paths = list(
+        dict.fromkeys((location_path, *additional_location_paths))
+    )
     return {
         "ruleId": rule_id,
         "level": level,
@@ -677,19 +781,42 @@ def _make_result(
             "security-severity": security_severity,
         },
         "locations": [
-            {
-                "physicalLocation": {
-                    "artifactLocation": {
-                        "uri": _location_uri(location_path, root_path),
-                        "uriBaseId": "%SRCROOT%",
-                    },
-                    "region": {
-                        "startLine": location_line,
-                    },
-                }
-            }
+            _sarif_location(path, location_line, root_path)
+            for path in location_paths
         ],
     }
+
+
+def _sarif_location(
+    location_path: str,
+    location_line: int,
+    root_path: str | None,
+) -> dict[str, Any]:
+    return {
+        "physicalLocation": {
+            "artifactLocation": {
+                "uri": _location_uri(location_path, root_path),
+                "uriBaseId": "%SRCROOT%",
+            },
+            "region": {
+                "startLine": location_line,
+            },
+        }
+    }
+
+
+def _expand_multi_location_results(
+    results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Emit one result per caller because GitHub only uses the first location."""
+    expanded: list[dict[str, Any]] = []
+    for result in results:
+        locations = result.get("locations", [])
+        if len(locations) <= 1:
+            expanded.append(result)
+            continue
+        expanded.extend({**result, "locations": [location]} for location in locations)
+    return expanded
 
 
 def _make_result_for_root(root_path: str | None):

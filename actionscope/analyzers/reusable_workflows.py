@@ -119,7 +119,7 @@ class _Traversal:
         self.references: list[ReusableWorkflowReference] = []
         self.documents: dict[str, _WorkflowDocument] = {}
         self.loaded: dict[str, tuple[dict | None, str, str | None]] = {}
-        self.expanded: set[str] = set()
+        self.expanded: set[tuple[str, str]] = set()
         self.errors: list[str] = []
 
     def walk(
@@ -128,10 +128,13 @@ class _Traversal:
         depth: int,
         ancestry: frozenset[str],
         root_targets: set[str],
+        root_key: str,
+        root_workflow: str,
     ) -> None:
-        if document.key in self.expanded:
+        expansion_key = (root_key, document.key)
+        if expansion_key in self.expanded:
             return
-        self.expanded.add(document.key)
+        self.expanded.add(expansion_key)
 
         jobs = document.data.get("jobs") or {}
         if not isinstance(jobs, dict):
@@ -158,6 +161,7 @@ class _Traversal:
                     status="invalid_reference",
                     depth=depth + 1,
                     error=target_error,
+                    root_workflow=root_workflow,
                 )
                 continue
 
@@ -167,6 +171,7 @@ class _Traversal:
             if next_depth >= MAX_REUSABLE_LEVELS:
                 self._add_target_reference(
                     document,
+                    root_workflow,
                     str(job_name),
                     uses,
                     target,
@@ -182,6 +187,7 @@ class _Traversal:
             if target.key in ancestry:
                 self._add_target_reference(
                     document,
+                    root_workflow,
                     str(job_name),
                     uses,
                     target,
@@ -195,6 +201,7 @@ class _Traversal:
                 if len(root_targets) >= MAX_UNIQUE_REUSABLE_WORKFLOWS:
                     self._add_target_reference(
                         document,
+                        root_workflow,
                         str(job_name),
                         uses,
                         target,
@@ -208,6 +215,7 @@ class _Traversal:
             target_data, status, load_error = self._load_target(target)
             self._add_target_reference(
                 document,
+                root_workflow,
                 str(job_name),
                 uses,
                 target,
@@ -233,6 +241,8 @@ class _Traversal:
                 next_depth,
                 ancestry | {target.key},
                 root_targets,
+                root_key,
+                root_workflow,
             )
 
     def _resolve_target(
@@ -380,6 +390,7 @@ class _Traversal:
     def _add_target_reference(
         self,
         caller: _WorkflowDocument,
+        root_workflow: str,
         job_name: str,
         uses: str,
         target: _Target,
@@ -399,6 +410,7 @@ class _Traversal:
             status=status,
             depth=depth,
             error=error,
+            root_workflow=root_workflow,
         )
 
     def _add_reference(
@@ -415,6 +427,7 @@ class _Traversal:
         status: str,
         depth: int,
         error: str | None,
+        root_workflow: str,
     ) -> None:
         self.references.append(
             ReusableWorkflowReference(
@@ -429,6 +442,7 @@ class _Traversal:
                 status=status,
                 depth=depth,
                 error=error,
+                root_workflow=root_workflow,
             )
         )
 
@@ -460,6 +474,8 @@ def scan_reusable_workflows(
             depth=0,
             ancestry=frozenset({document.key}),
             root_targets=set(),
+            root_key=document.key,
+            root_workflow=document.source,
         )
 
     result = ReusableWorkflowScan(

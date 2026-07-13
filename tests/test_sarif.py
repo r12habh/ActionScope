@@ -563,6 +563,62 @@ def test_external_reusable_finding_points_to_caller_with_provenance() -> None:
     assert "originates from reusable workflow" in finding["message"]["text"]
 
 
+def test_shared_external_finding_points_to_every_root_caller() -> None:
+    external = "acme/platform/.github/workflows/deploy.yml@v1"
+    references = [
+        ReusableWorkflowReference(
+            caller_workflow=f"/repo/.github/workflows/{name}",
+            caller_job="deploy",
+            uses=external,
+            target_workflow=external,
+            repository="acme/platform",
+            ref="v1",
+            pin_type="tag",
+            is_local=False,
+            status="inspected",
+            depth=1,
+            root_workflow=f"/repo/.github/workflows/{name}",
+        )
+        for name in ("caller-a.yml", "caller-b.yml")
+    ]
+    result = ScanResult(
+        scan_path="/repo",
+        reusable_workflows=references,
+        script_injection_findings=[
+            ScriptInjectionFinding(
+                workflow_file=external,
+                job_name="deploy",
+                step_name="run",
+                run_snippet="echo unsafe",
+                untrusted_expression="${{ github.event.issue.body }}",
+                injection_method="direct",
+                risk_level=RiskLevel.MEDIUM,
+                description="script injection",
+                recommendation="use env",
+            )
+        ],
+    )
+
+    direct = _sarif_data(result)
+    saved = json.loads(to_sarif_from_dict(json.loads(to_json(result))))
+
+    for data in (direct, saved):
+        findings = [
+            item for item in _results(data) if item["ruleId"] == "AS009"
+        ]
+        uris = {
+            finding["locations"][0]["physicalLocation"]["artifactLocation"][
+                "uri"
+            ]
+            for finding in findings
+        }
+        assert len(findings) == 2
+        assert uris == {
+            ".github/workflows/caller-a.yml",
+            ".github/workflows/caller-b.yml",
+        }
+
+
 def test_nested_external_finding_points_to_top_level_caller() -> None:
     parent = "acme/platform/.github/workflows/parent.yml@v1"
     child = "acme/platform/.github/workflows/child.yml@v1"
