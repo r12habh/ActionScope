@@ -119,7 +119,7 @@ def extract_delegated_credential_sources(
     workflow_file: str,
     repo_path: str,
 ) -> tuple[list[AwsCredentialSource], list[str]]:
-    """Detect AWS credential setup delegated to local wrappers or workflows."""
+    """Detect AWS credential setup delegated to local composite actions."""
     jobs = workflow_data.get("jobs") or {}
     if not isinstance(jobs, dict):
         return [], []
@@ -137,17 +137,6 @@ def extract_delegated_credential_sources(
         job_name_str = str(job_name)
         job_has_oidc = _permissions_have_id_token_write(job_data.get("permissions"))
         has_oidc = workflow_has_oidc or job_has_oidc
-
-        reusable = job_data.get("uses")
-        if isinstance(reusable, str) and _is_reusable_workflow_reference(reusable):
-            sources, reusable_warnings = _inspect_reusable_workflow(
-                reusable.strip(),
-                repo_path,
-                workflow_file,
-                job_name_str,
-            )
-            credential_sources.extend(sources)
-            warnings.extend(reusable_warnings)
 
         for step in _job_steps(job_data):
             uses = step.get("uses")
@@ -352,53 +341,6 @@ def _credential_source_from_step(
     )
 
 
-def _inspect_reusable_workflow(
-    uses_ref: str,
-    repo_path: str,
-    workflow_file: str,
-    job_name: str,
-) -> tuple[list[AwsCredentialSource], list[str]]:
-    if not _is_local_reusable_workflow_reference(uses_ref):
-        return [], [
-            (
-                f"{workflow_file} job {job_name} delegates to external reusable "
-                f"workflow {uses_ref}; ActionScope cannot inspect external targets"
-            )
-        ]
-
-    target = _repo_relative_path(repo_path, uses_ref[2:])
-    if target is None:
-        return [], [
-            (
-                f"{workflow_file} job {job_name} delegates to local reusable "
-                f"workflow {uses_ref}, but the target is outside the repo"
-            )
-        ]
-    workflow_data = _parse_delegated_yaml(target)
-    if workflow_data is None:
-        return [], [
-            (
-                f"{workflow_file} job {job_name} delegates to local reusable "
-                f"workflow {uses_ref}, but ActionScope could not inspect it"
-            )
-        ]
-
-    sources = extract_aws_credential_sources(workflow_data, str(target))
-    rewritten = [
-        AwsCredentialSource(
-            workflow_file=workflow_file,
-            job_name=job_name,
-            step_name=f"Reusable workflow {uses_ref} -> {source.step_name}",
-            role_arn=source.role_arn,
-            uses_access_keys=source.uses_access_keys,
-            uses_oidc=source.uses_oidc,
-            aws_region=source.aws_region,
-        )
-        for source in sources
-    ]
-    return rewritten, []
-
-
 def _inspect_local_composite_action(
     uses_ref: str,
     caller_step: dict,
@@ -512,12 +454,6 @@ def _parse_delegated_yaml(path: Path) -> dict | None:
         _warn(f"Could not parse delegated workflow/action {path}: {exc}")
         return None
     return data if isinstance(data, dict) else None
-
-
-def _is_reusable_workflow_reference(uses_ref: str) -> bool:
-    if ".github/workflows/" not in uses_ref:
-        return False
-    return uses_ref.endswith((".yml", ".yaml")) or "@" in uses_ref
 
 
 def _is_local_reusable_workflow_reference(uses_ref: str) -> bool:

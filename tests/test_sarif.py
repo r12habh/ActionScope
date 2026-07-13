@@ -15,12 +15,14 @@ from actionscope.models import (
     IamAction,
     OidcTrustFinding,
     PolicyFinding,
+    ReusableWorkflowReference,
     RiskLevel,
     ScanResult,
     ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
 )
+from actionscope.reporters.json_reporter import to_json
 from actionscope.reporters.sarif import to_sarif, to_sarif_from_dict, write_sarif
 
 
@@ -253,6 +255,7 @@ def test_all_rule_ids_are_present_in_rules_list() -> None:
         "AS012",
         "AS013",
         "AS014",
+        "AS015",
     }
 
 
@@ -487,3 +490,156 @@ def test_environment_finding_from_dict_produces_as014_result() -> None:
         )
     )
     assert "AS014" in {result["ruleId"] for result in _results(data)}
+
+
+def test_uninspected_reusable_workflow_produces_as015_result() -> None:
+    result = ScanResult(
+        reusable_workflows=[
+            ReusableWorkflowReference(
+                caller_workflow=".github/workflows/caller.yml",
+                caller_job="deploy",
+                uses="acme/platform/.github/workflows/deploy.yml@v1",
+                target_workflow=(
+                    "acme/platform/.github/workflows/deploy.yml@v1"
+                ),
+                repository="acme/platform",
+                ref="v1",
+                pin_type="tag",
+                is_local=False,
+                status="no_token",
+                depth=1,
+                error="pass --github-token",
+            )
+        ]
+    )
+
+    data = _sarif_data(result)
+    finding = next(item for item in _results(data) if item["ruleId"] == "AS015")
+
+    assert finding["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ] == ".github/workflows/caller.yml"
+
+
+def test_external_reusable_finding_points_to_caller_with_provenance() -> None:
+    external = "acme/platform/.github/workflows/deploy.yml@v1"
+    result = ScanResult(
+        scan_path="/repo",
+        reusable_workflows=[
+            ReusableWorkflowReference(
+                caller_workflow="/repo/.github/workflows/caller.yml",
+                caller_job="deploy",
+                uses=external,
+                target_workflow=external,
+                repository="acme/platform",
+                ref="v1",
+                pin_type="tag",
+                is_local=False,
+                status="inspected",
+                depth=1,
+            )
+        ],
+        script_injection_findings=[
+            ScriptInjectionFinding(
+                workflow_file=external,
+                job_name="deploy",
+                step_name="run",
+                run_snippet="echo unsafe",
+                untrusted_expression="${{ github.event.issue.body }}",
+                injection_method="direct",
+                risk_level=RiskLevel.MEDIUM,
+                description="script injection",
+                recommendation="use env",
+            )
+        ],
+    )
+
+    data = _sarif_data(result)
+    finding = next(item for item in _results(data) if item["ruleId"] == "AS009")
+
+    assert finding["locations"][0]["physicalLocation"]["artifactLocation"][
+        "uri"
+    ] == ".github/workflows/caller.yml"
+    assert "originates from reusable workflow" in finding["message"]["text"]
+
+
+def test_nested_external_finding_points_to_top_level_caller() -> None:
+    parent = "acme/platform/.github/workflows/parent.yml@v1"
+    child = "acme/platform/.github/workflows/child.yml@v1"
+    result = ScanResult(
+        scan_path="/repo",
+        reusable_workflows=[
+            ReusableWorkflowReference(
+                caller_workflow="/repo/.github/workflows/caller.yml",
+                caller_job="parent",
+                uses=parent,
+                target_workflow=parent,
+                repository="acme/platform",
+                ref="v1",
+                pin_type="tag",
+                is_local=False,
+                status="inspected",
+                depth=1,
+            ),
+            ReusableWorkflowReference(
+                caller_workflow=parent,
+                caller_job="child",
+                uses="./.github/workflows/child.yml",
+                target_workflow=child,
+                repository="acme/platform",
+                ref="v1",
+                pin_type="local",
+                is_local=True,
+                status="inspected",
+                depth=2,
+            ),
+        ],
+        script_injection_findings=[
+            ScriptInjectionFinding(
+                workflow_file=child,
+                job_name="deploy",
+                step_name="run",
+                run_snippet="echo unsafe",
+                untrusted_expression="${{ github.event.issue.body }}",
+                injection_method="direct",
+                risk_level=RiskLevel.MEDIUM,
+                description="script injection",
+                recommendation="use env",
+            )
+        ],
+    )
+
+    direct = _sarif_data(result)
+    direct_finding = next(
+        item for item in _results(direct) if item["ruleId"] == "AS009"
+    )
+    saved = json.loads(to_sarif_from_dict(json.loads(to_json(result))))
+    saved_finding = next(
+        item for item in _results(saved) if item["ruleId"] == "AS009"
+    )
+
+    for finding in (direct_finding, saved_finding):
+        assert finding["locations"][0]["physicalLocation"][
+            "artifactLocation"
+        ]["uri"] == ".github/workflows/caller.yml"
+        assert "child.yml" in finding["message"]["text"]
+
+
+def test_uninspected_reusable_workflow_from_dict_produces_as015() -> None:
+    data = json.loads(
+        to_sarif_from_dict(
+            {
+                "scan_path": "/repo",
+                "reusable_workflows": [
+                    {
+                        "caller_workflow": "/repo/.github/workflows/caller.yml",
+                        "uses": "acme/platform/.github/workflows/deploy.yml@v1",
+                        "status": "no_token",
+                        "error": "pass --github-token",
+                    }
+                ],
+            }
+        )
+    )
+
+    assert "AS015" in {result["ruleId"] for result in _results(data)}

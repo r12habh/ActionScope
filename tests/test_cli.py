@@ -100,6 +100,35 @@ def test_scan_sarif_output_valid(runner: CliRunner, cli_repo_safe: Path) -> None
     assert data["version"] == "2.1.0"
 
 
+def test_scan_json_reports_uninspected_external_reusable_workflow(
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "caller.yml").write_text(
+        """
+on: push
+jobs:
+  deploy:
+    uses: acme/platform/.github/workflows/deploy.yml@v1
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        main,
+        ["scan", str(tmp_path), "--output-format", "json"],
+        env={"GITHUB_TOKEN": ""},
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["reusable_workflows"][0]["status"] == "no_token"
+    assert data["summary"]["uninspected_reusable_workflows"] == 1
+    assert data["unpinned_actions"][0]["uses"].endswith("@v1")
+
+
 def test_report_help_exists(runner: CliRunner) -> None:
     result = runner.invoke(main, ["report", "--help"])
     assert result.exit_code == 0

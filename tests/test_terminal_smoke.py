@@ -10,11 +10,43 @@ from actionscope.models import (
     GitHubTokenPermission,
     IamAction,
     PolicyFinding,
+    ReusableWorkflowReference,
     RiskLevel,
     ScanResult,
     WorkflowCredentialBinding,
 )
 from actionscope.reporters.terminal import render_scan_result
+
+
+def test_render_scan_result_shows_reusable_workflow_status() -> None:
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=False, width=120)
+    result = ScanResult(
+        reusable_workflows=[
+            ReusableWorkflowReference(
+                caller_workflow=".github/workflows/caller.yml",
+                caller_job="deploy",
+                uses="acme/platform/.github/workflows/deploy.yml@v1",
+                target_workflow=(
+                    "acme/platform/.github/workflows/deploy.yml@v1"
+                ),
+                repository="acme/platform",
+                ref="v1",
+                pin_type="tag",
+                is_local=False,
+                status="no_token",
+                depth=1,
+                error="pass --github-token",
+            )
+        ]
+    )
+
+    render_scan_result(result, console)
+
+    output = buffer.getvalue()
+    assert "Reusable Workflows (1 call(s))" in output
+    assert "acme/platform/.github/workflows/deploy.yml@v1" in output
+    assert "no token" in output
 
 
 def test_render_scan_result_smoke_full_scan_result() -> None:

@@ -103,6 +103,23 @@ class UnpinnedActionFinding:
 
 
 @dataclass
+class ReusableWorkflowReference:
+    """A job-level call from one workflow to a reusable workflow."""
+
+    caller_workflow: str
+    caller_job: str
+    uses: str
+    target_workflow: str
+    repository: Optional[str]
+    ref: Optional[str]
+    pin_type: str
+    is_local: bool
+    status: str
+    depth: int
+    error: Optional[str] = None
+
+
+@dataclass
 class OidcTrustFinding:
     """A GitHub Actions OIDC trust-policy misconfiguration."""
 
@@ -238,6 +255,9 @@ class ScanResult:
         default_factory=list
     )
     unpinned_actions: list[UnpinnedActionFinding] = field(default_factory=list)
+    reusable_workflows: list[ReusableWorkflowReference] = field(
+        default_factory=list
+    )
     oidc_trust_findings: list[OidcTrustFinding] = field(default_factory=list)
     script_injection_findings: list[ScriptInjectionFinding] = field(
         default_factory=list

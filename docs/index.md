@@ -73,10 +73,19 @@ actually do in AWS, and which workflow-layer attack surfaces it exposes.
 
     ---
 
-    Native SARIF 2.1.0 output with 14 rules (AS001-AS014). Upload to the
+    Native SARIF 2.1.0 output with 15 rules (AS001-AS015). Upload to the
     GitHub Security tab for first-class alerts.
 
     [SARIF integration :material-arrow-right:](sarif.md)
+
+-   :material-source-branch:{ .lg .middle } **Reusable workflows**
+
+    ---
+
+    Follows local `jobs.<id>.uses` calls recursively, reports mutable external
+    refs, and can inspect external workflow YAML with a GitHub token.
+
+    [Reusable workflow inspection :material-arrow-right:](reusable-workflows.md)
 
 </div>
 
@@ -99,6 +108,7 @@ pip install actionscope
 actionscope scan .                  # static analysis, no AWS creds needed
 actionscope scan . --aws-verify     # live IAM verification (read-only)
 actionscope scan . --resolve-pins   # suggest full-SHA pins for unpinned actions
+actionscope scan . --github-token "$GITHUB_TOKEN"  # inspect shared workflows
 ```
 
 Or use it as a GitHub Action:

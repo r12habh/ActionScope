@@ -44,7 +44,7 @@ inputs:
     required: false
     default: 'false'
   github-token:
-    description: 'GitHub token for posting PR comments'
+    description: 'GitHub token for PR comments, pin resolution, and external reusable workflow inspection'
     required: false
     default: '${{ github.token }}'
   version:

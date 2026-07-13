@@ -9,6 +9,10 @@ import click
 from rich.console import Console
 
 from actionscope import __version__
+from actionscope.analyzers.reusable_workflows import (
+    ReusableWorkflowScan,
+    scan_reusable_workflows,
+)
 from actionscope.analyzers.risk_engine import build_scan_result
 from actionscope.models import PolicyFinding, RiskLevel, ScanResult
 from actionscope.parsers.policy_json import scan_policy_files
@@ -98,7 +102,7 @@ def version_command() -> None:
     "--github-token",
     default=None,
     envvar="GITHUB_TOKEN",
-    help="GitHub token for pin resolution API calls",
+    help="GitHub token for pin resolution and external reusable workflows",
 )
 @click.option(
     "--max-policy-files",
@@ -146,6 +150,21 @@ def scan(
     except Exception as exc:
         credential_sources, github_token_perms, unpinned_actions = [], [], []
         workflow_errors = [f"Fatal error scanning workflows: {exc}"]
+
+    try:
+        reusable_scan = scan_reusable_workflows(
+            repo_path,
+            github_token=github_token,
+        )
+    except Exception as exc:
+        reusable_scan = ReusableWorkflowScan(
+            errors=[f"Fatal error scanning reusable workflows: {exc}"]
+        )
+
+    credential_sources.extend(reusable_scan.credential_sources)
+    github_token_perms.extend(reusable_scan.github_token_permissions)
+    unpinned_actions.extend(reusable_scan.unpinned_actions)
+    workflow_errors.extend(reusable_scan.errors)
 
     try:
         # Click sets max_policy_files=None when the user does not pass the
@@ -213,6 +232,7 @@ def scan(
             policy_findings=all_policy_findings,
             unpinned_actions=unpinned_actions,
             errors=all_errors,
+            reusable_scan=reusable_scan,
         )
     except Exception as exc:
         result = ScanResult(
@@ -385,6 +405,7 @@ def _has_reportable_findings(result: ScanResult) -> bool:
             result.script_injection_findings,
             result.artifact_poisoning_findings,
             result.ai_agent_injection_findings,
+            result.reusable_workflows,
             result.errors,
         )
     )

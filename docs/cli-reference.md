@@ -39,7 +39,7 @@ actionscope scan tests/fixtures/demo_repo --output-format json
 | `--load-state` | none | `False` | Load previous state and compute a risk delta. | `actionscope scan . --load-state` |
 | `--state-file` | none | `.actionscope/last_scan.json` | Custom path for state save/load. | `actionscope scan . --save-state --state-file /tmp/state.json` |
 | `--resolve-pins` | none | `False` | Resolve unpinned GitHub Action tags to current commit SHAs via GitHub API. | `actionscope scan . --resolve-pins` |
-| `--github-token` | none | `$GITHUB_TOKEN` | GitHub token used for pin-resolution API calls. | `actionscope scan . --resolve-pins --github-token "$GITHUB_TOKEN"` |
+| `--github-token` | none | `$GITHUB_TOKEN` | GitHub token used for pin resolution and authenticated inspection of external reusable workflows. | `actionscope scan . --github-token "$GITHUB_TOKEN"` |
 
 ### Common Scan Examples
 
@@ -58,6 +58,9 @@ actionscope scan . --fail-on high
 
 # Compare with the previous scan
 actionscope scan . --load-state --save-state
+
+# Inspect external reusable workflows referenced by jobs.<id>.uses
+actionscope scan . --github-token "$GITHUB_TOKEN"
 ```
 
 ## `actionscope report [JSON_FILE] [OPTIONS]`
@@ -105,6 +108,5 @@ the current release:
 
 | Variable | Used by | Description |
 |----------|---------|-------------|
-| `GITHUB_TOKEN` | `--resolve-pins` | Increases GitHub API rate limits for tag-to-SHA resolution. |
+| `GITHUB_TOKEN` | `--resolve-pins`, reusable workflow inspection | Authenticates GitHub API calls for tag resolution and access to external reusable workflow YAML. |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, AWS profile variables | `--aws-verify` | Standard AWS SDK credential sources used by boto3. |
-

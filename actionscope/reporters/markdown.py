@@ -15,6 +15,7 @@ from actionscope.models import (
     IamAction,
     OidcTrustFinding,
     PolicyFinding,
+    ReusableWorkflowReference,
     RiskLevel,
     ScanResult,
     ScriptInjectionFinding,
@@ -232,6 +233,42 @@ def _unpinned_section(findings: list[UnpinnedActionFinding]) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
+
+
+def _reusable_workflows_section(
+    references: list[ReusableWorkflowReference],
+) -> str:
+    if not references:
+        return ""
+
+    lines = [
+        "### Reusable Workflows",
+        "",
+        "| Caller | Job | Reusable workflow | Pin | Inspection |",
+        "|--------|-----|-------------------|-----|------------|",
+    ]
+    for reference in references:
+        caller = _md_cell(_workflow_basename(reference.caller_workflow))
+        lines.append(
+            f"| {caller} | {_md_cell(reference.caller_job)} | "
+            f"`{_md_cell(reference.uses)}` | {_md_cell(reference.pin_type)} | "
+            f"{_md_cell(reference.status.replace('_', ' '))} |"
+        )
+        if reference.error:
+            lines.append(
+                f"|  |  | _{_md_cell(reference.error)}_ |  |  |"
+            )
+    if any(reference.status == "no_token" for reference in references):
+        lines.extend(
+            [
+                "",
+                "> External reusable workflow contents were not inspected. "
+                "Pass `--github-token` or set `GITHUB_TOKEN` to enable "
+                "authenticated inspection. No network request is made by default.",
+            ]
+        )
+    lines.extend(["", "---", ""])
     return "\n".join(lines)
 
 
@@ -527,6 +564,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
         result.compromised_action_findings
     )
     delta_part = _delta_section(delta)
+    reusable_part = _reusable_workflows_section(result.reusable_workflows)
     findings_body = "### Workflow Findings\n\n"
     if result.bindings:
         sections = [_binding_section(b) for b in result.bindings]
@@ -553,6 +591,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
         header
         + compromised_part
         + delta_part
+        + reusable_part
         + findings_body
         + token_part
         + oidc_part
@@ -738,6 +777,41 @@ def to_markdown_from_dict(data: dict) -> str:
             lines.extend(["", "</details>", "", "---", ""])
     else:
         lines.extend(["_No workflow credential bindings._", "", "---", ""])
+
+    reusable = data.get("reusable_workflows", [])
+    if reusable:
+        lines.extend(
+            [
+                "### Reusable Workflows",
+                "",
+                "| Caller | Job | Reusable workflow | Pin | Inspection |",
+                "|--------|-----|-------------------|-----|------------|",
+            ]
+        )
+        for reference in reusable:
+            caller = _md_cell(
+                _workflow_basename(str(reference.get("caller_workflow", "")))
+            )
+            lines.append(
+                f"| {caller} | {_md_cell(reference.get('caller_job', ''))} | "
+                f"`{_md_cell(reference.get('uses', ''))}` | "
+                f"{_md_cell(reference.get('pin_type', ''))} | "
+                f"{_md_cell(str(reference.get('status', '')).replace('_', ' '))} |"
+            )
+            if reference.get("error"):
+                lines.append(
+                    f"|  |  | _{_md_cell(reference.get('error', ''))}_ |  |  |"
+                )
+        if any(reference.get("status") == "no_token" for reference in reusable):
+            lines.extend(
+                [
+                    "",
+                    "> External reusable workflow contents were not inspected. "
+                    "Pass `--github-token` or set `GITHUB_TOKEN` to enable "
+                    "authenticated inspection.",
+                ]
+            )
+        lines.extend(["", "---", ""])
 
     token_permissions = data.get("github_token_permissions", [])
     if token_permissions:

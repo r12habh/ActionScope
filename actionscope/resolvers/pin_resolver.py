@@ -28,10 +28,11 @@ def resolve_tag_to_sha(
     action_name: str,
     tag: str,
     github_token: str | None = None,
+    original_ref: str | None = None,
 ) -> ResolvedPin:
     """Resolve a GitHub Action tag to the commit SHA it currently points at."""
     if "/" not in action_name:
-        return _error_pin(action_name, tag, "invalid ref")
+        return _error_pin(action_name, tag, "invalid ref", original_ref)
 
     owner, repo = action_name.split("/", 1)
     encoded_tag = urllib.parse.quote(tag, safe="")
@@ -39,11 +40,11 @@ def resolve_tag_to_sha(
 
     ref_data, error = _api_get_json(url, github_token)
     if error is not None:
-        return _error_pin(action_name, tag, error)
+        return _error_pin(action_name, tag, error, original_ref)
 
     obj = ref_data.get("object") if isinstance(ref_data, dict) else None
     if not isinstance(obj, dict):
-        return _error_pin(action_name, tag, "unexpected response")
+        return _error_pin(action_name, tag, "unexpected response", original_ref)
 
     obj_type = obj.get("type")
     sha = obj.get("sha")
@@ -51,16 +52,22 @@ def resolve_tag_to_sha(
         tag_url = f"https://api.github.com/repos/{owner}/{repo}/git/tags/{sha}"
         tag_data, error = _api_get_json(tag_url, github_token)
         if error is not None:
-            return _error_pin(action_name, tag, error)
+            return _error_pin(action_name, tag, error, original_ref)
         tag_obj = tag_data.get("object") if isinstance(tag_data, dict) else None
         if isinstance(tag_obj, dict):
             sha = tag_obj.get("sha")
 
     if not isinstance(sha, str) or not SHA_PATTERN.fullmatch(sha):
-        return _error_pin(action_name, tag, "could not resolve commit SHA")
+        return _error_pin(
+            action_name,
+            tag,
+            "could not resolve commit SHA",
+            original_ref,
+        )
 
-    original = f"{action_name}@{tag}"
-    pinned = f"{action_name}@{sha}  # {tag}"
+    original = original_ref or f"{action_name}@{tag}"
+    original_path = original.rsplit("@", 1)[0]
+    pinned = f"{original_path}@{sha}  # {tag}"
     return ResolvedPin(
         original_ref=original,
         action_name=action_name,
@@ -87,7 +94,14 @@ def resolve_pins_for_workflow(
         action_name = _repo_name(action_name)
         if action_name is None:
             continue
-        resolved.append(resolve_tag_to_sha(action_name, tag, github_token))
+        resolved.append(
+            resolve_tag_to_sha(
+                action_name,
+                tag,
+                github_token,
+                original_ref=uses_ref,
+            )
+        )
     return resolved
 
 
@@ -141,6 +155,15 @@ def _unique_unpinned_refs(workflow_data: dict) -> set[str]:
     for job in jobs.values():
         if not isinstance(job, dict):
             continue
+        job_uses = job.get("uses")
+        if isinstance(job_uses, str):
+            job_uses = job_uses.strip()
+            if (
+                not job_uses.startswith(("./", "../", "docker://"))
+                and "@" in job_uses
+                and classify_action_ref(job_uses) != "sha"
+            ):
+                refs.add(job_uses)
         steps = job.get("steps") or []
         if not isinstance(steps, list):
             continue
@@ -166,9 +189,14 @@ def _repo_name(action_part: str) -> str | None:
     return "/".join(pieces[:2])
 
 
-def _error_pin(action_name: str, tag: str, error: str) -> ResolvedPin:
+def _error_pin(
+    action_name: str,
+    tag: str,
+    error: str,
+    original_ref: str | None = None,
+) -> ResolvedPin:
     return ResolvedPin(
-        original_ref=f"{action_name}@{tag}",
+        original_ref=original_ref or f"{action_name}@{tag}",
         action_name=action_name,
         tag=tag,
         resolved_sha=None,

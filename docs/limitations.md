@@ -92,10 +92,18 @@ When ActionScope reports `policy_source: not_found`, it means:
 ### External reusable workflows
 
 When a workflow uses `uses: org/repo/.github/workflows/reusable.yml@ref`,
-ActionScope can analyze the **calling** workflow but cannot inspect the
-**called** reusable workflow unless it's in the same repository.
+ActionScope can inspect the called YAML when `--github-token` or
+`GITHUB_TOKEN` is supplied. Without a token, it deliberately makes no network
+request and records the target as `no_token` rather than treating it as clean.
 
-**Mitigation:** Run ActionScope in the repository that defines the reusable workflow, or pin to a known SHA.
+External inspection covers the workflow file and nested reusable calls. It
+does not fetch the called repository's Terraform or IAM policy files, so AWS
+role-to-policy correlation still depends on policy evidence in the scanned
+repository or `--aws-verify`.
+
+**Mitigation:** Supply a read-capable GitHub token, pin the call to a full SHA,
+and use `--aws-verify` when the role policy lives outside the scanned repo. See
+[Reusable Workflow Inspection](reusable-workflows.md).
 
 ### IAM policy context ActionScope cannot read
 

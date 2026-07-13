@@ -516,7 +516,7 @@ runs:
     assert "Local action ./.github/actions/configure-aws" in sources[0].step_name
 
 
-def test_external_reusable_workflow_is_reported_as_uninspectable() -> None:
+def test_composite_extractor_ignores_reusable_workflow_jobs() -> None:
     workflow_data = {
         "jobs": {
             "deploy": {
@@ -532,57 +532,7 @@ def test_external_reusable_workflow_is_reported_as_uninspectable() -> None:
     )
 
     assert sources == []
-    assert len(errors) == 1
-    assert "cannot inspect external targets" in errors[0]
-
-
-def test_local_reusable_workflow_is_inspected(tmp_path: Path) -> None:
-    workflow_dir = tmp_path / ".github" / "workflows"
-    workflow_dir.mkdir(parents=True)
-    caller = workflow_dir / "caller.yml"
-    reusable = workflow_dir / "deploy.yml"
-    caller.write_text(
-        """
-name: Caller
-on: push
-jobs:
-  deploy:
-    uses: ./.github/workflows/deploy.yml
-""",
-        encoding="utf-8",
-    )
-    reusable.write_text(
-        """
-name: Reusable Deploy
-on: workflow_call
-permissions:
-  id-token: write
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::123456789012:role/reusable-role
-""",
-        encoding="utf-8",
-    )
-
-    workflow_data = parse_workflow_file(str(caller))
-    assert workflow_data is not None
-
-    sources, errors = extract_delegated_credential_sources(
-        workflow_data,
-        str(caller),
-        str(tmp_path),
-    )
-
     assert errors == []
-    assert len(sources) == 1
-    assert sources[0].workflow_file == str(caller)
-    assert sources[0].job_name == "deploy"
-    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/reusable-role"
-    assert "Reusable workflow ./.github/workflows/deploy.yml" in sources[0].step_name
 
 
 def test_scan_workflows_includes_local_composite_wrapper(tmp_path: Path) -> None:
