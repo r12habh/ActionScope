@@ -105,6 +105,12 @@ def version_command() -> None:
     help="GitHub token for pin resolution and external reusable workflows",
 )
 @click.option(
+    "--offline",
+    is_flag=True,
+    default=False,
+    help="Disable all scan-time network calls; local cache data is still used",
+)
+@click.option(
     "--max-policy-files",
     type=int,
     default=None,
@@ -128,9 +134,15 @@ def scan(
     state_file: str,
     resolve_pins: bool,
     github_token: str | None,
+    offline: bool,
     max_policy_files: int | None,
 ) -> None:
     """Scan a repository for AWS blast radius in GitHub Actions workflows."""
+
+    if offline and aws_verify:
+        raise click.UsageError("--offline cannot be combined with --aws-verify")
+    if offline and resolve_pins:
+        raise click.UsageError("--offline cannot be combined with --resolve-pins")
 
     repo_path = os.path.abspath(path)
     console = Console(no_color=no_color)
@@ -154,7 +166,8 @@ def scan(
     try:
         reusable_scan = scan_reusable_workflows(
             repo_path,
-            github_token=github_token,
+            github_token=None if offline else github_token,
+            offline=offline,
         )
     except Exception as exc:
         reusable_scan = ReusableWorkflowScan(
@@ -233,6 +246,7 @@ def scan(
             unpinned_actions=unpinned_actions,
             errors=all_errors,
             reusable_scan=reusable_scan,
+            offline=offline,
         )
     except Exception as exc:
         result = ScanResult(
@@ -336,6 +350,58 @@ def scan(
     _exit_with_fail_on(result, fail_on)
 
 
+@main.command("update-db")
+@click.option(
+    "--github-token",
+    default=None,
+    envvar="GITHUB_TOKEN",
+    help="GitHub token for higher advisory API rate limits",
+)
+@click.option(
+    "--cache-file",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Custom cache path (default: ~/.actionscope/compromised_actions_cache.json)",
+)
+@click.option(
+    "--ttl-hours",
+    default=24,
+    type=click.IntRange(min=1),
+    show_default=True,
+    help="How long scans should consider the refreshed cache current",
+)
+def update_db(
+    github_token: str | None,
+    cache_file: str | None,
+    ttl_hours: int,
+) -> None:
+    """Refresh the local compromised-actions advisory cache."""
+    from actionscope.compromised_db import update_compromised_actions_cache
+
+    result = update_compromised_actions_cache(
+        github_token=github_token,
+        cache_file=cache_file,
+        ttl_hours=ttl_hours,
+    )
+    for source, status in result.source_status.items():
+        click.echo(f"{source}: {status}")
+    for warning in result.warnings:
+        click.echo(f"Warning: {warning}", err=True)
+
+    if not result.wrote_cache:
+        click.echo(
+            "No cache was written; scans will continue using the existing "
+            "cache or bundled database.",
+            err=True,
+        )
+        return
+
+    click.echo(
+        f"Wrote {result.action_count} compromised-action entries to "
+        f"{result.cache_file} ({result.remote_action_count} from remote feeds)."
+    )
+
+
 @main.command()
 @click.argument("json_file", required=False, type=click.Path(exists=True))
 @click.option(
@@ -400,6 +466,7 @@ def _has_reportable_findings(result: ScanResult) -> bool:
             result.unpinned_actions,
             result.compromised_action_findings,
             result.environment_findings,
+            result.exposure_paths,
             result.policy_findings,
             result.oidc_trust_findings,
             result.script_injection_findings,

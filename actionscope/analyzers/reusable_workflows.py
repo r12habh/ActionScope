@@ -111,11 +111,13 @@ class _Traversal:
         repo_path: str,
         root_keys: set[str],
         github_token: str | None,
+        offline: bool,
     ) -> None:
         path = Path(repo_path).expanduser()
         self.repo_root = _repository_root(path)
         self.root_keys = root_keys
         self.github_token = github_token
+        self.offline = offline
         self.references: list[ReusableWorkflowReference] = []
         self.documents: dict[str, _WorkflowDocument] = {}
         self.loaded: dict[str, tuple[dict | None, str, str | None]] = {}
@@ -359,6 +361,15 @@ class _Traversal:
             self.loaded[target.key] = result
             return result
 
+        if self.offline:
+            result = (
+                None,
+                "offline",
+                "external workflow not inspected because --offline is enabled",
+            )
+            self.loaded[target.key] = result
+            return result
+
         if not self.github_token:
             result = (
                 None,
@@ -450,11 +461,13 @@ class _Traversal:
 def scan_reusable_workflows(
     repo_path: str,
     github_token: str | None = None,
+    *,
+    offline: bool = False,
 ) -> ReusableWorkflowScan:
     """Discover, resolve, and inspect job-level reusable workflow calls."""
     root_files = find_workflow_files(repo_path)
     root_keys = {_local_key(Path(path).resolve()) for path in root_files}
-    traversal = _Traversal(repo_path, root_keys, github_token)
+    traversal = _Traversal(repo_path, root_keys, github_token, offline)
 
     for workflow_file in root_files:
         workflow_data = parse_workflow_file(workflow_file)
@@ -482,7 +495,7 @@ def scan_reusable_workflows(
         references=traversal.references,
         errors=traversal.errors,
     )
-    _analyze_documents(result, traversal.documents.values())
+    _analyze_documents(result, traversal.documents.values(), offline=offline)
     _add_reusable_ref_pinning_findings(result)
     return result
 
@@ -490,9 +503,11 @@ def scan_reusable_workflows(
 def _analyze_documents(
     result: ReusableWorkflowScan,
     documents: Iterable[_WorkflowDocument],
+    *,
+    offline: bool,
 ) -> None:
     try:
-        compromised_db = load_compromised_actions()
+        compromised_db = load_compromised_actions(offline=offline)
     except (OSError, ValueError) as exc:
         compromised_db = None
         result.errors.append(f"Could not load compromised actions database: {exc}")

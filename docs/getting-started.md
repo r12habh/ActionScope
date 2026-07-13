@@ -43,6 +43,8 @@ deploy.yml → deploy → Configure AWS credentials
 ```bash
 actionscope scan . --aws-verify        # fetch live IAM policies (read-only)
 actionscope scan . --resolve-pins      # suggest full-SHA pins
+actionscope update-db                  # refresh compromised-action advisories
+actionscope scan . --offline           # disable scan-time API calls
 actionscope scan . --fail-on high      # exit 1 if risk >= HIGH
 actionscope scan . --output-format sarif --output-file results.sarif
 actionscope scan . --output-format json --output-file results.json

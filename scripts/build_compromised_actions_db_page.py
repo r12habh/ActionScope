@@ -38,9 +38,15 @@ actionscope scan .
 
 Mutable-tag references to a compromised action (e.g. `@v3` of
 `actions-cool/issues-helper`) produce a **CRITICAL** finding. Full-SHA pins
-to an action that has been compromised but where the specific SHA is not in
-the published affected-refs list produce a **HIGH** finding so a human can
-confirm whether the pinned commit predates the compromise.
+are reported only when that exact commit appears in the entry's
+`malicious_shas` list; a different immutable SHA is not exposed to tag
+redirection.
+
+Refresh public advisory intelligence between ActionScope releases with:
+
+```bash
+actionscope update-db
+```
 
 For background on how detection works, see
 [Compromised Actions detector](compromised-actions.md).
@@ -94,8 +100,8 @@ STATUS_LABELS = {
 def _format_affected_refs(refs: list[str]) -> str:
     if not refs:
         return (
-            "_All tags treated as ambiguous — "
-            "SHA pins must be individually verified._"
+            "_All mutable tags are treated as affected; full SHAs are only "
+            "reported when the exact commit is known malicious._"
         )
     return ", ".join(f"`{r}`" for r in refs)
 

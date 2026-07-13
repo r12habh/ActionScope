@@ -4,6 +4,13 @@ All notable changes to ActionScope are documented here.
 
 ## [Unreleased]
 
+### Added
+- `actionscope update-db` refreshes a local compromised-actions cache from
+  GitHub's malware advisory feed and conditionally probes OpenSSF's malicious
+  packages dataset.
+- `actionscope scan --offline` guarantees scan-time GitHub and AWS API calls
+  are disabled while still allowing bundled or cached advisory data.
+
 ## [0.4.0] - 2026-07-12
 
 ### Added
