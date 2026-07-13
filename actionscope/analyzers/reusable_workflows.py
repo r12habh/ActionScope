@@ -245,8 +245,12 @@ class _Traversal:
 
         if uses.startswith("./"):
             relative = uses[2:]
-            if not relative.startswith(".github/workflows/"):
-                return None, "job-level uses must reference a reusable workflow"
+            if not _valid_reusable_workflow_path(relative):
+                return (
+                    None,
+                    "job-level uses must reference a YAML file directly under "
+                    ".github/workflows",
+                )
             if caller.repository:
                 if not caller.ref:
                     return None, "external workflow context is missing a Git ref"
@@ -282,14 +286,11 @@ class _Traversal:
         action_path, ref = uses.rsplit("@", 1)
         parts = action_path.split("/")
         if (
-            len(parts) < 4
+            len(parts) != 5
             or not ref
             or not _valid_repository_part(parts[0])
             or not _valid_repository_part(parts[1])
-            or parts[2] != ".github"
-            or parts[3] != "workflows"
-            or any(part in {"", ".", ".."} for part in parts[4:])
-            or not action_path.endswith((".yml", ".yaml"))
+            or not _valid_reusable_workflow_path("/".join(parts[2:]))
         ):
             return (
                 None,
@@ -598,3 +599,13 @@ def _repository_root(path: Path) -> Path:
 
 def _valid_repository_part(value: str) -> bool:
     return value not in {".", ".."} and bool(_GITHUB_REPOSITORY_PART.fullmatch(value))
+
+
+def _valid_reusable_workflow_path(value: str) -> bool:
+    parts = value.split("/")
+    return (
+        len(parts) == 3
+        and parts[:2] == [".github", "workflows"]
+        and parts[2] not in {"", ".", ".."}
+        and parts[2].endswith((".yml", ".yaml"))
+    )

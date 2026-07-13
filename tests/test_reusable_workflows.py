@@ -413,6 +413,32 @@ jobs:
     assert "must use owner/repo" in str(result.references[0].error)
 
 
+def test_local_reference_rejects_workflow_directory_traversal(
+    tmp_path: Path,
+) -> None:
+    caller = _write_workflow(
+        tmp_path,
+        "caller.yml",
+        """
+on: push
+jobs:
+  deploy:
+    uses: ./.github/workflows/../../private.yml
+""",
+    )
+    (tmp_path / "private.yml").write_text(
+        "on: workflow_call\njobs: {}\n",
+        encoding="utf-8",
+    )
+
+    result = scan_reusable_workflows(str(caller))
+
+    assert result.references[0].status == "invalid_reference"
+    assert "directly under .github/workflows" in str(
+        result.references[0].error
+    )
+
+
 @patch(
     "actionscope.analyzers.reusable_workflows._fetch_external_workflow"
 )
