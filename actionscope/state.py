@@ -183,6 +183,13 @@ def _finding_types(result) -> set[str]:
         types.add(f"compromised:{getattr(finding, 'action_name', 'unknown')}")
     for finding in getattr(result, "environment_findings", []):
         types.add(f"environment:{getattr(finding, 'finding_type', 'unknown')}")
+    for path in getattr(result, "exposure_paths", []):
+        types.add(
+            "exposure:"
+            f"{getattr(path, 'action_kind', 'unknown')}:"
+            f"{getattr(path, 'action_ref', 'unknown')}:"
+            f"{getattr(path, 'role_arn', 'unknown')}"
+        )
     return types
 
 

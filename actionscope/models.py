@@ -246,6 +246,26 @@ class WorkflowCredentialBinding:
 
 
 @dataclass
+class ExposurePath:
+    """A risky workflow dependency connected to AWS credentials in one job."""
+
+    workflow_file: str
+    job_name: str
+    action_kind: str
+    action_ref: str
+    action_step: str
+    credential_step: str
+    role_arn: Optional[str]
+    auth_type: str
+    policy_source: str
+    policy_source_file: Optional[str]
+    match_confidence: str
+    reachable_actions: list[str] = field(default_factory=list)
+    has_privilege_escalation: bool = False
+    risk_level: RiskLevel = RiskLevel.HIGH
+
+
+@dataclass
 class ScanResult:
     """Aggregate result for a single ActionScope scan."""
 
@@ -276,6 +296,7 @@ class ScanResult:
     pin_suggestions: list = field(default_factory=list)
     policy_findings: list[PolicyFinding] = field(default_factory=list)
     bindings: list[WorkflowCredentialBinding] = field(default_factory=list)
+    exposure_paths: list[ExposurePath] = field(default_factory=list)
     overall_risk: RiskLevel = RiskLevel.INFO
     errors: list[str] = field(default_factory=list)
 
@@ -298,6 +319,7 @@ class ScanResult:
                 self.ai_agent_injection_findings,
                 self.compromised_action_findings,
                 self.environment_findings,
+                self.exposure_paths,
             )
             for finding in findings
         ]
@@ -342,6 +364,7 @@ class ScanResult:
             self.ai_agent_injection_findings,
             self.compromised_action_findings,
             self.environment_findings,
+            self.exposure_paths,
         ):
             findings.extend(
                 finding

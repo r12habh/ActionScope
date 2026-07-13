@@ -6,6 +6,7 @@ from pathlib import Path
 from actionscope.models import (
     AwsCredentialSource,
     EnvironmentFinding,
+    ExposurePath,
     GitHubTokenPermission,
     IamAction,
     OidcTrustFinding,
@@ -338,3 +339,39 @@ def test_reusable_workflow_provenance_is_in_json_and_markdown() -> None:
     assert "deploy" in rendered
     assert "acme/platform/.github/workflows/deploy.yml@v1" in rendered
     assert "| tag | 1 | no token |" in rendered
+
+
+def test_exposure_path_is_in_json_and_both_markdown_renderers() -> None:
+    path = ExposurePath(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="production",
+        action_kind="unpinned",
+        action_ref="third-party/deploy@v1",
+        action_step="Deploy helper",
+        credential_step="Configure AWS credentials",
+        role_arn="arn:aws:iam::123456789012:role/deploy",
+        auth_type="oidc",
+        policy_source="terraform",
+        policy_source_file="terraform/deploy.tf",
+        match_confidence="high",
+        reachable_actions=["iam:PassRole", "s3:PutObject"],
+        has_privilege_escalation=True,
+        risk_level=RiskLevel.CRITICAL,
+    )
+    result = ScanResult(exposure_paths=[path])
+
+    data = json.loads(to_json(result))
+    markdown = to_markdown(result)
+    rendered = to_markdown_from_dict(data)
+
+    assert data["summary"]["exposure_paths"] == 1
+    assert data["exposure_paths"][0]["action_ref"] == (
+        "third-party/deploy@v1"
+    )
+    assert data["exposure_paths"][0]["risk_level"] == "critical"
+    for output in (markdown, rendered):
+        assert "### Correlated Exposure Paths" in output
+        assert "deploy.yml / production" in output
+        assert "third-party/deploy@v1" in output
+        assert "iam:PassRole" in output
+        assert "terraform (high confidence)" in output

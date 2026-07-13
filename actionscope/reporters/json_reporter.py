@@ -106,6 +106,7 @@ def _summary_dict(result: ScanResult) -> dict[str, Any]:
         "github_token_risks": github_token_risks,
         "unpinned_actions": len(result.unpinned_actions),
         "reusable_workflows": len(result.reusable_workflows),
+        "exposure_paths": len(result.exposure_paths),
         "uninspected_reusable_workflows": sum(
             1
             for reference in result.reusable_workflows
@@ -145,6 +146,9 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         "reusable_workflows": [
             _serialize_for_json(asdict(reference))
             for reference in result.reusable_workflows
+        ],
+        "exposure_paths": [
+            _serialize_for_json(asdict(path)) for path in result.exposure_paths
         ],
         "oidc_trust_findings": [
             _serialize_for_json(asdict(finding))

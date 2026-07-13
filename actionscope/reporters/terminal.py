@@ -18,6 +18,7 @@ from actionscope.models import (
     AwsCredentialSource,
     CompromisedActionFinding,
     EnvironmentFinding,
+    ExposurePath,
     GitHubTokenPermission,
     OidcTrustFinding,
     PolicyFinding,
@@ -186,6 +187,7 @@ def _render_scan_result_impl(
 
     _render_compromised_actions_section(c, result.compromised_action_findings)
     _render_reusable_workflows_section(c, result.reusable_workflows)
+    _render_exposure_paths_section(c, result.exposure_paths)
 
     for binding in result.bindings:
         _render_binding(c, binding)
@@ -292,6 +294,80 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         )
 
     c.print()
+
+
+def _render_exposure_paths_section(
+    c: Console,
+    paths: list[ExposurePath],
+) -> None:
+    if not paths:
+        return
+
+    c.print()
+    c.rule(
+        f"[bold]Correlated Exposure Paths ({len(paths)} found)[/]",
+        style="red",
+    )
+    c.print()
+    for path in paths[:10]:
+        source_label = (
+            "known-compromised action"
+            if path.action_kind == "known_compromised"
+            else "mutable action"
+        )
+        c.print(
+            Text.assemble(
+                (f"{RISK_ICONS[path.risk_level]} ", ""),
+                (path.risk_level.name, RISK_COLORS[path.risk_level]),
+                (f": {source_label} → AWS credentials", "bold"),
+            )
+        )
+        c.print(
+            Text.assemble(
+                ("   Workflow: ", "bold"),
+                (_workflow_basename(path.workflow_file), ""),
+                (" → ", "dim"),
+                (path.job_name, ""),
+            )
+        )
+        c.print(Text.assemble(("   Action: ", "bold"), (path.action_ref, "")))
+        credential = path.role_arn or f"{path.auth_type} credentials"
+        c.print(
+            Text.assemble(
+                ("   Credential: ", "bold"),
+                (credential, ""),
+            )
+        )
+        confidence = (
+            f", {path.match_confidence} confidence"
+            if path.match_confidence not in {"", "none"}
+            else ""
+        )
+        c.print(
+            Text.assemble(
+                ("   Policy context: ", "bold"),
+                (f"{path.policy_source}{confidence}", "dim"),
+            )
+        )
+        if path.reachable_actions:
+            c.print(
+                Text.assemble(
+                    ("   Reachable IAM: ", "bold"),
+                    (", ".join(path.reachable_actions), ""),
+                )
+            )
+        else:
+            c.print(
+                "   [bold]Reachable IAM:[/] unknown — policy was not "
+                "available to this scan"
+            )
+        if path.has_privilege_escalation:
+            c.print("   [bold red]Privilege-escalation path is reachable[/]")
+        c.print()
+
+    remaining = len(paths) - 10
+    if remaining > 0:
+        c.print(f"[dim]... and {remaining} more exposure path(s)[/]")
 
 
 def _render_actions_table(c: Console, finding: PolicyFinding) -> None:
@@ -699,6 +775,7 @@ def _render_summary_panel(
         ("Summary\n", "bold"),
         (f"Workflows scanned: {result.workflow_count}\n", ""),
         (f"Reusable workflow calls: {len(result.reusable_workflows)}\n", ""),
+        (f"Correlated exposure paths: {len(result.exposure_paths)}\n", ""),
         (f"AWS credential sources: {len(result.credential_sources)}\n", ""),
         (f"Policies analyzed: {policies_analyzed}\n", ""),
         (f"Policies not found: {policies_not_found}\n", ""),
@@ -845,6 +922,41 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                     )
                 if reference.get("error"):
                     c.print(f"   {escape(str(reference.get('error')))}")
+
+        exposure_paths = data.get("exposure_paths", [])
+        if exposure_paths:
+            c.print()
+            c.rule(
+                f"[bold]Correlated Exposure Paths "
+                f"({len(exposure_paths)} found)[/]",
+                style="red",
+            )
+            for path in exposure_paths[:10]:
+                risk = str(path.get("risk_level", "high")).upper()
+                workflow = escape(
+                    _workflow_basename(str(path.get("workflow_file", "")))
+                )
+                job = escape(str(path.get("job_name", "")))
+                action_ref = escape(str(path.get("action_ref", "")))
+                role = escape(
+                    str(path.get("role_arn") or path.get("auth_type", "unknown"))
+                )
+                c.print(f"[bold]{risk}: action → AWS credentials[/]")
+                c.print(f"   Workflow: {workflow} → {job}")
+                c.print(f"   Action: {action_ref}")
+                c.print(f"   Credential: {role}")
+                policy_source = escape(str(path.get("policy_source", "unknown")))
+                confidence = escape(str(path.get("match_confidence", "none")))
+                c.print(
+                    f"   Policy context: {policy_source} "
+                    f"(match confidence: {confidence})"
+                )
+                reachable = path.get("reachable_actions") or []
+                if reachable:
+                    actions = ", ".join(escape(str(item)) for item in reachable)
+                    c.print(f"   Reachable IAM: {actions}")
+                else:
+                    c.print("   Reachable IAM: unknown")
 
         compromised = data.get("compromised_action_findings", [])
         if compromised:

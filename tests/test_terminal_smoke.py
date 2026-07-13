@@ -7,6 +7,7 @@ from rich.console import Console
 from actionscope.models import (
     AwsCredentialSource,
     EnvironmentFinding,
+    ExposurePath,
     GitHubTokenPermission,
     IamAction,
     PolicyFinding,
@@ -77,6 +78,37 @@ def test_render_scan_result_escapes_reusable_workflow_markup() -> None:
     assert "[bold]deploy[/bold]" in output
     assert "[blue]deploy[/blue].yml@v1" in output
     assert "[yellow]API error[/yellow]" in output
+
+
+def test_render_scan_result_shows_correlated_exposure_path() -> None:
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=False, width=120)
+    path = ExposurePath(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        action_kind="unpinned",
+        action_ref="third-party/deploy@v1",
+        action_step="Deploy helper",
+        credential_step="Configure AWS credentials",
+        role_arn="arn:aws:iam::123456789012:role/deploy",
+        auth_type="oidc",
+        policy_source="terraform",
+        policy_source_file="terraform/deploy.tf",
+        match_confidence="high",
+        reachable_actions=["iam:PassRole", "s3:PutObject"],
+        has_privilege_escalation=True,
+        risk_level=RiskLevel.CRITICAL,
+    )
+
+    render_scan_result(ScanResult(exposure_paths=[path]), console)
+
+    output = buffer.getvalue()
+    assert "Correlated Exposure Paths (1 found)" in output
+    assert "deploy.yml → deploy" in output
+    assert "third-party/deploy@v1" in output
+    assert "Policy context: terraform, high confidence" in output
+    assert "iam:PassRole, s3:PutObject" in output
+    assert "Privilege-escalation path is reachable" in output
 
 
 def test_render_scan_result_smoke_full_scan_result() -> None:

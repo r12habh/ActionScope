@@ -14,6 +14,7 @@ from typing import Any
 
 from actionscope import __version__
 from actionscope.models import (
+    ExposurePath,
     GitHubTokenPermission,
     PolicyFinding,
     ReusableWorkflowReference,
@@ -285,6 +286,27 @@ def to_sarif(result: ScanResult) -> str:
                 additional_location_paths=related_locations,
             )
         )
+
+    for path in result.exposure_paths:
+        location_path, origin, related_locations = _reusable_origin(
+            result,
+            path.workflow_file,
+        )
+        sarif_result = _make_result(
+            rule_id="AS016",
+            message=origin + _exposure_path_message(path),
+            level=RISK_TO_SARIF_SEVERITY[path.risk_level],
+            security_severity=RISK_TO_SECURITY_SEVERITY[path.risk_level],
+            location_path=location_path,
+            location_line=1,
+            additional_location_paths=related_locations,
+        )
+        _add_policy_related_location(
+            sarif_result,
+            path.policy_source_file,
+            result.scan_path,
+        )
+        results.append(sarif_result)
 
     for reference in result.reusable_workflows:
         if reference.status in {"inspected", "cycle"}:
@@ -578,6 +600,47 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
             )
         )
 
+    for path in data.get("exposure_paths", []):
+        workflow_file = str(path.get("workflow_file", ""))
+        location_path, origin, related_locations = _reusable_origin_from_dict(
+            data,
+            workflow_file,
+        )
+        risk = _risk_from_string(str(path.get("risk_level", "high")))
+        reachable = path.get("reachable_actions") or []
+        reachability = (
+            ", ".join(str(action) for action in reachable)
+            if reachable
+            else "unknown because the IAM policy was unavailable"
+        )
+        source_label = (
+            "known-compromised action"
+            if path.get("action_kind") == "known_compromised"
+            else "mutable action"
+        )
+        sarif_result = _make_result(
+            rule_id="AS016",
+            message=origin + (
+                f"Correlated exposure path: {source_label} "
+                f"'{path.get('action_ref', '')}' can reach AWS credentials "
+                f"in job '{path.get('job_name', '')}'. Reachable IAM: "
+                f"{reachability}. Policy context: "
+                f"{path.get('policy_source', 'unknown')} "
+                f"({path.get('match_confidence', 'none')} confidence)."
+            ),
+            level=RISK_TO_SARIF_SEVERITY[risk],
+            security_severity=RISK_TO_SECURITY_SEVERITY[risk],
+            location_path=location_path,
+            location_line=1,
+            additional_location_paths=related_locations,
+        )
+        _add_policy_related_location(
+            sarif_result,
+            path.get("policy_source_file"),
+            str(data.get("scan_path", "")),
+        )
+        results.append(sarif_result)
+
     for reference in data.get("reusable_workflows", []):
         if reference.get("status") in {"inspected", "cycle"}:
             continue
@@ -785,6 +848,23 @@ def _make_result(
             for path in location_paths
         ],
     }
+
+
+def _add_policy_related_location(
+    result: dict[str, Any],
+    policy_source_file: object,
+    root_path: str | None,
+) -> None:
+    if not policy_source_file:
+        return
+    location = _sarif_location(str(policy_source_file), 1, root_path)
+    result["relatedLocations"] = [
+        {
+            "id": 1,
+            "message": {"text": "Matched IAM policy source"},
+            **location,
+        }
+    ]
 
 
 def _sarif_location(
@@ -1110,6 +1190,30 @@ def _build_rules() -> list[dict[str, Any]]:
                 "tags": ["security", "github-actions", "reusable-workflow"]
             },
         },
+        {
+            "id": "AS016",
+            "name": "CorrelatedAwsExposurePath",
+            "shortDescription": {
+                "text": "Risky workflow dependency can reach AWS credentials"
+            },
+            "fullDescription": {
+                "text": (
+                    "A mutable or known-compromised action executes in the "
+                    "same job that configures AWS credentials. If the action "
+                    "is compromised, the job's reachable IAM permissions "
+                    "define its cloud blast radius."
+                )
+            },
+            "helpUri": "https://github.com/r12habh/ActionScope#readme",
+            "properties": {
+                "tags": [
+                    "security",
+                    "github-actions",
+                    "aws",
+                    "supply-chain",
+                ]
+            },
+        },
     ]
 
 
@@ -1141,3 +1245,23 @@ def _blast_radius_message(binding: WorkflowCredentialBinding) -> str:
         message += " Privilege escalation path detected."
 
     return message
+
+
+def _exposure_path_message(path: ExposurePath) -> str:
+    source_label = (
+        "known-compromised action"
+        if path.action_kind == "known_compromised"
+        else "mutable action"
+    )
+    reachable = (
+        ", ".join(path.reachable_actions)
+        if path.reachable_actions
+        else "unknown because the IAM policy was unavailable"
+    )
+    role = path.role_arn or f"{path.auth_type} AWS credentials"
+    return (
+        f"Correlated exposure path: {source_label} '{path.action_ref}' can "
+        f"reach {role} in job '{path.job_name}'. Reachable IAM: {reachable}. "
+        f"Policy context: {path.policy_source} "
+        f"({path.match_confidence} confidence)."
+    )
