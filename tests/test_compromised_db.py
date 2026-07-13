@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from argparse import ArgumentTypeError
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -26,6 +27,7 @@ from actionscope.compromised_db import (
     update_compromised_actions_cache,
     write_cache_atomic,
 )
+from scripts.update_compromised_db import _positive_int
 
 NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
 MALICIOUS_SHA = "0e58ed867288e6711d10da9293b8db84f3f3ed85"
@@ -224,6 +226,65 @@ def test_openssf_missing_feed_is_cleanly_unavailable(
     assert available is False
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "http://api.github.com/advisories",
+        "https://example.com/advisories",
+        "https://api.github.com:444/advisories",
+    ],
+)
+def test_request_json_rejects_untrusted_urls(url: str) -> None:
+    with pytest.raises(compromised_db.CompromisedDatabaseError):
+        compromised_db._request_json(url, None)
+
+
+def test_openssf_direct_records_respect_record_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = "https://api.github.com/root"
+    children = [
+        "https://api.github.com/record-one",
+        "https://api.github.com/record-two",
+    ]
+
+    def fake_request(url: str, _token: str | None):
+        if url == root:
+            return [{"type": "dir", "url": child} for child in children], {}
+        return {"id": url}, {}
+
+    monkeypatch.setattr(compromised_db, "MAX_OPENSSF_RECORDS", 1)
+    monkeypatch.setattr(compromised_db, "_request_json", fake_request)
+
+    with pytest.raises(compromised_db.CompromisedDatabaseError, match="records"):
+        compromised_db._fetch_openssf_records(root, None)
+
+
+def test_openssf_traversal_respects_request_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = "https://api.github.com/root"
+    children = [
+        "https://api.github.com/record-one",
+        "https://api.github.com/record-two",
+    ]
+    calls: list[str] = []
+
+    def fake_request(url: str, _token: str | None):
+        calls.append(url)
+        if url == root:
+            return [{"type": "dir", "url": child} for child in children], {}
+        return {"id": url}, {}
+
+    monkeypatch.setattr(compromised_db, "MAX_OPENSSF_REQUESTS", 2)
+    monkeypatch.setattr(compromised_db, "_request_json", fake_request)
+
+    with pytest.raises(compromised_db.CompromisedDatabaseError, match="requests"):
+        compromised_db._fetch_openssf_records(root, None)
+    assert len(calls) == 2
+
+
 def test_merge_preserves_all_mutable_refs_and_known_bad_sha() -> None:
     bundled = {
         "schema_version": "1",
@@ -245,6 +306,28 @@ def test_merge_preserves_all_mutable_refs_and_known_bad_sha() -> None:
     assert entry["affected_refs"] == []
     assert entry["malicious_shas"] == [MALICIOUS_SHA]
     assert merged["cache_metadata"]["ttl_seconds"] == 86400
+
+
+def test_merge_compromise_date_uses_actual_timestamp_order() -> None:
+    bundled_entry = _entry()
+    bundled_entry["compromised_at"] = "2026-07-01T01:00:00+02:00"
+    remote_entry = _entry()
+    remote_entry["compromised_at"] = "2026-07-01T00:30:00Z"
+
+    merged = merge_action_databases(
+        {
+            "schema_version": "1",
+            "updated_at": "2026-01-01",
+            "source": "test",
+            "actions": [bundled_entry],
+        },
+        [remote_entry],
+        fetched_at=NOW,
+        ttl_hours=24,
+        source_status={"test": "ok"},
+    )
+
+    assert merged["actions"][0]["compromised_at"] == "2026-06-30T23:00:00Z"
 
 
 def test_write_cache_is_atomic_and_leaves_no_temp_file(tmp_path: Path) -> None:
@@ -308,6 +391,36 @@ def test_updater_keeps_existing_data_when_all_sources_fail(
     assert not cache_file.exists()
 
 
+def test_updater_reports_cache_write_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        compromised_db,
+        "fetch_ghsa_actions",
+        lambda _token=None: [_entry()],
+    )
+    monkeypatch.setattr(
+        compromised_db,
+        "fetch_openssf_actions",
+        lambda _token=None: ([], False),
+    )
+
+    def fail_write(_data: dict, _path: Path) -> None:
+        raise PermissionError("read-only cache directory")
+
+    monkeypatch.setattr(compromised_db, "write_cache_atomic", fail_write)
+
+    result = update_compromised_actions_cache(
+        cache_file=tmp_path / "cache.json",
+        now=NOW,
+    )
+
+    assert result.wrote_cache is False
+    assert result.remote_action_count == 0
+    assert any("Cache write failed" in warning for warning in result.warnings)
+
+
 def test_update_db_cli_reports_written_cache(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -329,6 +442,45 @@ def test_update_db_cli_reports_written_cache(
 
     assert result.exit_code == 0
     assert "Wrote 5 compromised-action entries" in result.output
+
+
+def test_update_db_cli_exits_nonzero_when_no_cache_is_written(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_file = tmp_path / "cache.json"
+    monkeypatch.setattr(
+        compromised_db,
+        "update_compromised_actions_cache",
+        lambda **_kwargs: DatabaseUpdateResult(
+            cache_file=cache_file,
+            action_count=4,
+            remote_action_count=0,
+            wrote_cache=False,
+            source_status={"github_advisories": "error"},
+            warnings=["GitHub advisory update failed: offline"],
+        ),
+    )
+
+    result = CliRunner().invoke(main, ["update-db", "--cache-file", str(cache_file)])
+
+    assert result.exit_code == 1
+    assert "No cache was written" in result.output
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_update_script_ttl_must_be_positive(value: str) -> None:
+    with pytest.raises(ArgumentTypeError):
+        _positive_int(value)
+
+
+def test_action_offline_mode_skips_pin_resolution() -> None:
+    action = (Path(__file__).parents[1] / "action.yml").read_text(encoding="utf-8")
+
+    assert "resolve-pins was skipped because offline mode" in action
+    assert action.index('if [ "${{ inputs.offline }}" = "true" ]') < action.index(
+        'elif [ "${{ inputs.resolve-pins }}" = "true" ]'
+    )
 
 
 @pytest.mark.parametrize("network_flag", ["--aws-verify", "--resolve-pins"])

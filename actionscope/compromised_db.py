@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from actionscope import __version__
@@ -32,6 +32,8 @@ OPENSSF_CONTENTS_URLS = (
 )
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_OPENSSF_RECORDS = 1_000
+MAX_OPENSSF_REQUESTS = 2_500
+ALLOWED_REMOTE_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 _ACTION_NAME_RE = re.compile(
     r"^[A-Za-z0-9](?:[-_.A-Za-z0-9]*[A-Za-z0-9])?"
@@ -409,7 +411,18 @@ def update_compromised_actions_cache(
         ttl_hours=ttl_hours,
         source_status=source_status,
     )
-    write_cache_atomic(merged, path)
+    try:
+        write_cache_atomic(merged, path)
+    except OSError as exc:
+        warnings.append(f"Cache write failed: {_network_error_detail(exc)}")
+        return DatabaseUpdateResult(
+            cache_file=path,
+            action_count=len(bundled.get("actions", [])),
+            remote_action_count=0,
+            wrote_cache=False,
+            source_status=source_status,
+            warnings=warnings,
+        )
     return DatabaseUpdateResult(
         cache_file=path,
         action_count=len(merged["actions"]),
@@ -426,6 +439,7 @@ def _request_json(
     url: str,
     github_token: str | None,
 ) -> tuple[Any, dict[str, str]]:
+    _validate_remote_url(url)
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": f"ActionScope/{__version__}",
@@ -454,14 +468,32 @@ def _fetch_openssf_records(
     records: list[dict] = []
     pending = [root_url]
     visited: set[str] = set()
+    request_count = 0
+
+    def fetch(url: str, token: str | None) -> tuple[Any, dict[str, str]]:
+        nonlocal request_count
+        if request_count >= MAX_OPENSSF_REQUESTS:
+            raise CompromisedDatabaseError(
+                f"OpenSSF traversal exceeds {MAX_OPENSSF_REQUESTS} requests"
+            )
+        request_count += 1
+        return _request_json(url, token)
+
+    def append_record(record: dict) -> None:
+        records.append(record)
+        if len(records) > MAX_OPENSSF_RECORDS:
+            raise CompromisedDatabaseError(
+                f"OpenSSF feed exceeds {MAX_OPENSSF_RECORDS} records"
+            )
+
     while pending:
         url = pending.pop()
         if url in visited:
             continue
         visited.add(url)
-        payload, _headers = _request_json(url, github_token)
+        payload, _headers = fetch(url, github_token)
         if isinstance(payload, dict) and "id" in payload:
-            records.append(payload)
+            append_record(payload)
             continue
         if not isinstance(payload, list):
             raise CompromisedDatabaseError(
@@ -472,19 +504,17 @@ def _fetch_openssf_records(
                 continue
             item_type = item.get("type")
             if item_type == "dir" and isinstance(item.get("url"), str):
+                _validate_remote_url(item["url"])
                 pending.append(item["url"])
             elif (
                 item_type == "file"
                 and str(item.get("name", "")).endswith(".json")
                 and isinstance(item.get("download_url"), str)
             ):
-                record, _headers = _request_json(item["download_url"], None)
+                _validate_remote_url(item["download_url"])
+                record, _headers = fetch(item["download_url"], None)
                 if isinstance(record, dict):
-                    records.append(record)
-            if len(records) > MAX_OPENSSF_RECORDS:
-                raise CompromisedDatabaseError(
-                    f"OpenSSF feed exceeds {MAX_OPENSSF_RECORDS} records"
-                )
+                    append_record(record)
     return records
 
 
@@ -534,10 +564,27 @@ def _merge_entry(existing: dict, incoming: dict) -> None:
             if str(item)
         }
     )
-    existing["compromised_at"] = min(
-        str(existing.get("compromised_at") or incoming.get("compromised_at")),
-        str(incoming.get("compromised_at") or existing.get("compromised_at")),
-    )
+    parsed_times = [
+        value
+        for value in (
+            _parse_timestamp(existing.get("compromised_at")),
+            _parse_timestamp(incoming.get("compromised_at")),
+        )
+        if value is not None
+    ]
+    if parsed_times:
+        existing["compromised_at"] = _format_timestamp(min(parsed_times))
+    else:
+        raw_times = [
+            str(value)
+            for value in (
+                existing.get("compromised_at"),
+                incoming.get("compromised_at"),
+            )
+            if value
+        ]
+        if raw_times:
+            existing["compromised_at"] = min(raw_times)
     if incoming.get("status") == "compromised":
         existing["status"] = "compromised"
     if not existing.get("advisory_url") and incoming.get("advisory_url"):
@@ -566,6 +613,23 @@ def _is_actions_ecosystem(value: object) -> bool:
         return False
     normalized = re.sub(r"[\s_-]", "", value).lower()
     return normalized in {"actions", "githubaction", "githubactions"}
+
+
+def _validate_remote_url(url: str) -> None:
+    """Allow only HTTPS GitHub API and raw-content URLs used by the feeds."""
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise CompromisedDatabaseError(f"refusing malformed remote URL: {url}") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in ALLOWED_REMOTE_HOSTS
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise CompromisedDatabaseError(f"refusing untrusted remote URL: {url}")
 
 
 def _valid_shas(values: object) -> list[str]:

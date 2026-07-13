@@ -113,11 +113,13 @@ runs:
         if [ "${{ inputs.save-state }}" = "true" ]; then
           SCAN_FLAGS="$SCAN_FLAGS --save-state"
         fi
-        if [ "${{ inputs.resolve-pins }}" = "true" ]; then
-          SCAN_FLAGS="$SCAN_FLAGS --resolve-pins"
-        fi
         if [ "${{ inputs.offline }}" = "true" ]; then
           SCAN_FLAGS="$SCAN_FLAGS --offline"
+          if [ "${{ inputs.resolve-pins }}" = "true" ]; then
+            echo "::warning::ActionScope: resolve-pins was skipped because offline mode disables GitHub API calls."
+          fi
+        elif [ "${{ inputs.resolve-pins }}" = "true" ]; then
+          SCAN_FLAGS="$SCAN_FLAGS --resolve-pins"
         fi
 
         actionscope scan ${{ inputs.path }} \

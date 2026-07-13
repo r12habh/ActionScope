@@ -394,7 +394,7 @@ def update_db(
             "cache or bundled database.",
             err=True,
         )
-        return
+        raise click.exceptions.Exit(1)
 
     click.echo(
         f"Wrote {result.action_count} compromised-action entries to "

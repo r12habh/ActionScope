@@ -9,10 +9,17 @@ import os
 from actionscope.compromised_db import update_compromised_actions_cache
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache-file")
-    parser.add_argument("--ttl-hours", type=int, default=24)
+    parser.add_argument("--ttl-hours", type=_positive_int, default=24)
     args = parser.parse_args()
 
     result = update_compromised_actions_cache(
@@ -28,6 +35,7 @@ def main() -> None:
         print(f"Wrote {result.action_count} entries to {result.cache_file}")
     else:
         print("No cache written; the existing cache or bundled data remains active.")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
