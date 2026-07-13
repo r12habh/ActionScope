@@ -321,8 +321,20 @@ def test_reusable_workflow_provenance_is_in_json_and_markdown() -> None:
 
     assert data["summary"]["reusable_workflows"] == 1
     assert data["summary"]["uninspected_reusable_workflows"] == 1
+    assert data["reusable_workflows"][0]["caller_workflow"] == (
+        ".github/workflows/caller.yml"
+    )
     assert data["reusable_workflows"][0]["caller_job"] == "deploy"
+    assert data["reusable_workflows"][0]["pin_type"] == "tag"
+    assert data["reusable_workflows"][0]["depth"] == 1
     assert "### Reusable Workflows" in markdown
+    assert "caller.yml" in markdown
+    assert "deploy" in markdown
     assert "acme/platform/.github/workflows/deploy.yml@v1" in markdown
+    assert "| tag | 1 | no token |" in markdown
     assert "no token" in markdown
     assert "### Reusable Workflows" in rendered
+    assert "caller.yml" in rendered
+    assert "deploy" in rendered
+    assert "acme/platform/.github/workflows/deploy.yml@v1" in rendered
+    assert "| tag | 1 | no token |" in rendered

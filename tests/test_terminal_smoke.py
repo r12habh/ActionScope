@@ -45,8 +45,38 @@ def test_render_scan_result_shows_reusable_workflow_status() -> None:
 
     output = buffer.getvalue()
     assert "Reusable Workflows (1 call(s))" in output
+    assert "caller.yml" in output
+    assert "deploy" in output
     assert "acme/platform/.github/workflows/deploy.yml@v1" in output
+    assert "Pin: tag" in output
+    assert "Depth: 1" in output
     assert "no token" in output
+
+
+def test_render_scan_result_escapes_reusable_workflow_markup() -> None:
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=False, width=120)
+    reference = ReusableWorkflowReference(
+        caller_workflow=".github/workflows/[red]caller.yml",
+        caller_job="[bold]deploy[/bold]",
+        uses="acme/platform/.github/workflows/[blue]deploy[/blue].yml@v1",
+        target_workflow="acme/platform/.github/workflows/deploy.yml@v1",
+        repository="acme/platform",
+        ref="v1",
+        pin_type="tag",
+        is_local=False,
+        status="fetch_error",
+        depth=1,
+        error="[yellow]API error[/yellow]",
+    )
+
+    render_scan_result(ScanResult(reusable_workflows=[reference]), console)
+
+    output = buffer.getvalue()
+    assert "[red]caller.yml" in output
+    assert "[bold]deploy[/bold]" in output
+    assert "[blue]deploy[/blue].yml@v1" in output
+    assert "[yellow]API error[/yellow]" in output
 
 
 def test_render_scan_result_smoke_full_scan_result() -> None:

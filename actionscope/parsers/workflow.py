@@ -456,13 +456,9 @@ def _parse_delegated_yaml(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _is_local_reusable_workflow_reference(uses_ref: str) -> bool:
-    return uses_ref.startswith("./.github/workflows/")
-
-
 def _is_local_action_reference(uses_ref: str) -> bool:
-    return uses_ref.startswith("./") and not _is_local_reusable_workflow_reference(
-        uses_ref
+    return uses_ref.startswith("./") and not uses_ref.startswith(
+        "./.github/workflows/"
     )
 
 

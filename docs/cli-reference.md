@@ -59,7 +59,8 @@ actionscope scan . --fail-on high
 # Compare with the previous scan
 actionscope scan . --load-state --save-state
 
-# Inspect external reusable workflows referenced by jobs.<id>.uses
+# Inspect external reusable workflows referenced by jobs.<id>.uses.
+# This example assumes GITHUB_TOKEN is already configured in the environment.
 actionscope scan . --github-token "$GITHUB_TOKEN"
 ```
 

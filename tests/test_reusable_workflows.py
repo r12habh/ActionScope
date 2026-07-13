@@ -437,16 +437,29 @@ def test_fetch_error_is_reported_without_crashing(
     assert "Could not inspect reusable workflow" in result.errors[0]
 
 
-def test_dynamic_external_reference_is_not_fetched(tmp_path: Path) -> None:
+@patch(
+    "actionscope.analyzers.reusable_workflows._fetch_external_workflow"
+)
+def test_dynamic_external_reference_is_not_fetched(
+    fetch_workflow,
+    tmp_path: Path,
+) -> None:
     _external_caller(tmp_path, ref="${{ inputs.ref }}")
 
     result = scan_reusable_workflows(str(tmp_path), github_token="token")
 
     assert result.references[0].status == "invalid_reference"
     assert "dynamic" in str(result.references[0].error)
+    fetch_workflow.assert_not_called()
 
 
-def test_external_reference_rejects_path_traversal(tmp_path: Path) -> None:
+@patch(
+    "actionscope.analyzers.reusable_workflows._fetch_external_workflow"
+)
+def test_external_reference_rejects_path_traversal(
+    fetch_workflow,
+    tmp_path: Path,
+) -> None:
     _write_workflow(
         tmp_path,
         "caller.yml",
@@ -454,7 +467,7 @@ def test_external_reference_rejects_path_traversal(tmp_path: Path) -> None:
 on: push
 jobs:
   deploy:
-    uses: ../..//.github/workflows/deploy.yml@v1
+    uses: acme/platform/.github/workflows/../../private.yml@v1
 """,
     )
 
@@ -462,6 +475,7 @@ jobs:
 
     assert result.references[0].status == "invalid_reference"
     assert "must use owner/repo" in str(result.references[0].error)
+    fetch_workflow.assert_not_called()
 
 
 def test_local_reference_rejects_workflow_directory_traversal(

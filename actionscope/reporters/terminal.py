@@ -7,6 +7,7 @@ from typing import Optional
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -391,7 +392,9 @@ def _render_reusable_workflows_section(
     )
     c.print()
     for reference in references[:20]:
-        caller = _workflow_basename(reference.caller_workflow)
+        caller = escape(_workflow_basename(reference.caller_workflow))
+        caller_job = escape(reference.caller_job)
+        uses = escape(reference.uses)
         status_icon, status_style = {
             "inspected": ("✓", "green"),
             "cycle": ("↻", "dim"),
@@ -399,7 +402,7 @@ def _render_reusable_workflows_section(
         }.get(reference.status, ("⚠", "yellow"))
         c.print(
             f"[{status_style}]{status_icon}[/] [bold]{caller}[/] → "
-            f"{reference.caller_job} → {reference.uses}"
+            f"{caller_job} → {uses}"
         )
         c.print(
             f"   Status: {reference.status.replace('_', ' ')} | "
@@ -411,10 +414,10 @@ def _render_reusable_workflows_section(
         ):
             c.print(
                 "   Root caller: "
-                f"{_workflow_basename(reference.root_workflow)}"
+                f"{escape(_workflow_basename(reference.root_workflow))}"
             )
         if reference.error:
-            c.print(f"   [dim]{reference.error}[/]")
+            c.print(f"   [dim]{escape(reference.error)}[/]")
 
     remaining = len(references) - 20
     if remaining > 0:
@@ -819,12 +822,15 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 f"[bold]Reusable Workflows ({len(reusable)} call(s))[/]"
             )
             for reference in reusable[:20]:
-                caller = _workflow_basename(
-                    str(reference.get("caller_workflow", ""))
+                caller = escape(
+                    _workflow_basename(
+                        str(reference.get("caller_workflow", ""))
+                    )
                 )
+                caller_job = escape(str(reference.get("caller_job", "")))
+                uses = escape(str(reference.get("uses", "")))
                 c.print(
-                    f"{caller} → {reference.get('caller_job', '')} → "
-                    f"{reference.get('uses', '')}"
+                    f"{caller} → {caller_job} → {uses}"
                 )
                 c.print(
                     f"   Status: {reference.get('status', 'unknown')} | "
@@ -835,10 +841,10 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 if root_workflow and root_workflow != caller_workflow:
                     c.print(
                         "   Root caller: "
-                        f"{_workflow_basename(root_workflow)}"
+                        f"{escape(_workflow_basename(root_workflow))}"
                     )
                 if reference.get("error"):
-                    c.print(f"   {reference.get('error')}")
+                    c.print(f"   {escape(str(reference.get('error')))}")
 
         compromised = data.get("compromised_action_findings", [])
         if compromised:
