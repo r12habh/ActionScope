@@ -9,6 +9,7 @@ from actionscope.analyzers.oidc_trust import (
     analyze_json_oidc_trust,
     analyze_oidc_trust_conditions,
     analyze_terraform_oidc_trust,
+    extract_github_oidc_statements,
     is_github_oidc_trust,
     scan_oidc_trust_policies,
 )
@@ -372,6 +373,30 @@ def test_non_web_identity_action_is_not_treated_as_oidc_trust() -> None:
     assert analyze_json_oidc_trust(policy, "iam.tf") == []
 
 
+def test_notaction_that_keeps_web_identity_is_analyzed() -> None:
+    for key in ("NotAction", "notAction"):
+        policy = _trust_policy("repo:acme/*")
+        statement = policy["Statement"][0]
+        statement.pop("Action")
+        statement[key] = "sts:AssumeRole"
+
+        extracted = extract_github_oidc_statements(policy)
+        findings = analyze_json_oidc_trust(policy, "iam.tf")
+
+        assert extracted == [statement]
+        assert any(finding.issue_id == "wildcard_repo" for finding in findings)
+
+
+def test_notaction_that_excludes_web_identity_is_not_analyzed() -> None:
+    policy = _trust_policy("repo:acme/*")
+    statement = policy["Statement"][0]
+    statement.pop("Action")
+    statement["NotAction"] = ["sts:AssumeRoleWithWebIdentity", "sts:TagSession"]
+
+    assert extract_github_oidc_statements(policy) == []
+    assert analyze_json_oidc_trust(policy, "iam.tf") == []
+
+
 def test_repo_star_subject_is_critical() -> None:
     findings = analyze_json_oidc_trust(_trust_policy("repo:*"), "iam.tf")
 
@@ -413,6 +438,15 @@ def test_branch_wildcard_is_high() -> None:
 def test_environment_wildcard_is_high() -> None:
     findings = analyze_json_oidc_trust(
         _trust_policy("repo:acme/app:environment:*"),
+        "iam.tf",
+    )
+
+    assert [finding.issue_id for finding in findings] == ["broad_subject"]
+
+
+def test_partial_environment_wildcard_is_high() -> None:
+    findings = analyze_json_oidc_trust(
+        _trust_policy("repo:acme/app:environment:prod-*"),
         "iam.tf",
     )
 

@@ -16,7 +16,8 @@ All notable changes to ActionScope are documented here.
 ### Fixed
 - GitHub OIDC `Deny` statements and statements that do not grant
   `sts:AssumeRoleWithWebIdentity` are no longer treated as role-assumption
-  trust grants.
+  trust grants. `Allow` statements expressed with `NotAction` are analyzed when
+  they still permit web-identity role assumption.
 
 ## [0.3.6] - 2026-06-24
 

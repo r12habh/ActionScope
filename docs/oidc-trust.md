@@ -70,14 +70,16 @@ ActionScope also catches broader variants that are easy to overlook:
     "token.actions.githubusercontent.com:sub": [
       "repo:*",
       "repo:acme-corp/api:*",
-      "repo:acme-corp/api:ref:refs/heads/*"
+      "repo:acme-corp/api:ref:refs/heads/*",
+      "repo:acme-corp/api:environment:prod-*"
     ]
   }
 }
 ```
 
-The first pattern crosses repository and organization boundaries. The latter
-two stay within one repository but allow every workflow context or branch.
+The first pattern crosses repository and organization boundaries. The others
+stay within one repository but allow every workflow context, every branch, or
+multiple environments that may not share the same protection rules.
 
 ## `ForAllValues` on Single-Valued Claims
 

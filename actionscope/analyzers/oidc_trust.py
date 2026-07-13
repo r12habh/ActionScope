@@ -284,10 +284,22 @@ def _is_allow_statement(statement: dict) -> bool:
 def _allows_web_identity_assumption(statement: dict) -> bool:
     if not _is_allow_statement(statement):
         return False
-    actions = statement.get("Action") or statement.get("action")
     target = "sts:assumerolewithwebidentity"
-    return any(
-        fnmatchcase(target, action.lower()) for action in _string_values(actions)
+    actions = statement.get("Action")
+    if actions is None:
+        actions = statement.get("action")
+    if actions is not None:
+        return any(
+            fnmatchcase(target, action.lower()) for action in _string_values(actions)
+        )
+
+    not_actions = statement.get("NotAction")
+    if not_actions is None:
+        not_actions = statement.get("notAction", statement.get("notaction"))
+    if not_actions is None:
+        return False
+    return not any(
+        fnmatchcase(target, action.lower()) for action in _string_values(not_actions)
     )
 
 
@@ -374,7 +386,10 @@ def _is_broad_repo_context_subject(sub_value: str) -> bool:
         return True
     for prefix in ("ref:refs/heads/", "ref:refs/tags/", "environment:"):
         if normalized.startswith(prefix):
-            return normalized.removeprefix(prefix) in {"*", "?", "**"}
+            remainder = normalized.removeprefix(prefix)
+            if prefix == "environment:":
+                return any(char in remainder for char in "*?")
+            return remainder in {"*", "?", "**"}
     return False
 
 
