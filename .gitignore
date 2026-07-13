@@ -11,9 +11,20 @@ dist/
 .coverage
 htmlcov/
 .actionscope/
+.codex/
 
 # Unpublished research artifacts — see research/methodology.md "Publication Status".
 research/paper/
+research/_archive_paper_may2026/
+research/scored2026/
+
+# Belt-and-suspenders: never commit un-anonymized evaluation working data,
+# even if a parent dir is later un-ignored or files are moved. Private rerun
+# outputs retain real third-party repo names, AWS account IDs, and role ARNs.
+*_private/
+**/*_private/
+*private*.csv
+**/clones/
 
 # mkdocs build output
 site/
