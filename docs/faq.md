@@ -120,22 +120,24 @@ Full reference at [AWS Verification Permissions](aws-verify-permissions.md).
 
 ## Is ActionScope safe to run? Does it make network calls?
 
-**Static analysis (the default) makes zero network calls.** ActionScope
-reads files from your local filesystem, parses YAML and HCL/JSON,
-correlates them in memory, and writes output. No telemetry, no remote
-service, no analytics — none of it. You can run it on an air-gapped
-machine.
+The local parsers make no network calls and ActionScope has no telemetry. If a
+`GITHUB_TOKEN` is supplied, however, a scan can inspect referenced external
+reusable workflows. Use `actionscope scan . --offline` when you need a hard
+guarantee that ambient GitHub or AWS credentials cannot trigger scan-time API
+calls.
 
-There are exactly three flags that change this:
+These features use the network:
 
 | Flag | What it does | Network calls |
 |---|---|---|
 | `--aws-verify` | Fetches live IAM policies from AWS | Only AWS IAM API, read-only |
 | `--resolve-pins` | Looks up current SHA for unpinned action refs | Only GitHub API (uses `GITHUB_TOKEN` env var if set, otherwise unauthenticated) |
+| `--github-token` or `$GITHUB_TOKEN` | Inspects external reusable workflow YAML | Only GitHub repository contents API |
+| `actionscope update-db` | Refreshes the local compromised-action cache | GitHub advisory and repository APIs |
 | (GitHub Action) `comment-pr: true` | Posts a comment on the PR | Only GitHub API for the comment |
 
-If you're scanning a sensitive repo and want to be extra cautious, run
-without any of those flags. The default mode never leaves your machine.
+`--offline` cannot be combined with `--aws-verify` or `--resolve-pins`; it also
+prevents external reusable-workflow fetches even if `GITHUB_TOKEN` is set.
 
 ActionScope is open-source under MIT. The full source for what runs on
 your machine is in
@@ -151,7 +153,7 @@ supply-chain compromise becomes public, the typical update cadence is
 **within 24-48 hours of the advisory being published**, via a patch
 release (e.g. `0.3.1`).
 
-To stay current:
+To update the package and bundled database:
 
 ```bash
 pip install --upgrade actionscope
@@ -159,15 +161,20 @@ pip install --upgrade actionscope
 
 The CHANGELOG entry for each release lists added compromise entries.
 
+To refresh advisory intelligence between package releases:
+
+```bash
+actionscope update-db
+```
+
+This writes a merged cache to
+`~/.actionscope/compromised_actions_cache.json`. The cache is valid for 24
+hours by default. Scans read it locally and never refresh it in the background.
+
 You can also see the current full list at
 [Compromised Actions Database](compromised-actions-database.md), which
 is auto-generated from the bundled JSON on every docs deploy — so the
 site always reflects the latest released version.
-
-A future `actionscope update-db` subcommand
-([issue #25](https://github.com/r12habh/ActionScope/issues/25)) will
-fetch updates between releases from a curated upstream feed, with a
-local cache and `--offline` fallback.
 
 **Found a compromise that isn't in the database?** Please open a
 [Report Compromised Action](https://github.com/r12habh/ActionScope/issues/new?template=compromised_action_report.yml)

@@ -147,10 +147,17 @@ def test_no_duplicate_action_entries() -> None:
     assert not duplicates, f"duplicate action entries: {duplicates}"
 
 
-def test_loader_round_trip_matches_file() -> None:
+def test_loader_round_trip_matches_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     """The analyzer's loader must return the same data the file holds."""
     from actionscope.analyzers.compromised_actions import load_compromised_actions
 
+    monkeypatch.setenv(
+        "ACTIONSCOPE_COMPROMISED_DB_CACHE",
+        str(tmp_path / "does-not-exist.json"),
+    )
     loaded = load_compromised_actions()
     on_disk = _load()
     assert loaded == on_disk

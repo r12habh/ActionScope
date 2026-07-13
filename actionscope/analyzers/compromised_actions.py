@@ -13,21 +13,24 @@ from pathlib import Path
 
 import yaml
 
+from actionscope.compromised_db import (
+    BUNDLED_DB_FILE,
+    load_best_database,
+)
 from actionscope.models import CompromisedActionFinding, RiskLevel
 from actionscope.parsers.workflow import GitHubWorkflowLoader
 
-DATA_FILE = Path(__file__).parent.parent / "data" / "compromised_actions.json"
-_DB_CACHE: dict | None = None
+DATA_FILE = BUNDLED_DB_FILE
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 
 
-def load_compromised_actions() -> dict:
-    """Load and cache the compromised actions database."""
-    global _DB_CACHE
-    if _DB_CACHE is None:
-        with DATA_FILE.open("r", encoding="utf-8") as handle:
-            _DB_CACHE = json.load(handle)
-    return _DB_CACHE
+def load_compromised_actions(
+    *,
+    cache_file: str | Path | None = None,
+    offline: bool = False,
+) -> dict:
+    """Load the best local database without making network calls."""
+    return load_best_database(cache_file, offline=offline)
 
 
 def is_compromised_ref(
@@ -132,12 +135,15 @@ def check_workflow_for_compromised_actions(
 
 def scan_for_compromised_actions(
     repo_path: str,
+    *,
+    offline: bool = False,
+    cache_file: str | Path | None = None,
 ) -> tuple[list[CompromisedActionFinding], list[str]]:
     """Scan workflow files for known-compromised action references."""
     findings: list[CompromisedActionFinding] = []
     errors: list[str] = []
     try:
-        db = load_compromised_actions()
+        db = load_compromised_actions(cache_file=cache_file, offline=offline)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         return [], [f"Could not load compromised actions database {DATA_FILE}: {exc}"]
 

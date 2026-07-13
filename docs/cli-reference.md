@@ -40,6 +40,7 @@ actionscope scan tests/fixtures/demo_repo --output-format json
 | `--state-file` | none | `.actionscope/last_scan.json` | Custom path for state save/load. | `actionscope scan . --save-state --state-file /tmp/state.json` |
 | `--resolve-pins` | none | `False` | Resolve unpinned GitHub Action tags to current commit SHAs via GitHub API. | `actionscope scan . --resolve-pins` |
 | `--github-token` | none | `$GITHUB_TOKEN` | GitHub token used for pin resolution and authenticated inspection of external reusable workflows. | `actionscope scan . --github-token "$GITHUB_TOKEN"` |
+| `--offline` | none | `False` | Disable all scan-time network calls. Cannot be combined with `--aws-verify` or `--resolve-pins`. | `actionscope scan . --offline` |
 
 ### Common Scan Examples
 
@@ -62,7 +63,32 @@ actionscope scan . --load-state --save-state
 # Inspect external reusable workflows referenced by jobs.<id>.uses.
 # This example assumes GITHUB_TOKEN is already configured in the environment.
 actionscope scan . --github-token "$GITHUB_TOKEN"
+
+# Guarantee that ambient credentials cannot trigger API calls
+actionscope scan . --offline
 ```
+
+## `actionscope update-db [OPTIONS]`
+
+Fetch GitHub Actions malware advisories and write a merged local cache. This is
+the only command that refreshes advisory data; normal scans never update it in
+the background.
+
+```bash
+actionscope update-db
+actionscope update-db --ttl-hours 12
+```
+
+The updater always preserves the bundled curated entries. GitHub's global
+malware advisory endpoint is the primary feed. The OpenSSF malicious-packages
+repository is probed conditionally and skipped cleanly while it has no stable
+GitHub Actions feed.
+
+| Flag | Default | Description | Example |
+|------|---------|-------------|---------|
+| `--github-token` | `$GITHUB_TOKEN` | Token for higher GitHub API rate limits. | `actionscope update-db --github-token "$GITHUB_TOKEN"` |
+| `--cache-file` | `~/.actionscope/compromised_actions_cache.json` | Override the local cache path. | `actionscope update-db --cache-file /tmp/actions.json` |
+| `--ttl-hours` | `24` | Number of hours the cache remains fresh. | `actionscope update-db --ttl-hours 12` |
 
 ## `actionscope report [JSON_FILE] [OPTIONS]`
 
@@ -93,7 +119,6 @@ the current release:
 
 | Command | Status | Tracking issue |
 |---------|--------|----------------|
-| `actionscope update-db` | Planned | GitHub issue: auto-update compromised actions database |
 | `actionscope trend` | Planned | GitHub issue: historical risk tracking and trend reporting |
 | `actionscope pin` | Not implemented; current support is `scan --resolve-pins` | GitHub issue: auto-pin resolver follow-ups |
 
@@ -110,4 +135,5 @@ the current release:
 | Variable | Used by | Description |
 |----------|---------|-------------|
 | `GITHUB_TOKEN` | `--resolve-pins`, reusable workflow inspection | Authenticates GitHub API calls for tag resolution and access to external reusable workflow YAML. |
+| `ACTIONSCOPE_COMPROMISED_DB_CACHE` | `scan`, `update-db` | Override the compromised-action cache path. Primarily useful for CI and tests. |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, AWS profile variables | `--aws-verify` | Standard AWS SDK credential sources used by boto3. |

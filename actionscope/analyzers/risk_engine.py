@@ -196,6 +196,7 @@ def build_scan_result(
     unpinned_actions: list[UnpinnedActionFinding] | list[str] | None = None,
     errors: list[str] | None = None,
     reusable_scan: ReusableWorkflowScan | None = None,
+    offline: bool = False,
 ) -> ScanResult:
     """Build the final correlated scan result."""
     if errors is None:
@@ -226,9 +227,14 @@ def build_scan_result(
         credential_sources,
         github_token_perms,
     )
-    compromised_action_findings, compromised_errors = _safe_scan_compromised_actions(
-        repo_path
-    )
+    if offline:
+        compromised_action_findings, compromised_errors = (
+            _safe_scan_compromised_actions(repo_path, offline=True)
+        )
+    else:
+        compromised_action_findings, compromised_errors = (
+            _safe_scan_compromised_actions(repo_path)
+        )
     environment_findings, environment_errors = _safe_scan_environments(
         repo_path,
         credential_sources,
@@ -421,9 +427,11 @@ def _safe_scan_ai_agent_injection(
 
 def _safe_scan_compromised_actions(
     repo_path: str,
+    *,
+    offline: bool = False,
 ) -> tuple[list[CompromisedActionFinding], list[str]]:
     try:
-        return scan_for_compromised_actions(repo_path)
+        return scan_for_compromised_actions(repo_path, offline=offline)
     except Exception as exc:
         return [], [_scan_error("compromised actions scan", exc)]
 

@@ -27,9 +27,8 @@ a CRITICAL finding:
 ```
 
 SHA-pinned references are treated separately because a full 40-character SHA is
-immutable. If an action is known-compromised but pinned to an unknown SHA,
-ActionScope flags it as high risk so a human can verify whether the pinned
-commit is safe.
+immutable. ActionScope reports a SHA pin only when that exact commit is listed
+in `malicious_shas`; a different full SHA is not vulnerable to tag redirection.
 
 ## Current Database Entries
 
@@ -48,12 +47,26 @@ actionscope/data/compromised_actions.json
 
 ## How the Database Is Maintained
 
-The database is updated with ActionScope releases. Each entry should include:
+The curated database is updated with ActionScope releases. Between releases,
+refresh a local cache explicitly:
+
+```bash
+actionscope update-db
+```
+
+The cache merges the bundled entries with GitHub's global malware advisories,
+lives at `~/.actionscope/compromised_actions_cache.json`, and is fresh for 24
+hours by default. Normal scans never make a background update request. A fresh
+cache is preferred over bundled data; `scan --offline` may use a stale cache
+because it can still contain newer intelligence than the installed release.
+
+Each entry includes:
 
 - action name in `owner/repo` form
 - compromise timestamp
 - advisory URL
 - affected refs, if known
+- exact known-malicious SHAs, if confirmed
 - short description of the attack
 - status (`compromised` or `historical`)
 
@@ -77,9 +90,9 @@ Please include:
 
 ## External Data Sources
 
-Future versions may ingest public feeds automatically:
-
-- [GitHub Security Advisories](https://github.com/advisories)
-- [OpenSSF malicious-packages dataset](https://github.com/ossf/malicious-packages)
-- Security vendor advisories such as StepSecurity incident reports
-
+- [GitHub Security Advisories](https://github.com/advisories) is the automated
+  primary feed.
+- [OpenSSF malicious-packages](https://github.com/ossf/malicious-packages) is
+  probed conditionally; it currently has no stable GitHub Actions directory.
+- Security vendor reports such as StepSecurity advisories remain human-reviewed
+  sources for the curated bundled database rather than scraped HTML.

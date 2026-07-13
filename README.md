@@ -61,6 +61,8 @@ see exactly what and why.
 actionscope scan . --aws-verify        # fetch live IAM policies (read-only)
 actionscope scan . --resolve-pins      # suggest full-SHA pins for unpinned actions
 actionscope scan . --github-token "$GITHUB_TOKEN"  # inspect external reusable workflows
+actionscope update-db                  # refresh compromised-action advisories
+actionscope scan . --offline           # guarantee no scan-time API calls
 actionscope scan . --fail-on high      # exit 1 if any finding is HIGH or above
 actionscope scan . --output-format sarif --output-file results.sarif
 actionscope scan . --save-state        # save state for PR delta comparison
@@ -156,6 +158,8 @@ ActionScope performs **static analysis only** by default. It never sends your
 code to an external service and does not require AWS credentials unless you
 explicitly enable live AWS verification. When a GitHub token is supplied, it
 can fetch referenced external reusable workflow YAML from GitHub for analysis.
+Use `--offline` to disable every scan-time GitHub and AWS API call even when
+credentials are present in the environment.
 
 ```text
 .github/workflows/*.yml
@@ -171,7 +175,7 @@ policies/**/*.json                              + PR Comment
 5. Classify IAM actions using the `policy-sentry` action database
 6. Correlate risky actions with AWS credentials in the same job
 7. Detect privilege escalation paths
-8. Check for known-compromised actions in the bundled database
+8. Check for known-compromised actions in the bundled or local cached database
 9. Output a plain-English blast radius report
 
 ### Live AWS Verification (`--aws-verify`)
@@ -193,7 +197,13 @@ for the minimal required policy.
 ### 🚨 Known-Compromised Actions
 
 Checks workflows against a curated database of GitHub Actions with documented
-supply chain compromises. Updated with each ActionScope release.
+supply chain compromises. The bundled copy is updated with each release;
+`actionscope update-db` can refresh a 24-hour local cache between releases.
+
+```bash
+actionscope update-db
+actionscope scan . --offline  # uses local data only, including a stale cache
+```
 
 Current entries: `actions-cool/issues-helper` (2026-05-18),
 `actions-cool/maintain-one-comment` (2026-05-18),

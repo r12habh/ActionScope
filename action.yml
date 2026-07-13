@@ -27,6 +27,10 @@ inputs:
     description: 'Resolve unpinned action tags to current SHA via GitHub API'
     required: false
     default: 'false'
+  offline:
+    description: 'Disable scan-time GitHub and AWS API calls'
+    required: false
+    default: 'false'
   save-state:
     description: 'Save scan state for delta comparison in future scans'
     required: false
@@ -109,7 +113,12 @@ runs:
         if [ "${{ inputs.save-state }}" = "true" ]; then
           SCAN_FLAGS="$SCAN_FLAGS --save-state"
         fi
-        if [ "${{ inputs.resolve-pins }}" = "true" ]; then
+        if [ "${{ inputs.offline }}" = "true" ]; then
+          SCAN_FLAGS="$SCAN_FLAGS --offline"
+          if [ "${{ inputs.resolve-pins }}" = "true" ]; then
+            echo "::warning::ActionScope: resolve-pins was skipped because offline mode disables GitHub API calls."
+          fi
+        elif [ "${{ inputs.resolve-pins }}" = "true" ]; then
           SCAN_FLAGS="$SCAN_FLAGS --resolve-pins"
         fi
 
