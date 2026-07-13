@@ -201,7 +201,6 @@ def test_normalize_osv_preserves_refs_and_exact_bad_shas() -> None:
                 "versions": ["v1", MALICIOUS_SHA],
             }
         ],
-        "database_specific": {"malicious_shas": [MALICIOUS_SHA]},
         "references": [{"url": "https://example.com/advisory"}],
     }
 

@@ -247,8 +247,11 @@ def normalize_osv_records(records: list[dict]) -> list[dict]:
                 for item in versions
                 if isinstance(item, str) and item and not _FULL_SHA_RE.fullmatch(item)
             ]
-            malicious_shas = _valid_shas(
-                database_specific.get("malicious_shas") or []
+            malicious_shas = sorted(
+                set(_valid_shas(versions))
+                | set(
+                    _valid_shas(database_specific.get("malicious_shas") or [])
+                )
             )
             references = record.get("references") or []
             advisory_url = _osv_advisory_url(references)
