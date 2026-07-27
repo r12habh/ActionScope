@@ -6,12 +6,11 @@ name: Action E2E
 # download-artifact / codeql-action can introduce) only surface for real
 # users via "uses: r12habh/ActionScope@v0".
 #
-# Note: the action does `pip install actionscope` from PyPI by default, so
-# this job exercises action.yml against the *published* release. That makes
-# it a real-user-experience check for action.yml regressions, but it does
-# not test PR code changes end-to-end through the action. Combined with the
-# wheel-install job in ci.yml (which tests the CLI from a fresh wheel),
-# this gives full coverage of both delivery paths.
+# The job installs the package from the checked-out commit before invoking
+# the local composite action. The action's unversioned `pip install
+# actionscope` then keeps that installed version, so action.yml and the CLI
+# under review are exercised together rather than accidentally mixing the
+# PR's action.yml with the older PyPI release.
 
 on:
   push:
@@ -28,6 +27,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: '3.11'
+
+      - name: Install ActionScope from this commit
+        run: |
+          python -m pip install .
+          actionscope gate --help
 
       - name: Run the local action against the coverage_repo fixture
         id: scan
@@ -47,6 +56,7 @@ jobs:
         env:
           OVERALL_RISK: ${{ steps.scan.outputs.overall-risk }}
           CRED_COUNT: ${{ steps.scan.outputs.credential-sources-count }}
+          GATE_STATUS: ${{ steps.scan.outputs.gate-status }}
           FINDINGS_JSON: ${{ steps.scan.outputs.findings-json }}
         shell: bash
         run: |
@@ -63,6 +73,10 @@ jobs:
           fi
           if [ -z "${CRED_COUNT}" ] || [ "${CRED_COUNT}" -lt 2 ]; then
             echo "::error::action.yml output credential-sources-count='${CRED_COUNT}', expected integer >= 2"
+            fail=1
+          fi
+          if [ "${GATE_STATUS}" != "report_only" ]; then
+            echo "::error::action.yml gate-status='${GATE_STATUS}', expected 'report_only'"
             fail=1
           fi
           # findings-json was silently broken for the entire history of the
@@ -112,12 +126,18 @@ jobs:
         shell: bash
         env:
           OUTCOME: ${{ steps.fail_on.outcome }}
+          GATE_STATUS: ${{ steps.fail_on.outputs.gate-status }}
         run: |
           set -eu
           echo "fail-on=critical step outcome: ${OUTCOME}"
+          echo "fail-on=critical gate status: ${GATE_STATUS}"
           case "${OUTCOME}" in
             failure)
-              echo "OK: action correctly failed the step on a CRITICAL-risk fixture"
+              if [ "${GATE_STATUS}" != "failed" ]; then
+                echo "::error::step failed without a failed ActionScope gate (gate-status='${GATE_STATUS}')"
+                exit 1
+              fi
+              echo "OK: action gate correctly failed on a CRITICAL-risk fixture"
               ;;
             success)
               echo "::error::fail-on=critical did NOT fail the step on a CRITICAL fixture"
