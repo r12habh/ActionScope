@@ -74,7 +74,8 @@ def compute_delta(
 ) -> ScanDelta:
     """Compute the difference between a previous state and current result."""
     current_records = list(getattr(current_result, "finding_records", []))
-    if not current_records:
+    findings_valid = not _normalization_failed(current_result)
+    if not current_records and findings_valid:
         from actionscope.findings import build_finding_records
 
         current_records = build_finding_records(current_result)
@@ -117,6 +118,7 @@ def compute_delta(
     exact_finding_delta = (
         previous_state.get("schema_version") == 2
         and previous_state.get("findings_valid", True) is True
+        and current_state.get("findings_valid") is True
         and isinstance(previous_state.get("findings"), list)
     )
     baseline_findings = (
@@ -206,10 +208,7 @@ def _state_payload(
     *,
     records: list[FindingRecord] | None = None,
 ) -> dict[str, Any]:
-    findings_valid = not any(
-        getattr(gap, "gap_type", None) == "finding_normalization_error"
-        for gap in getattr(result, "coverage_gaps", [])
-    )
+    findings_valid = not _normalization_failed(result)
     if records is None:
         records = list(getattr(result, "finding_records", []))
         if not records and findings_valid:
@@ -263,6 +262,13 @@ def _state_payload(
             for finding in getattr(result, "policy_findings", [])
         ),
     }
+
+
+def _normalization_failed(result) -> bool:
+    return any(
+        getattr(gap, "gap_type", None) == "finding_normalization_error"
+        for gap in getattr(result, "coverage_gaps", [])
+    )
 
 
 def _finding_types(result) -> set[str]:

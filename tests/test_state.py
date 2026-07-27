@@ -266,6 +266,42 @@ def test_normalization_failure_state_is_not_an_exact_baseline(
     assert delta.exact_finding_delta is False
 
 
+def test_compute_delta_preserves_current_normalization_failure(
+    monkeypatch,
+) -> None:
+    result = ScanResult(
+        coverage_status="partial",
+        coverage_gaps=[
+            CoverageGap(
+                gap_type="finding_normalization_error",
+                description="normalizer failed",
+            )
+        ],
+    )
+
+    def fail_if_retried(_result):
+        raise AssertionError("normalization should not be retried")
+
+    monkeypatch.setattr(
+        "actionscope.findings.build_finding_records",
+        fail_if_retried,
+    )
+    delta = compute_delta(
+        {
+            "schema_version": 2,
+            "findings_valid": True,
+            "overall_risk": "info",
+            "finding_counts": {},
+            "findings": [],
+        },
+        result,
+    )
+
+    assert delta.exact_finding_delta is False
+    assert delta.new_finding_ids == []
+    assert delta.new_findings == []
+
+
 def test_state_file_written_atomically_without_tmp_leftover(tmp_path: Path) -> None:
     state_file = tmp_path / "last_scan.json"
 
