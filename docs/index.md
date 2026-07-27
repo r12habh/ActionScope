@@ -78,6 +78,15 @@ actually do in AWS, and which workflow-layer attack surfaces it exposes.
 
     [SARIF integration :material-arrow-right:](sarif.md)
 
+-   :material-source-pull:{ .lg .middle } **Confidence-aware CI gating**
+
+    ---
+
+    Start report-only, preserve a trusted default-branch baseline, then block
+    only new findings with high severity and high detection confidence.
+
+    [CI gating guide :material-arrow-right:](ci-gating.md)
+
 -   :material-source-branch:{ .lg .middle } **Reusable workflows**
 
     ---
@@ -126,6 +135,9 @@ Or use it as a GitHub Action:
 - uses: r12habh/ActionScope@v0
   with:
     fail-on: high
+    new-only: true
+    min-confidence: high
+    save-state: true
     comment-pr: true
     upload-sarif: true
 ```

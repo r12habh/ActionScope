@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -13,8 +14,11 @@ from actionscope.analyzers.reusable_workflows import (
     ReusableWorkflowScan,
     scan_reusable_workflows,
 )
-from actionscope.analyzers.risk_engine import build_scan_result
-from actionscope.models import PolicyFinding, RiskLevel, ScanResult
+from actionscope.analyzers.risk_engine import (
+    build_scan_result,
+    finalize_scan_metadata,
+)
+from actionscope.models import PolicyFinding, ScanResult
 from actionscope.parsers.policy_json import scan_policy_files
 from actionscope.parsers.terraform import scan_terraform_files
 from actionscope.parsers.workflow import (
@@ -66,6 +70,24 @@ def version_command() -> None:
     default=None,
     type=click.Choice(["critical", "high", "medium", "low"]),
     help="Exit with code 1 if risk >= this level",
+)
+@click.option(
+    "--new-only",
+    is_flag=True,
+    default=False,
+    help="Gate only findings not already eligible in the loaded state",
+)
+@click.option(
+    "--min-confidence",
+    default=None,
+    type=click.Choice(["high", "medium", "low"]),
+    help="Only gate on findings at or above this detection confidence",
+)
+@click.option(
+    "--require-baseline",
+    is_flag=True,
+    default=False,
+    help="Exit with code 2 when --new-only has no exact baseline",
 )
 @click.option(
     "--aws-verify",
@@ -126,6 +148,9 @@ def scan(
     output_format: str,
     output_file: str | None,
     fail_on: str | None,
+    new_only: bool,
+    min_confidence: str | None,
+    require_baseline: bool,
     aws_verify: bool,
     no_color: bool,
     quiet: bool,
@@ -143,6 +168,14 @@ def scan(
         raise click.UsageError("--offline cannot be combined with --aws-verify")
     if offline and resolve_pins:
         raise click.UsageError("--offline cannot be combined with --resolve-pins")
+    if new_only and fail_on is None:
+        raise click.UsageError("--new-only requires --fail-on")
+    if require_baseline and not new_only:
+        raise click.UsageError("--require-baseline requires --new-only")
+    if min_confidence is not None and fail_on is None:
+        raise click.UsageError("--min-confidence requires --fail-on")
+    if new_only:
+        load_state = True
 
     repo_path = os.path.abspath(path)
     console = Console(no_color=no_color)
@@ -258,6 +291,7 @@ def scan(
             policy_findings=all_policy_findings,
             errors=all_errors + [f"Could not correlate scan results: {exc}"],
         )
+        finalize_scan_metadata(result)
 
     if resolve_pins:
         status_console.print("[dim]Resolving action pins via GitHub API...[/dim]")
@@ -272,6 +306,16 @@ def scan(
 
         delta = compute_delta(load_scan_state(state_file), result)
         result.delta = delta
+
+    from actionscope.gating import evaluate_gate
+
+    result.gate = evaluate_gate(
+        result,
+        fail_on,
+        minimum_confidence=min_confidence,
+        new_only=new_only,
+        require_baseline=require_baseline,
+    )
 
     # Step 5: Handle a truly empty scan. Repos can have useful non-credential
     # findings such as OIDC trust-policy issues or script injection risks.
@@ -311,7 +355,7 @@ def scan(
                 print(output)
         if save_state:
             _save_state(result, repo_path, state_file, status_console, quiet)
-        _exit_with_fail_on(result, fail_on)
+        _exit_with_gate(result)
 
     # Step 6: Render output
     if output_format == "terminal":
@@ -347,7 +391,7 @@ def scan(
     if save_state:
         _save_state(result, repo_path, state_file, status_console, quiet)
 
-    _exit_with_fail_on(result, fail_on)
+    _exit_with_gate(result)
 
 
 @main.command("update-db")
@@ -451,12 +495,85 @@ def report(json_file: str | None, from_json: str | None, fmt: str) -> None:
         click.echo(to_sarif_from_dict(data))
 
 
-def _exit_with_fail_on(result: ScanResult, fail_on: str | None) -> None:
-    if fail_on:
-        fail_risk = RiskLevel(fail_on)
-        if result.overall_risk >= fail_risk:
-            sys.exit(1)
-    sys.exit(0)
+@main.command("gate")
+@click.argument("json_file", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--fail-on",
+    required=True,
+    type=click.Choice(["critical", "high", "medium", "low"]),
+)
+@click.option(
+    "--min-confidence",
+    default="high",
+    show_default=True,
+    type=click.Choice(["high", "medium", "low"]),
+)
+@click.option("--new-only", is_flag=True, default=False)
+@click.option("--require-baseline", is_flag=True, default=False)
+@click.option(
+    "--write-back",
+    is_flag=True,
+    default=False,
+    help="Store the gate decision in the JSON report",
+)
+def gate_command(
+    json_file: str,
+    fail_on: str,
+    min_confidence: str,
+    new_only: bool,
+    require_baseline: bool,
+    write_back: bool,
+) -> None:
+    """Evaluate CI policy against a saved ActionScope JSON report."""
+    import json
+
+    if require_baseline and not new_only:
+        raise click.UsageError("--require-baseline requires --new-only")
+
+    from actionscope.gating import (
+        evaluate_gate_payload,
+        format_gate_decision,
+        gate_decision_to_dict,
+    )
+
+    try:
+        with open(json_file, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"could not read {json_file}: {exc}") from exc
+
+    decision = evaluate_gate_payload(
+        data,
+        fail_on,
+        minimum_confidence=min_confidence,
+        new_only=new_only,
+        require_baseline=require_baseline,
+    )
+    if write_back:
+        data["gate"] = gate_decision_to_dict(decision)
+        target = Path(json_file)
+        tmp_path = target.with_name(f"{target.name}.tmp")
+        try:
+            serialized = json.dumps(data, indent=2) + "\n"
+            tmp_path.write_text(serialized, encoding="utf-8")
+            os.replace(tmp_path, target)
+        except (OSError, TypeError, ValueError) as exc:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise click.ClickException(
+                f"could not update {json_file}: {exc}"
+            ) from exc
+    click.echo(format_gate_decision(decision))
+    raise click.exceptions.Exit(decision.exit_code)
+
+
+def _exit_with_gate(result: ScanResult) -> None:
+    decision = result.gate
+    if decision is None:
+        raise click.ClickException("gate decision was not evaluated")
+    raise click.exceptions.Exit(decision.exit_code)
 
 
 def _has_reportable_findings(result: ScanResult) -> bool:

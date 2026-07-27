@@ -5,6 +5,7 @@ from pathlib import Path
 
 from actionscope.models import (
     AwsCredentialSource,
+    CoverageGap,
     EnvironmentFinding,
     ExposurePath,
     GitHubTokenPermission,
@@ -88,6 +89,32 @@ def test_to_json_is_valid_json() -> None:
     assert data["scan_path"] == "/repo"
 
 
+def test_to_json_preserves_normalization_failure_without_retrying(
+    monkeypatch,
+) -> None:
+    def fail_normalization(_result):
+        raise AssertionError("normalization should not be retried")
+
+    monkeypatch.setattr(
+        "actionscope.findings.build_finding_records",
+        fail_normalization,
+    )
+    result = ScanResult(
+        coverage_status="partial",
+        coverage_gaps=[
+            CoverageGap(
+                gap_type="finding_normalization_error",
+                description="normalizer failed",
+            )
+        ],
+    )
+
+    data = json.loads(to_json(result))
+
+    assert data["coverage_status"] == "partial"
+    assert data["finding_records"] == []
+
+
 def test_json_overall_risk_is_lowercase_string_not_enum() -> None:
     result = ScanResult(bindings=[_sample_binding()])
     result.overall_risk = RiskLevel.CRITICAL
@@ -117,6 +144,7 @@ def test_json_findings_structure() -> None:
     assert f0["auth_type"] == "oidc"
     assert f0["policy_source"] == "terraform"
     assert f0["match_confidence"] == "high"
+    assert f0["risk_status"] == "known"
     assert f0["overall_risk"] == "critical"
     assert f0["has_passrole"] is True
     assert f0["has_privilege_escalation"] is True
@@ -133,6 +161,65 @@ def test_to_json_includes_errors() -> None:
 
     data = json.loads(to_json(result))
     assert data["errors"] == [err]
+    assert data["coverage_status"] == "partial"
+
+
+def test_json_marks_unresolved_policy_as_unknown() -> None:
+    credential = AwsCredentialSource(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        step_name="Configure AWS",
+        role_arn="arn:aws:iam::123456789012:role/deploy",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+    )
+    binding = WorkflowCredentialBinding(
+        credential_source=credential,
+        policy_finding=None,
+        policy_source="not_found",
+    )
+
+    data = json.loads(to_json(ScanResult(bindings=[binding])))
+
+    assert data["coverage_status"] == "partial"
+    assert data["findings"][0]["risk_status"] == "unknown"
+    assert data["summary"]["coverage_gaps"] == 1
+
+
+def test_markdown_from_dict_inserts_intro_sections_before_one_rule() -> None:
+    markdown = to_markdown_from_dict(
+        {
+            "overall_risk": "critical",
+            "coverage_status": "complete",
+            "workflow_count": 1,
+            "summary": {"credential_sources": 0},
+            "findings": [],
+            "compromised_action_findings": [
+                {
+                    "workflow_file": ".github/workflows/triage.yml",
+                    "uses_ref": "example/action@v1",
+                    "compromise_date": "2026-01-01",
+                    "advisory_url": "https://example.com/advisory",
+                }
+            ],
+            "delta": {
+                "previous_overall_risk": "high",
+                "current_overall_risk": "critical",
+                "risk_changed": True,
+                "risk_increased": True,
+                "previous_critical_count": 0,
+                "current_critical_count": 1,
+                "previous_high_count": 1,
+                "current_high_count": 1,
+            },
+        }
+    )
+
+    assert markdown.index("COMPROMISED ACTIONS") < markdown.index(
+        "Delta Since Last Scan"
+    )
+    assert "\n---\n\n---\n" not in markdown
 
 
 def test_write_json_creates_file(tmp_path: Path) -> None:

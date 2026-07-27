@@ -85,6 +85,7 @@ nav:
       - First Scan Tutorial: tutorials/first-scan.md
       - Output Formats: output-formats.md
       - Limitations and Calibration: limitations.md
+      - Confidence-Aware CI Gating: ci-gating.md
       - FAQ: faq.md
       - CLI Reference: cli-reference.md
   - Detectors:

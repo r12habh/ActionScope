@@ -3,10 +3,12 @@
 from pathlib import Path
 from shutil import copyfile
 
+import actionscope.analyzers.risk_engine as risk_engine
 from actionscope.analyzers.risk_engine import (
     build_bindings,
     build_scan_result,
     compute_overall_risk,
+    finalize_scan_metadata,
     match_role_to_policies,
 )
 from actionscope.models import (
@@ -14,6 +16,7 @@ from actionscope.models import (
     GitHubTokenPermission,
     PolicyFinding,
     RiskLevel,
+    ScanResult,
     WorkflowCredentialBinding,
     get_unmatched_findings,
 )
@@ -185,6 +188,28 @@ def test_empty_repo_produces_info_scan_result() -> None:
     assert result.overall_risk is RiskLevel.INFO
     assert result.workflow_count == 0
     assert result.bindings == []
+
+
+def test_finding_normalization_failure_degrades_to_partial_coverage(
+    monkeypatch,
+) -> None:
+    def fail_normalization(_result):
+        raise RuntimeError("normalizer failed")
+
+    monkeypatch.setattr(
+        risk_engine,
+        "build_finding_records",
+        fail_normalization,
+    )
+
+    result = finalize_scan_metadata(ScanResult())
+
+    assert result.coverage_status == "partial"
+    assert result.finding_records == []
+    assert any(
+        gap.gap_type == "finding_normalization_error"
+        for gap in result.coverage_gaps
+    )
 
 
 def test_github_token_critical_risk_propagates_to_overall_scan_result() -> None:

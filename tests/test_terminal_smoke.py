@@ -45,6 +45,7 @@ def test_render_scan_result_shows_reusable_workflow_status() -> None:
     render_scan_result(result, console)
 
     output = buffer.getvalue()
+    assert "Gate: REPORT ONLY" in output
     assert "Reusable Workflows (1 call(s))" in output
     assert "caller.yml" in output
     assert "deploy" in output
@@ -242,6 +243,36 @@ def test_render_scan_result_explains_missing_policy_source() -> None:
     assert "actionscope scan . --aws-verify" in output
     assert "iam:GetRole" in output
     assert "iam:ListAttachedRolePolicies" in output
+
+
+def test_render_scan_result_explains_unknown_static_key_principal() -> None:
+    credential = AwsCredentialSource(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        step_name="Configure AWS credentials",
+        role_arn=None,
+        uses_access_keys=True,
+        uses_oidc=False,
+        aws_region="us-east-1",
+    )
+    binding = WorkflowCredentialBinding(
+        credential_source=credential,
+        policy_finding=None,
+        policy_source="no_role",
+    )
+    result = ScanResult(
+        credential_sources=[credential],
+        bindings=[binding],
+        coverage_status="partial",
+    )
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=False, width=120)
+
+    render_scan_result(result, console)
+
+    output = buffer.getvalue()
+    assert "Coverage: INCOMPLETE — AWS risk is unknown" in output
+    assert "without a statically resolvable IAM role" in output
 
 
 def test_render_scan_result_summary_counts_non_policy_findings() -> None:
