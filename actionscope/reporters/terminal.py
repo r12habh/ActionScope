@@ -159,6 +159,8 @@ def _render_scan_result_impl(
 ) -> None:
     c = console if console is not None else Console()
     delta_lines = _delta_header_lines(delta)
+    gate_lines = _gate_header_lines(result.gate)
+    coverage_style = "yellow" if result.coverage_status == "partial" else "green"
 
     header_body = Text.assemble(
         ("ActionScope — Blast Radius Report\n", "bold"),
@@ -169,11 +171,17 @@ def _render_scan_result_impl(
             "",
         ),
         (
-            "Overall Risk: "
-            f"{RISK_ICONS[result.overall_risk]} {result.overall_risk.name}",
+            "Observed Risk: "
+            f"{RISK_ICONS[result.overall_risk]} {result.overall_risk.name}\n",
             RISK_COLORS[result.overall_risk],
         ),
+        (
+            f"Coverage: {result.coverage_status.upper()} "
+            f"({len(result.coverage_gaps)} unresolved item(s))",
+            coverage_style,
+        ),
         *delta_lines,
+        *gate_lines,
     )
     c.print()
     c.print(
@@ -257,6 +265,7 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
 
     if binding.policy_source == "not_found" and src.role_arn:
         c.print()
+        c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
         c.print(
             f"[dim]ℹ️  Policy not found in repo for role: {src.role_arn}[/]"
         )
@@ -286,6 +295,7 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
 
     if binding.policy_source == "dynamic_reference" and src.role_arn:
         c.print()
+        c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
         c.print(
             f"[dim]ℹ️  Role ARN is a dynamic reference: {src.role_arn}[/]"
         )
@@ -779,6 +789,11 @@ def _render_summary_panel(
         (f"AWS credential sources: {len(result.credential_sources)}\n", ""),
         (f"Policies analyzed: {policies_analyzed}\n", ""),
         (f"Policies not found: {policies_not_found}\n", ""),
+        (
+            f"Coverage: {result.coverage_status.upper()} "
+            f"({len(result.coverage_gaps)} unresolved item(s))\n",
+            "yellow" if result.coverage_status == "partial" else "green",
+        ),
         (f"OIDC trust issues: {len(result.oidc_trust_findings)}\n", ""),
         (
             f"Known-compromised actions: "
@@ -810,6 +825,19 @@ def _render_summary_panel(
 
     c.print()
     c.print(Panel(summary_lines, box=box.ROUNDED, padding=(0, 2)))
+
+
+def _gate_header_lines(gate: object | None) -> tuple:
+    if gate is None:
+        return tuple()
+    status = str(getattr(gate, "status", "report_only")).upper().replace("_", " ")
+    style = {
+        "FAILED": "bold red",
+        "PASSED": "green",
+        "NOT EVALUATED": "yellow",
+        "REPORT ONLY": "dim",
+    }.get(status, "")
+    return (("\n", ""), (f"Gate: {status}", style))
 
 
 def _delta_header_lines(delta: object | None) -> tuple:
@@ -880,6 +908,15 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
         risk = str(data.get("overall_risk", "info")).lower()
         risk_label = risk.upper()
         summary = data.get("summary", {})
+        coverage_status = str(data.get("coverage_status", "complete")).upper()
+        gaps = data.get("coverage_gaps", [])
+        gap_count = len(gaps) if isinstance(gaps, list) else 0
+        gate = data.get("gate")
+        gate_status = (
+            str(gate.get("status", "report_only")).upper().replace("_", " ")
+            if isinstance(gate, dict)
+            else "REPORT ONLY"
+        )
         body = Text.assemble(
             ("ActionScope — Blast Radius Report\n", "bold"),
             (f"Path: {data.get('scan_path', '(unknown)')}\n", ""),
@@ -888,7 +925,9 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 f"Credential Sources: {summary.get('credential_sources', 0)}\n",
                 "",
             ),
-            (f"Overall Risk: {risk_label}", ""),
+            (f"Observed Risk: {risk_label}\n", ""),
+            (f"Coverage: {coverage_status} ({gap_count} unresolved item(s))\n", ""),
+            (f"Gate: {gate_status}", ""),
         )
         c.print(Panel(body, box=box.ROUNDED, padding=(0, 2)))
 
@@ -986,6 +1025,10 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 c.print(
                     f"[bold]Match Confidence:[/] "
                     f"{finding.get('match_confidence')}"
+                )
+            if finding.get("risk_status") == "unknown":
+                c.print(
+                    "[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]"
                 )
             actions = finding.get("actions", [])
             if actions:

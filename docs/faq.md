@@ -10,9 +10,9 @@ description: >-
 
 ## Why does my scan show no findings?
 
-A scan returning `Overall Risk: ℹ️ INFO` with no detector hits is
-**usually correct** — your repo probably doesn't use any of the patterns
-ActionScope looks for. Specifically:
+A scan returning `Observed Risk: ℹ️ INFO` with `Coverage: COMPLETE` and no
+detector hits means the inspected evidence did not contain one of the
+patterns ActionScope reports. Specifically:
 
 - No `aws-actions/configure-aws-credentials` step in any workflow (so
   there's no AWS surface to analyse)
@@ -37,11 +37,18 @@ should have caught but didn't — please
 [open an issue](https://github.com/r12habh/ActionScope/issues/new/choose).
 False negatives are the most important class of bug for a security tool.
 
+If the report says `Coverage: PARTIAL`, do not interpret `INFO` as a clean
+bill of health. Read the coverage gaps: ActionScope may have found an AWS
+role but not the policy needed to determine its permissions.
+
 ## What does `policy_source: not_found` mean?
 
 It means ActionScope detected an `aws-actions/configure-aws-credentials`
 step that assumes an IAM role, but couldn't find the IAM policy attached
 to that role anywhere in the repository.
+
+The report marks this as a coverage gap. The role's AWS risk is unknown; it
+is not classified as low or informational.
 
 This isn't a bug — it just means the policy isn't co-located with the
 workflow. Common reasons:

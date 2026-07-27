@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any
 
 from actionscope.models import (
+    FindingConfidence,
     IamAction,
     PolicyFinding,
     RiskLevel,
@@ -26,9 +27,10 @@ def _risk_level_str(level: RiskLevel) -> str:
 def _serialize_for_json(obj: Any) -> Any:
     """Convert dataclass trees and enums to JSON-serializable structures."""
     if isinstance(obj, Enum):
-        # RiskLevel .value is int; schema expects string labels like "critical".
         if isinstance(obj, RiskLevel):
             return _risk_level_str(obj)
+        if isinstance(obj, FindingConfidence):
+            return obj.name.lower()
         return str(obj.value) if hasattr(obj, "value") else obj.name.lower()
     if isinstance(obj, dict):
         return {k: _serialize_for_json(v) for k, v in obj.items()}
@@ -64,6 +66,7 @@ def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, An
         "policy_source": binding.policy_source,
         "match_confidence": binding.match_confidence,
         "match_reason": binding.match_reason,
+        "risk_status": "known" if pf is not None else "unknown",
     }
 
     if pf is not None:
@@ -87,7 +90,11 @@ def _policy_finding_to_report_dict(finding: PolicyFinding) -> dict[str, Any]:
     return _serialize_for_json(d)
 
 
-def _summary_dict(result: ScanResult) -> dict[str, Any]:
+def _summary_dict(
+    result: ScanResult,
+    *,
+    coverage_gap_count: int | None = None,
+) -> dict[str, Any]:
     policies_found = sum(
         1 for b in result.bindings if b.policy_finding is not None
     )
@@ -119,6 +126,11 @@ def _summary_dict(result: ScanResult) -> dict[str, Any]:
         "compromised_actions": len(result.compromised_action_findings),
         "environment_issues": len(result.environment_findings),
         "pin_suggestions": len(result.pin_suggestions),
+        "coverage_gaps": (
+            len(result.coverage_gaps)
+            if coverage_gap_count is None
+            else coverage_gap_count
+        ),
     }
 
 
@@ -129,11 +141,29 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
     Uses dataclasses.asdict for policy payloads and lowercase risk labels for enums.
     """
     unmatched = get_unmatched_findings(result.bindings, result.policy_findings)
+    coverage_gaps = list(result.coverage_gaps)
+    if not coverage_gaps:
+        from actionscope.coverage import build_coverage_gaps
+
+        coverage_gaps = build_coverage_gaps(result)
+    coverage_status = "partial" if coverage_gaps else result.coverage_status
+    finding_records = list(result.finding_records)
+    if not finding_records:
+        from actionscope.findings import build_finding_records
+
+        finding_records = build_finding_records(result)
     payload: dict[str, Any] = {
         "scan_path": result.scan_path,
         "overall_risk": _risk_level_str(result.overall_risk),
+        "coverage_status": coverage_status,
+        "coverage_gaps": [
+            _serialize_for_json(asdict(gap)) for gap in coverage_gaps
+        ],
         "workflow_count": result.workflow_count,
-        "summary": _summary_dict(result),
+        "summary": _summary_dict(
+            result,
+            coverage_gap_count=len(coverage_gaps),
+        ),
         "findings": [_binding_to_finding_dict(b) for b in result.bindings],
         "github_token_permissions": [
             _serialize_for_json(asdict(p))
@@ -174,6 +204,9 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
             _serialize_for_json(asdict(finding))
             for finding in result.environment_findings
         ],
+        "finding_records": [
+            _serialize_for_json(asdict(record)) for record in finding_records
+        ],
         "pin_suggestions": [
             _serialize_for_json(asdict(finding) if is_dataclass(finding) else finding)
             for finding in result.pin_suggestions
@@ -182,6 +215,11 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
             asdict(result.delta)
             if is_dataclass(getattr(result, "delta", None))
             else getattr(result, "delta", None)
+        ),
+        "gate": _serialize_for_json(
+            asdict(result.gate)
+            if is_dataclass(getattr(result, "gate", None))
+            else getattr(result, "gate", None)
         ),
         "unmatched_policies": [
             _policy_finding_to_report_dict(p) for p in unmatched

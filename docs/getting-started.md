@@ -21,7 +21,10 @@ Output looks like:
 
 ```text
 ActionScope — Blast Radius Report
-Path: /my-repo  |  Workflows: 4  |  Overall Risk: 🔴 CRITICAL
+Path: /my-repo  |  Workflows: 4
+Observed Risk: 🔴 CRITICAL
+Coverage: COMPLETE
+Gate: REPORT ONLY
 
 ⛔ KNOWN COMPROMISED ACTIONS (1 found)
 ⛔ CRITICAL: actions-cool/issues-helper@v3 (issue-triage.yml)
@@ -45,7 +48,8 @@ actionscope scan . --aws-verify        # fetch live IAM policies (read-only)
 actionscope scan . --resolve-pins      # suggest full-SHA pins
 actionscope update-db                  # refresh compromised-action advisories
 actionscope scan . --offline           # disable scan-time API calls
-actionscope scan . --fail-on high      # exit 1 if risk >= HIGH
+actionscope scan . --fail-on high      # legacy aggregate-risk gate
+actionscope scan . --fail-on high --new-only --min-confidence high
 actionscope scan . --output-format sarif --output-file results.sarif
 actionscope scan . --output-format json --output-file results.json
 actionscope scan . --save-state        # save state for delta tracking
@@ -74,17 +78,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: r12habh/ActionScope@v0
         with:
-          fail-on: high          # fail CI if HIGH or above
-          comment-pr: true       # post findings as PR comment
+          fail-on: high          # block HIGH/CRITICAL findings
+          new-only: true         # only newly gate-eligible findings
+          min-confidence: high   # avoid blocking on heuristic matches
+          save-state: true       # seed baseline from the default branch
+          comment-pr: true       # post findings as a PR comment
           upload-sarif: true     # show in GitHub Security tab
-          resolve-pins: true     # suggest SHA pins
 ```
 
 This gives you:
 
 - A PR comment on every pull request summarising the risk delta
 - SARIF results in the Security tab as first-class Code Scanning alerts
-- CI failure on HIGH/CRITICAL findings so issues block merges
+- CI failure only for new, high-confidence HIGH/CRITICAL findings
+
+The Action is report-only if `fail-on` is omitted. On the first new-only run,
+the gate is `NOT EVALUATED`; a trusted default-branch run creates the baseline.
+See [Confidence-Aware CI Gating](ci-gating.md) for the rollout model.
 
 ## 3. With live AWS verification
 

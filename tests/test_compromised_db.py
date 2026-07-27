@@ -478,8 +478,8 @@ def test_action_offline_mode_skips_pin_resolution() -> None:
     action = (Path(__file__).parents[1] / "action.yml").read_text(encoding="utf-8")
 
     assert "resolve-pins was skipped because offline mode" in action
-    assert action.index('if [ "${{ inputs.offline }}" = "true" ]') < action.index(
-        'elif [ "${{ inputs.resolve-pins }}" = "true" ]'
+    assert action.index('if [ "$INPUT_OFFLINE" = "true" ]') < action.index(
+        'elif [ "$INPUT_RESOLVE_PINS" = "true" ]'
     )
 
 

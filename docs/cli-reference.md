@@ -31,7 +31,10 @@ actionscope scan tests/fixtures/demo_repo --output-format json
 |------|-------|---------|-------------|---------|
 | `--output-format` | `-f` | `terminal` | Output format: `terminal`, `json`, `markdown`, or `sarif`. | `actionscope scan . -f sarif` |
 | `--output-file` | `-o` | none | Write output to a file. Terminal mode writes Markdown when this is used. | `actionscope scan . -f json -o scan.json` |
-| `--fail-on` | none | none | Exit with code 1 if overall risk is at or above `critical`, `high`, `medium`, or `low`. | `actionscope scan . --fail-on high` |
+| `--fail-on` | none | none | Enable CI gating at `critical`, `high`, `medium`, or `low`. With no confidence or new-only option, this preserves aggregate-risk behavior. | `actionscope scan . --fail-on high` |
+| `--new-only` | none | `False` | Apply `--fail-on` only to findings not already eligible under the loaded baseline. This includes new findings and existing findings that cross the configured severity or confidence threshold. Implies `--load-state`. | `actionscope scan . --fail-on high --new-only` |
+| `--min-confidence` | none | none | Gate only findings at or above `high`, `medium`, or `low` confidence. Requires `--fail-on`. | `actionscope scan . --fail-on high --min-confidence high` |
+| `--require-baseline` | none | `False` | Exit with code 2 when `--new-only` cannot load an exact version-2 baseline. | `actionscope scan . --fail-on high --new-only --require-baseline` |
 | `--aws-verify` | none | `False` | Fetch live AWS IAM role policies with read-only IAM API calls. Requires `actionscope[aws]` and AWS credentials. | `actionscope scan . --aws-verify` |
 | `--no-color` | none | `False` | Disable terminal color output. | `actionscope scan . --no-color` |
 | `--quiet` | `-q` | `False` | Suppress terminal output, useful with `--output-file`. | `actionscope scan . -q -o report.md` |
@@ -56,6 +59,10 @@ actionscope scan . --output-format sarif --output-file actionscope.sarif
 
 # Fail CI on high or critical findings
 actionscope scan . --fail-on high
+
+# Recommended: fail only on new, high-confidence findings
+actionscope scan . --load-state --fail-on high --new-only \
+  --min-confidence high
 
 # Compare with the previous scan
 actionscope scan . --load-state --save-state
@@ -112,6 +119,25 @@ actionscope report --from-json scan.json --format sarif
 | `--from-json` | none | none | Alternate way to provide the saved JSON file. | `actionscope report --from-json scan.json` |
 | `--format` | `-f` | `markdown` | Render as `markdown`, `terminal`, `json`, or `sarif`. | `actionscope report scan.json -f terminal` |
 
+## `actionscope gate JSON_FILE [OPTIONS]`
+
+Evaluate CI policy against a saved ActionScope JSON report without rescanning.
+This is the command used by the Marketplace Action after producing its single
+JSON scan.
+
+```bash
+actionscope gate scan.json --fail-on high
+actionscope gate scan.json --fail-on high --new-only --min-confidence high
+```
+
+| Flag | Default | Description | Example |
+|------|---------|-------------|---------|
+| `--fail-on` | required | Severity threshold: `critical`, `high`, `medium`, or `low`. | `actionscope gate scan.json --fail-on high` |
+| `--min-confidence` | `high` | Minimum confidence for a finding to block. | `actionscope gate scan.json --fail-on high --min-confidence medium` |
+| `--new-only` | `False` | Gate findings that are absent from the exact baseline or newly cross the configured severity/confidence policy. | `actionscope gate scan.json --fail-on high --new-only` |
+| `--require-baseline` | `False` | Exit 2 instead of 0 when a new-only gate has no exact baseline. Requires `--new-only`. | `actionscope gate scan.json --fail-on high --new-only --require-baseline` |
+| `--write-back` | `False` | Store the gate decision in the JSON report for later rendering. | `actionscope gate scan.json --fail-on high --write-back` |
+
 ## Planned Commands
 
 The roadmap issues below are open, but these commands are not implemented in
@@ -126,9 +152,9 @@ the current release:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Scan completed and did not meet the `--fail-on` threshold. |
-| `1` | Scan completed and overall risk met or exceeded `--fail-on`. |
-| `2` | CLI usage or report-file read error. |
+| `0` | Scan or gate completed without a blocking finding. This also covers a new-only gate with no baseline unless `--require-baseline` is set. |
+| `1` | At least one finding matched the configured gate policy. |
+| `2` | CLI usage error, report-file read error, or required baseline unavailable. |
 
 ## Environment Variables
 

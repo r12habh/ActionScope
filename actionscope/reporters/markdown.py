@@ -50,6 +50,12 @@ def _md_cell(value: object) -> str:
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("`", "\\`")
 
 
+def _gate_status(gate: object | None) -> str:
+    if gate is None:
+        return "REPORT ONLY"
+    return str(getattr(gate, "status", "report_only")).upper().replace("_", " ")
+
+
 def _auth_display(source: AwsCredentialSource) -> str:
     if source.uses_oidc:
         return "OIDC ✓"
@@ -126,8 +132,13 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
 
     if binding.policy_source == "not_found":
         lines.append(
-            "| Note | Policy not found in repo. Run with `--aws-verify` flag "
-            "to fetch live AWS permissions. |"
+            "| Coverage | **INCOMPLETE** — policy not found, so AWS risk is "
+            "unknown. Run with `--aws-verify` to fetch live permissions. |"
+        )
+    elif binding.policy_source in {"dynamic_reference", "no_role"}:
+        lines.append(
+            "| Coverage | **INCOMPLETE** — the AWS role or its permissions "
+            "could not be resolved statically. |"
         )
 
     if binding.policy_finding is not None:
@@ -604,11 +615,16 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     """
     cred_count = len(result.credential_sources)
     overall = RISK_DISPLAY.get(result.overall_risk, result.overall_risk.name)
+    gate_status = _gate_status(result.gate)
 
     header = (
         "## 🔍 ActionScope — Blast Radius Report\n\n"
-        f"**Overall Risk:** {overall} | **Workflows:** {result.workflow_count} "
-        f"| **Credential Sources:** {cred_count}\n\n"
+        f"**Observed Risk:** {overall} | "
+        f"**Coverage:** {result.coverage_status.upper()} | "
+        f"**Gate:** {gate_status}\n\n"
+        f"**Workflows:** {result.workflow_count} | "
+        f"**Credential Sources:** {cred_count} | "
+        f"**Unresolved Coverage Items:** {len(result.coverage_gaps)}\n\n"
         "---\n\n"
     )
 
@@ -671,13 +687,25 @@ def to_markdown_from_dict(data: dict) -> str:
     }.get(overall, overall.upper())
     summary_data = data.get("summary", {})
     credential_count = summary_data.get("credential_sources", 0)
+    coverage_status = str(data.get("coverage_status", "complete")).upper()
+    coverage_gaps = data.get("coverage_gaps", [])
+    gap_count = len(coverage_gaps) if isinstance(coverage_gaps, list) else 0
+    gate_data = data.get("gate")
+    gate_status = (
+        str(gate_data.get("status", "report_only")).upper().replace("_", " ")
+        if isinstance(gate_data, dict)
+        else "REPORT ONLY"
+    )
 
     lines = [
         "## 🔍 ActionScope — Blast Radius Report",
         "",
-        f"**Overall Risk:** {risk_display} | "
+        f"**Observed Risk:** {risk_display} | "
+        f"**Coverage:** {coverage_status} | **Gate:** {gate_status}",
+        "",
         f"**Workflows:** {data.get('workflow_count', 0)} | "
-        f"**Credential Sources:** {credential_count}",
+        f"**Credential Sources:** {credential_count} | "
+        f"**Unresolved Coverage Items:** {gap_count}",
         "",
         "---",
         "",
@@ -708,8 +736,13 @@ def to_markdown_from_dict(data: dict) -> str:
                     ">",
                 ]
             )
-        prefix.extend(["", "---", ""])
-        lines = lines[:6] + prefix + lines[6:]
+        prefix.append("")
+        separator_index = lines.index("---")
+        lines = (
+            lines[:separator_index]
+            + prefix
+            + lines[separator_index:]
+        )
 
     delta_data = data.get("delta")
     if isinstance(delta_data, dict):
@@ -754,8 +787,13 @@ def to_markdown_from_dict(data: dict) -> str:
                     + ", ".join(f"`{_md_cell(action)}`" for action in new_actions),
                 ]
             )
-        delta_lines.extend(["", "---", ""])
-        lines = lines[:6] + delta_lines + lines[6:]
+        delta_lines.append("")
+        separator_index = lines.index("---")
+        lines = (
+            lines[:separator_index]
+            + delta_lines
+            + lines[separator_index:]
+        )
 
     findings = data.get("findings", [])
     if findings:
@@ -776,6 +814,8 @@ def to_markdown_from_dict(data: dict) -> str:
                 "low": "🟢 LOW",
                 "info": "ℹ️ INFO",
             }.get(finding_risk, finding_risk.upper())
+            if finding.get("risk_status") == "unknown":
+                finding_risk_display = "UNKNOWN (coverage incomplete)"
 
             lines.extend(
                 [
@@ -795,8 +835,17 @@ def to_markdown_from_dict(data: dict) -> str:
             if policy_source == "not_found":
                 lines.extend(
                     [
-                        "> Policy not found in repo. Run with `--aws-verify` "
-                        "flag to fetch live AWS permissions.",
+                        "> **Coverage incomplete:** policy not found, so AWS "
+                        "risk is unknown. Run with `--aws-verify` to fetch "
+                        "live permissions.",
+                        "",
+                    ]
+                )
+            elif policy_source in {"dynamic_reference", "no_role"}:
+                lines.extend(
+                    [
+                        "> **Coverage incomplete:** the AWS role or its "
+                        "permissions could not be resolved statically.",
                         "",
                     ]
                 )

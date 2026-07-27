@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from actionscope.models import (
@@ -125,8 +126,7 @@ def test_compute_delta_tracks_new_exposure_path() -> None:
     )
 
     assert delta.new_finding_types == [
-        "exposure:unpinned:third-party/deploy@v1:"
-        "arn:aws:iam::123456789012:role/deploy"
+        "exposure:unpinned:third-party/deploy@v1"
     ]
 
 
@@ -151,7 +151,67 @@ def test_save_load_round_trip(tmp_path: Path) -> None:
     loaded = load_scan_state(str(state_file))
 
     assert loaded is not None
+    assert loaded["schema_version"] == 2
     assert loaded["overall_risk"] == "medium"
+
+
+def test_compute_delta_tracks_exact_finding_ids(tmp_path: Path) -> None:
+    baseline = ScanResult(compromised_action_findings=[_compromised()])
+    state_file = tmp_path / "baseline.json"
+    save_scan_state(baseline, "/repo", str(state_file))
+    previous = load_scan_state(str(state_file))
+    assert previous is not None
+
+    current = ScanResult(
+        compromised_action_findings=[
+            _compromised(),
+            _compromised("tj-actions/changed-files"),
+        ]
+    )
+    delta = compute_delta(previous, current)
+
+    assert delta.baseline_available is True
+    assert delta.exact_finding_delta is True
+    assert len(delta.new_finding_ids) == 1
+    assert len(delta.new_findings) == 1
+    assert len(delta.baseline_findings) == 1
+    assert delta.baseline_findings[0]["fingerprint"]
+    assert "tj-actions/changed-files" in delta.new_findings[0].title
+
+
+def test_state_does_not_store_raw_role_arn(tmp_path: Path) -> None:
+    path = ExposurePath(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        action_kind="unpinned",
+        action_ref="third-party/deploy@v1",
+        action_step="Deploy",
+        credential_step="Configure AWS",
+        role_arn="arn:aws:iam::123456789012:role/secret-deploy-role",
+        auth_type="oidc",
+        policy_source="not_found",
+        policy_source_file=None,
+        match_confidence="none",
+    )
+    state_file = tmp_path / "baseline.json"
+
+    save_scan_state(ScanResult(exposure_paths=[path]), "/repo", str(state_file))
+
+    assert "arn:aws:iam" not in state_file.read_text(encoding="utf-8")
+
+
+def test_state_does_not_store_absolute_checkout_path(tmp_path: Path) -> None:
+    state_file = tmp_path / "baseline.json"
+
+    save_scan_state(
+        _result(),
+        "/Users/example/private-repo",
+        str(state_file),
+    )
+
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    assert payload["repo_path"] == "."
+    assert "/Users/example" not in state_file.read_text(encoding="utf-8")
 
 
 def test_state_file_written_atomically_without_tmp_leftover(tmp_path: Path) -> None:

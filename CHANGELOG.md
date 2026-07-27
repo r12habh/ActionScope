@@ -4,17 +4,33 @@ All notable changes to ActionScope are documented here.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-26
+
 ### Added
 - `actionscope update-db` refreshes a local compromised-actions cache from
   GitHub's malware advisory feed and conditionally probes OpenSSF's malicious
   packages dataset.
 - `actionscope scan --offline` guarantees scan-time GitHub and AWS API calls
   are disabled while still allowing bundled or cached advisory data.
+- Confidence-aware CI gating with `--min-confidence`, exact new-finding
+  gating with `--new-only`, and optional strict baseline enforcement with
+  `--require-baseline`.
+- `actionscope gate` evaluates a saved JSON result without rescanning and can
+  write the gate decision back for terminal, Markdown, and Action output.
+- Scan reports now separate observed severity from coverage. Unresolved IAM
+  policies, dynamic role references, unknown static-key principals,
+  uninspected reusable workflows, and analyzer errors produce explicit
+  coverage gaps instead of being interpreted as low risk.
 
 ### Changed
 - ActionScope's own CI, release, documentation, and Marketplace composite
   action dependencies are pinned to verified full commit SHAs. A regression
   test prevents mutable action tags from returning.
+- The Marketplace Action is report-only by default. When enabled, gating can
+  block only new, high-confidence findings against a trusted default-branch
+  baseline stored with GitHub Actions cache.
+- Scan-state schema version 2 stores stable finding fingerprints for exact
+  deltas and excludes raw role ARNs and local checkout paths.
 
 ## [0.4.0] - 2026-07-12
 

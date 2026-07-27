@@ -12,9 +12,21 @@ inputs:
     required: false
     default: '.'
   fail-on:
-    description: 'Fail the action if overall risk is at or above this level (critical, high, medium, low)'
+    description: 'Fail the action at this risk level; empty keeps the scan report-only'
+    required: false
+    default: ''
+  new-only:
+    description: 'Apply fail-on only to findings not already gate-eligible in the baseline'
+    required: false
+    default: 'false'
+  min-confidence:
+    description: 'Minimum confidence for blocking findings (high, medium, low)'
     required: false
     default: 'high'
+  require-baseline:
+    description: 'Fail with exit code 2 when new-only has no exact baseline'
+    required: false
+    default: 'false'
   output-format:
     description: 'Output format: terminal, json, markdown, or sarif'
     required: false
@@ -40,7 +52,7 @@ inputs:
     required: false
     default: 'false'
   state-artifact-name:
-    description: 'GitHub Actions artifact name for persisting scan state'
+    description: 'Cache key prefix for persisting scan state'
     required: false
     default: 'actionscope-state'
   comment-pr:
@@ -66,6 +78,12 @@ outputs:
   credential-sources-count:
     description: 'Number of AWS credential sources found'
     value: ${{ steps.scan.outputs.credential-sources-count }}
+  coverage-status:
+    description: 'Coverage status for the scan (complete or partial)'
+    value: ${{ steps.scan.outputs.coverage-status }}
+  gate-status:
+    description: 'Gate decision (report_only, passed, failed, or not_evaluated)'
+    value: ${{ steps.scan.outputs.gate-status }}
 
 runs:
   using: 'composite'
@@ -77,27 +95,52 @@ runs:
 
     - name: Install ActionScope
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
-        if [ -n "${{ inputs.version }}" ]; then
-          pip install "actionscope==${{ inputs.version }}"
+        if [ -n "$INPUT_VERSION" ]; then
+          pip install "actionscope==$INPUT_VERSION"
         else
           pip install actionscope
         fi
 
+    - name: Prepare baseline key
+      id: baseline
+      if: inputs.load-state == 'true' || inputs.new-only == 'true' || inputs.save-state == 'true'
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        REF_NAME: ${{ github.ref_name }}
+        COMMIT_SHA: ${{ github.sha }}
+      run: |
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          BRANCH="$BASE_REF"
+          SHA="$BASE_SHA"
+        else
+          BRANCH="$REF_NAME"
+          SHA="$COMMIT_SHA"
+        fi
+        BRANCH="${BRANCH//\//-}"
+        echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+        echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
     - name: Restore previous state
-      if: inputs.load-state == 'true'
-      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
-      continue-on-error: true
+      if: inputs.load-state == 'true' || inputs.new-only == 'true'
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5
       with:
-        name: ${{ inputs.state-artifact-name }}
-        path: .actionscope/
+        path: .actionscope/last_scan.json
+        key: ${{ inputs.state-artifact-name }}-${{ steps.baseline.outputs.branch }}-${{ steps.baseline.outputs.sha }}
+        restore-keys: |
+          ${{ inputs.state-artifact-name }}-${{ steps.baseline.outputs.branch }}-
 
     - name: Verify restored state
-      if: inputs.load-state == 'true'
+      if: inputs.load-state == 'true' || inputs.new-only == 'true'
       shell: bash
       run: |
         if [ ! -f .actionscope/last_scan.json ]; then
-          echo "::warning::ActionScope: load-state is true but .actionscope/last_scan.json was not restored. Delta reporting will be skipped."
+          echo "::warning::ActionScope: no baseline was restored. New-only gating will be reported as not evaluated."
         fi
 
     - name: Run ActionScope
@@ -105,27 +148,38 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_NEW_ONLY: ${{ inputs.new-only }}
+        INPUT_MIN_CONFIDENCE: ${{ inputs.min-confidence }}
+        INPUT_REQUIRE_BASELINE: ${{ inputs.require-baseline }}
+        INPUT_LOAD_STATE: ${{ inputs.load-state }}
+        INPUT_SAVE_STATE: ${{ inputs.save-state }}
+        INPUT_OFFLINE: ${{ inputs.offline }}
+        INPUT_RESOLVE_PINS: ${{ inputs.resolve-pins }}
+        INPUT_OUTPUT_FORMAT: ${{ inputs.output-format }}
+        INPUT_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
       run: |
-        SCAN_FLAGS=""
-        if [ "${{ inputs.load-state }}" = "true" ]; then
-          SCAN_FLAGS="$SCAN_FLAGS --load-state"
+        SCAN_FLAGS=()
+        if [ "$INPUT_LOAD_STATE" = "true" ] || [ "$INPUT_NEW_ONLY" = "true" ]; then
+          SCAN_FLAGS+=(--load-state)
         fi
-        if [ "${{ inputs.save-state }}" = "true" ]; then
-          SCAN_FLAGS="$SCAN_FLAGS --save-state"
+        if [ "$INPUT_SAVE_STATE" = "true" ]; then
+          SCAN_FLAGS+=(--save-state)
         fi
-        if [ "${{ inputs.offline }}" = "true" ]; then
-          SCAN_FLAGS="$SCAN_FLAGS --offline"
-          if [ "${{ inputs.resolve-pins }}" = "true" ]; then
+        if [ "$INPUT_OFFLINE" = "true" ]; then
+          SCAN_FLAGS+=(--offline)
+          if [ "$INPUT_RESOLVE_PINS" = "true" ]; then
             echo "::warning::ActionScope: resolve-pins was skipped because offline mode disables GitHub API calls."
           fi
-        elif [ "${{ inputs.resolve-pins }}" = "true" ]; then
-          SCAN_FLAGS="$SCAN_FLAGS --resolve-pins"
+        elif [ "$INPUT_RESOLVE_PINS" = "true" ]; then
+          SCAN_FLAGS+=(--resolve-pins)
         fi
 
-        actionscope scan ${{ inputs.path }} \
+        actionscope scan "$INPUT_PATH" \
           --output-format json \
           --output-file /tmp/actionscope-results.json \
-          $SCAN_FLAGS \
+          "${SCAN_FLAGS[@]}" \
           --no-color 2>/tmp/actionscope-stderr.txt || {
             echo "ActionScope scan failed. See stderr:"
             cat /tmp/actionscope-stderr.txt || true
@@ -133,6 +187,26 @@ runs:
           }
 
         if [ -f /tmp/actionscope-results.json ]; then
+          GATE_EXIT=0
+          if [ -n "$INPUT_FAIL_ON" ]; then
+            GATE_FLAGS=(
+              --fail-on "$INPUT_FAIL_ON"
+              --min-confidence "$INPUT_MIN_CONFIDENCE"
+              --write-back
+            )
+            if [ "$INPUT_NEW_ONLY" = "true" ]; then
+              GATE_FLAGS+=(--new-only)
+            fi
+            if [ "$INPUT_REQUIRE_BASELINE" = "true" ]; then
+              GATE_FLAGS+=(--require-baseline)
+            fi
+            set +e
+            actionscope gate /tmp/actionscope-results.json "${GATE_FLAGS[@]}"
+            GATE_EXIT=$?
+            set -e
+          fi
+          echo "$GATE_EXIT" > /tmp/actionscope-gate-exit
+
           RISK=$(python3 -c "
         import json
         d = json.load(open('/tmp/actionscope-results.json'))
@@ -143,7 +217,19 @@ runs:
         d = json.load(open('/tmp/actionscope-results.json'))
         print(d.get('summary', {}).get('credential_sources', 0))
           ")
+          COVERAGE=$(python3 -c "
+        import json
+        d = json.load(open('/tmp/actionscope-results.json'))
+        print(d.get('coverage_status', 'complete'))
+          ")
+          GATE=$(python3 -c "
+        import json
+        d = json.load(open('/tmp/actionscope-results.json'))
+        print(d.get('gate', {}).get('status', 'report_only'))
+          ")
           echo "overall-risk=$RISK" >> "$GITHUB_OUTPUT"
+          echo "coverage-status=$COVERAGE" >> "$GITHUB_OUTPUT"
+          echo "gate-status=$GATE" >> "$GITHUB_OUTPUT"
           {
             echo 'findings-json<<JSON_EOF'
             cat /tmp/actionscope-results.json
@@ -155,26 +241,25 @@ runs:
           } >> "$GITHUB_OUTPUT"
           echo "credential-sources-count=$COUNT" >> "$GITHUB_OUTPUT"
 
-          if [ "${{ inputs.output-format }}" != "json" ]; then
+          if [ "$INPUT_OUTPUT_FORMAT" != "json" ]; then
             actionscope report \
               --from-json /tmp/actionscope-results.json \
-              --format "${{ inputs.output-format }}" || true
+              --format "$INPUT_OUTPUT_FORMAT" || true
           fi
 
-          if [ "${{ inputs.upload-sarif }}" = "true" ]; then
+          if [ "$INPUT_UPLOAD_SARIF" = "true" ]; then
             actionscope report \
               --from-json /tmp/actionscope-results.json \
               --format sarif > /tmp/actionscope-results.sarif || true
           fi
         fi
 
-    - name: Save state artifact
-      if: inputs.save-state == 'true'
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+    - name: Save trusted baseline
+      if: inputs.save-state == 'true' && github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+      uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25  # v5
       with:
-        name: ${{ inputs.state-artifact-name }}
         path: .actionscope/last_scan.json
-        retention-days: 30
+        key: ${{ inputs.state-artifact-name }}-${{ steps.baseline.outputs.branch }}-${{ github.sha }}
 
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true'
@@ -188,40 +273,24 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
         MARKDOWN=$(actionscope report \
           --from-json /tmp/actionscope-results.json \
           --format markdown 2>/dev/null || \
           echo "ActionScope scan complete. See workflow run for details.")
-        gh pr comment ${{ github.event.pull_request.number }} \
+        gh pr comment "$PR_NUMBER" \
           --body "$MARKDOWN" \
           --edit-last 2>/dev/null || \
-        gh pr comment ${{ github.event.pull_request.number }} \
+        gh pr comment "$PR_NUMBER" \
           --body "$MARKDOWN"
 
     - name: Evaluate risk threshold
       if: inputs.fail-on != ''
       shell: bash
       run: |
-        python3 - <<'EOF'
-        import json, sys
-
-        RISK_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
-        fail_on = "${{ inputs.fail-on }}".strip().lower()
-
-        try:
-            with open("/tmp/actionscope-results.json") as f:
-                data = json.load(f)
-            overall = data.get("overall_risk", "info").lower()
-        except Exception:
-            sys.exit(0)
-
-        if RISK_ORDER.get(overall, 0) >= RISK_ORDER.get(fail_on, 99):
-            print(f"ActionScope: overall risk '{overall}' meets or exceeds "
-                  f"fail-on threshold '{fail_on}'. Failing.")
-            sys.exit(1)
-        else:
-            print(f"ActionScope: overall risk '{overall}' is below "
-                  f"fail-on threshold '{fail_on}'. Passing.")
-            sys.exit(0)
-        EOF
+        if [ ! -f /tmp/actionscope-gate-exit ]; then
+          echo "ActionScope gate result is missing."
+          exit 2
+        fi
+        exit "$(cat /tmp/actionscope-gate-exit)"

@@ -84,7 +84,9 @@ overloaded to demonstrate every detector at once.
 │  ActionScope — Blast Radius Report                               │
 │  Path: ./tests/fixtures/coverage_repo                            │
 │  Workflows: 6 | Credential Sources: 2                            │
-│  Overall Risk: 🔴 CRITICAL                                        │
+│  Observed Risk: 🔴 CRITICAL                                       │
+│  Coverage: COMPLETE                                              │
+│  Gate: REPORT ONLY                                               │
 ╰──────────────────────────────────────────────────────────────────╯
 ```
 
@@ -92,8 +94,12 @@ overloaded to demonstrate every detector at once.
   produced at least one finding
 - **Credential Sources**: how many `aws-actions/configure-aws-credentials`
   steps ActionScope found
-- **Overall Risk**: the maximum severity across every detector. Drives
-  exit codes when `--fail-on` is set
+- **Observed Risk**: the maximum severity supported by evidence the scan
+  inspected
+- **Coverage**: whether evidence was resolved completely. `PARTIAL` means
+  some permissions or delegated workflow behavior remains unknown
+- **Gate**: the CI policy decision. Scans are report-only unless
+  `--fail-on` is set
 
 ### Known-compromised actions
 
@@ -242,18 +248,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: r12habh/ActionScope@v0
         with:
-          fail-on: high          # exit 1 if any finding is HIGH or above
+          fail-on: high          # block HIGH/CRITICAL findings
+          new-only: true         # only newly gate-eligible findings
+          min-confidence: high   # avoid blocking on heuristic matches
+          save-state: true       # seed baseline from the default branch
           comment-pr: true       # post findings as a PR comment
           upload-sarif: true     # send to the Security tab
-          resolve-pins: true     # suggest full-SHA pins for unpinned actions
 ```
 
 You get:
 
-- A **PR comment** on every pull request, with a risk delta versus the
-  previous scan if you also use `--save-state` / `--load-state`
+- A **PR comment** on every pull request, with an exact finding delta versus
+  the trusted default-branch baseline
 - **First-class Code Scanning alerts** in the Security tab via SARIF
-- **CI failure** on HIGH/CRITICAL findings so issues block merges
+- **CI failure** only for new, high-confidence HIGH/CRITICAL findings
+
+The Action is report-only if `fail-on` is omitted. A first new-only run is
+`NOT EVALUATED` until a trusted default-branch run seeds the baseline.
 
 ## What's next
 
@@ -262,6 +273,8 @@ You get:
 - [OIDC Trust Policy Analysis](../oidc-trust.md) — what the detector
   looks for, with examples
 - [SARIF and GitHub Security Tab](../sarif.md) — wiring up Code Scanning
+- [Confidence-Aware CI Gating](../ci-gating.md) — safe report-only to
+  merge-blocking rollout
 - [FAQ](../faq.md) — common questions (no findings? `not_found`? is it
   safe?)
 - [CLI Reference](../cli-reference.md) — every flag and subcommand

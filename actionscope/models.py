@@ -46,6 +46,43 @@ class RiskLevel(Enum):
         return self.value >= other.value
 
 
+class FindingConfidence(Enum):
+    """Detection confidence, independent from finding severity."""
+
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+
+    @classmethod
+    def _missing_(cls, value: object) -> "FindingConfidence | None":
+        if isinstance(value, str):
+            normalized = value.lower()
+            for member in cls:
+                if member.name.lower() == normalized:
+                    return member
+        return None
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, FindingConfidence):
+            return NotImplemented
+        return self.value < other.value
+
+    def __le__(self, other: object) -> bool:
+        if not isinstance(other, FindingConfidence):
+            return NotImplemented
+        return self.value <= other.value
+
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, FindingConfidence):
+            return NotImplemented
+        return self.value > other.value
+
+    def __ge__(self, other: object) -> bool:
+        if not isinstance(other, FindingConfidence):
+            return NotImplemented
+        return self.value >= other.value
+
+
 VALID_POLICY_SOURCE_TYPES = frozenset(
     {
         "workflow",
@@ -265,6 +302,30 @@ class ExposurePath:
     risk_level: RiskLevel = RiskLevel.HIGH
 
 
+@dataclass(frozen=True)
+class FindingRecord:
+    """Normalized finding metadata used for exact deltas and CI gating."""
+
+    fingerprint: str
+    rule_id: str
+    risk_level: RiskLevel
+    confidence: FindingConfidence
+    title: str
+    workflow_file: Optional[str] = None
+    job_name: Optional[str] = None
+    gate_eligible: bool = True
+
+
+@dataclass(frozen=True)
+class CoverageGap:
+    """A condition that prevents ActionScope from claiming complete coverage."""
+
+    gap_type: str
+    description: str
+    workflow_file: Optional[str] = None
+    job_name: Optional[str] = None
+
+
 @dataclass
 class ScanResult:
     """Aggregate result for a single ActionScope scan."""
@@ -297,6 +358,11 @@ class ScanResult:
     policy_findings: list[PolicyFinding] = field(default_factory=list)
     bindings: list[WorkflowCredentialBinding] = field(default_factory=list)
     exposure_paths: list[ExposurePath] = field(default_factory=list)
+    finding_records: list[FindingRecord] = field(default_factory=list)
+    coverage_status: str = "complete"
+    coverage_gaps: list[CoverageGap] = field(default_factory=list)
+    gate: object | None = None
+    delta: object | None = None
     overall_risk: RiskLevel = RiskLevel.INFO
     errors: list[str] = field(default_factory=list)
 

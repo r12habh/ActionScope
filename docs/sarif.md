@@ -8,10 +8,20 @@ ActionScope can upload findings to GitHub's Security tab via SARIF.
 - uses: r12habh/ActionScope@v0
   with:
     upload-sarif: true
-    fail-on: high
 ```
 
 This posts findings to the GitHub Security → Code Scanning Alerts tab.
+SARIF upload does not require merge blocking. Add confidence-aware gating
+separately after reviewing the initial alerts:
+
+```yaml
+with:
+  upload-sarif: true
+  fail-on: high
+  new-only: true
+  min-confidence: high
+  save-state: true
+```
 
 ## What Gets Reported
 

@@ -48,8 +48,9 @@ actionscope scan .
 
 That's it. No AWS credentials needed, no telemetry, no sign-up. Static
 analysis runs in under a second on a typical repo. If you have nothing
-relevant, you get `Overall Risk: ℹ️ INFO`. If you have something, you'll
-see exactly what and why.
+relevant, you get `Observed Risk: ℹ️ INFO`. If an AWS role cannot be matched
+to a policy, ActionScope reports `Coverage: PARTIAL` instead of treating the
+unknown permissions as safe.
 
 **Want a guided first-scan walkthrough?** See
 [**Your First Scan**](https://r12habh.github.io/ActionScope/tutorials/first-scan/)
@@ -63,16 +64,25 @@ actionscope scan . --resolve-pins      # suggest full-SHA pins for unpinned acti
 actionscope scan . --github-token "$GITHUB_TOKEN"  # inspect external reusable workflows
 actionscope update-db                  # refresh compromised-action advisories
 actionscope scan . --offline           # guarantee no scan-time API calls
-actionscope scan . --fail-on high      # exit 1 if any finding is HIGH or above
+actionscope scan . --fail-on high      # legacy: gate on aggregate observed risk
+actionscope scan . --fail-on high --min-confidence high
+actionscope scan . --fail-on high --new-only --min-confidence high
 actionscope scan . --output-format sarif --output-file results.sarif
 actionscope scan . --save-state        # save state for PR delta comparison
 ```
+
+For CI, start in report-only mode. Once a default-branch baseline exists,
+block only new, high-confidence findings. See
+[Confidence-Aware CI Gating](docs/ci-gating.md).
 
 ## Example Output
 
 ```text
 ActionScope — Blast Radius Report
-Path: /my-repo  |  Workflows: 2  |  Overall Risk: 🔴 CRITICAL
+Path: /my-repo  |  Workflows: 2
+Observed Risk: 🔴 CRITICAL
+Coverage: COMPLETE
+Gate: REPORT ONLY
 
 ⛔ KNOWN COMPROMISED ACTIONS (1 found)
 ──────────────────────────────────────────────────────────────
@@ -122,11 +132,17 @@ jobs:
 
       - uses: r12habh/ActionScope@v0
         with:
-          fail-on: high          # fail CI if HIGH or above
-          comment-pr: true       # post findings as PR comment
-          upload-sarif: true     # show in GitHub Security tab
-          resolve-pins: true     # suggest SHA pins for unpinned actions
+          fail-on: high          # block HIGH/CRITICAL findings
+          new-only: true         # only newly gate-eligible findings
+          min-confidence: high   # avoid blocking on heuristic matches
+          save-state: true       # save trusted default-branch baselines
+          comment-pr: true       # post findings as a PR comment
+          upload-sarif: true     # show findings in the Security tab
 ```
+
+The first run has no baseline, so a new-only gate is reported as
+`NOT EVALUATED` and the trusted default-branch run seeds the cache. The
+Marketplace Action is report-only unless `fail-on` is explicitly set.
 
 ## What Makes ActionScope Different
 
