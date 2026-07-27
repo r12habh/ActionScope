@@ -64,10 +64,15 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
         )
 
     for error in result.errors:
+        text = str(error).strip()
         gaps.append(
             CoverageGap(
                 gap_type="analyzer_error",
-                description=str(error).splitlines()[0],
+                description=(
+                    text.splitlines()[0]
+                    if text
+                    else "Analyzer reported an unspecified error."
+                ),
             )
         )
 

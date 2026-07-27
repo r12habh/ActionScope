@@ -148,7 +148,11 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         coverage_gaps = build_coverage_gaps(result)
     coverage_status = "partial" if coverage_gaps else result.coverage_status
     finding_records = list(result.finding_records)
-    if not finding_records:
+    normalization_failed = any(
+        gap.gap_type == "finding_normalization_error"
+        for gap in coverage_gaps
+    )
+    if not finding_records and not normalization_failed:
         from actionscope.findings import build_finding_records
 
         finding_records = build_finding_records(result)

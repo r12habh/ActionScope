@@ -32,6 +32,17 @@ All notable changes to ActionScope are documented here.
 - Scan-state schema version 2 stores stable finding fingerprints for exact
   deltas and excludes raw role ARNs and local checkout paths.
 
+### Fixed
+- Pull-request baselines now clear checkout-provided state and restore only
+  the cache for the exact trusted base commit, preventing workspace or
+  pull-request cache state from bypassing `--new-only` gating.
+- Unmatched IAM policies are normalized as low-confidence findings, partial
+  coverage is explicit in gate decisions, and normalization failures return
+  `NOT EVALUATED` instead of silently passing.
+- Gate write-back is atomic, report-rendering failures are surfaced, and the
+  Marketplace Action's E2E test installs the package from the commit under
+  review before checking gate behavior.
+
 ## [0.4.0] - 2026-07-12
 
 ### Added

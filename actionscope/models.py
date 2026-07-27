@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from actionscope.gating import GateDecision
+    from actionscope.state import ScanDelta
 
 
 class RiskLevel(Enum):
@@ -361,8 +365,8 @@ class ScanResult:
     finding_records: list[FindingRecord] = field(default_factory=list)
     coverage_status: str = "complete"
     coverage_gaps: list[CoverageGap] = field(default_factory=list)
-    gate: object | None = None
-    delta: object | None = None
+    gate: "GateDecision | None" = None
+    delta: "ScanDelta | None" = None
     overall_risk: RiskLevel = RiskLevel.INFO
     errors: list[str] = field(default_factory=list)
 

@@ -34,12 +34,42 @@ def test_action_uses_cache_for_cross_run_baseline() -> None:
     assert "actions/upload-artifact@" not in text
 
 
+def test_action_clears_workspace_state_and_requires_a_cache_match() -> None:
+    text = ACTION_FILE.read_text(encoding="utf-8")
+
+    clear = text.index("rm -f .actionscope/last_scan.json")
+    restore = text.index("uses: actions/cache/restore@")
+    assert clear < restore
+    assert "steps.restore-pr.outputs.cache-matched-key" in text
+    assert "steps.restore-branch.outputs.cache-matched-key" in text
+    assert "github.event_name == 'pull_request_target'" in text
+    pr_restore = text.split(
+        "- name: Restore exact default-branch state for pull request",
+        1,
+    )[1].split(
+        "- name: Restore previous state for trusted branch run",
+        1,
+    )[0]
+    assert "restore-keys:" not in pr_restore
+    assert 'if [ -z "$RESTORED_KEY" ]' in text
+
+
 def test_action_scans_once_and_uses_gate_command() -> None:
     text = ACTION_FILE.read_text(encoding="utf-8")
 
     assert text.count('actionscope scan "$INPUT_PATH"') == 1
     assert "actionscope gate /tmp/actionscope-results.json" in text
     assert "RISK_ORDER" not in text
+
+
+def test_action_surfaces_report_generation_failures() -> None:
+    text = ACTION_FILE.read_text(encoding="utf-8")
+
+    assert 'failed to render $INPUT_OUTPUT_FORMAT report' in text
+    assert "failed to render SARIF report" in text
+    assert "failed to render the PR comment" in text
+    assert '--format "$INPUT_OUTPUT_FORMAT" || true' not in text
+    assert "--format markdown 2>/dev/null" not in text
 
 
 def test_action_only_saves_baseline_on_default_branch_push() -> None:

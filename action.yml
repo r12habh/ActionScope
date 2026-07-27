@@ -84,6 +84,9 @@ outputs:
   gate-status:
     description: 'Gate decision (report_only, passed, failed, or not_evaluated)'
     value: ${{ steps.scan.outputs.gate-status }}
+  gate-exit-code:
+    description: 'Gate exit code (0 pass/report-only, 1 finding failure, 2 not evaluated/error)'
+    value: ${{ steps.scan.outputs.gate-exit-code }}
 
 runs:
   using: 'composite'
@@ -115,7 +118,7 @@ runs:
         REF_NAME: ${{ github.ref_name }}
         COMMIT_SHA: ${{ github.sha }}
       run: |
-        if [ "$EVENT_NAME" = "pull_request" ]; then
+        if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
           BRANCH="$BASE_REF"
           SHA="$BASE_SHA"
         else
@@ -126,8 +129,22 @@ runs:
         echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
         echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-    - name: Restore previous state
+    - name: Clear untrusted workspace state
       if: inputs.load-state == 'true' || inputs.new-only == 'true'
+      shell: bash
+      run: rm -f .actionscope/last_scan.json
+
+    - name: Restore exact default-branch state for pull request
+      id: restore-pr
+      if: (inputs.load-state == 'true' || inputs.new-only == 'true') && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target')
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5
+      with:
+        path: .actionscope/last_scan.json
+        key: ${{ inputs.state-artifact-name }}-${{ steps.baseline.outputs.branch }}-${{ steps.baseline.outputs.sha }}
+
+    - name: Restore previous state for trusted branch run
+      id: restore-branch
+      if: (inputs.load-state == 'true' || inputs.new-only == 'true') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25  # v5
       with:
         path: .actionscope/last_scan.json
@@ -138,8 +155,11 @@ runs:
     - name: Verify restored state
       if: inputs.load-state == 'true' || inputs.new-only == 'true'
       shell: bash
+      env:
+        RESTORED_KEY: ${{ steps.restore-pr.outputs.cache-matched-key || steps.restore-branch.outputs.cache-matched-key }}
       run: |
-        if [ ! -f .actionscope/last_scan.json ]; then
+        if [ -z "$RESTORED_KEY" ] || [ ! -f .actionscope/last_scan.json ]; then
+          rm -f .actionscope/last_scan.json
           echo "::warning::ActionScope: no baseline was restored. New-only gating will be reported as not evaluated."
         fi
 
@@ -206,6 +226,7 @@ runs:
             set -e
           fi
           echo "$GATE_EXIT" > /tmp/actionscope-gate-exit
+          echo "gate-exit-code=$GATE_EXIT" >> "$GITHUB_OUTPUT"
 
           RISK=$(python3 -c "
         import json
@@ -242,15 +263,21 @@ runs:
           echo "credential-sources-count=$COUNT" >> "$GITHUB_OUTPUT"
 
           if [ "$INPUT_OUTPUT_FORMAT" != "json" ]; then
-            actionscope report \
+            if ! actionscope report \
               --from-json /tmp/actionscope-results.json \
-              --format "$INPUT_OUTPUT_FORMAT" || true
+              --format "$INPUT_OUTPUT_FORMAT"; then
+              echo "::warning::ActionScope: failed to render $INPUT_OUTPUT_FORMAT report"
+            fi
           fi
 
           if [ "$INPUT_UPLOAD_SARIF" = "true" ]; then
-            actionscope report \
+            if ! actionscope report \
               --from-json /tmp/actionscope-results.json \
-              --format sarif > /tmp/actionscope-results.sarif || true
+              --format sarif > /tmp/actionscope-results.sarif; then
+              rm -f /tmp/actionscope-results.sarif
+              echo "::error::ActionScope: failed to render SARIF report"
+              exit 2
+            fi
           fi
         fi
 
@@ -275,10 +302,12 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
-        MARKDOWN=$(actionscope report \
+        if ! MARKDOWN=$(actionscope report \
           --from-json /tmp/actionscope-results.json \
-          --format markdown 2>/dev/null || \
-          echo "ActionScope scan complete. See workflow run for details.")
+          --format markdown); then
+          echo "::warning::ActionScope: failed to render the PR comment"
+          MARKDOWN="ActionScope scan complete. See workflow run for details."
+        fi
         gh pr comment "$PR_NUMBER" \
           --body "$MARKDOWN" \
           --edit-last 2>/dev/null || \

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from actionscope.models import (
     AwsCredentialSource,
+    CoverageGap,
     EnvironmentFinding,
     ExposurePath,
     GitHubTokenPermission,
@@ -86,6 +87,32 @@ def test_to_json_is_valid_json() -> None:
     raw = to_json(result)
     data = json.loads(raw)
     assert data["scan_path"] == "/repo"
+
+
+def test_to_json_preserves_normalization_failure_without_retrying(
+    monkeypatch,
+) -> None:
+    def fail_normalization(_result):
+        raise AssertionError("normalization should not be retried")
+
+    monkeypatch.setattr(
+        "actionscope.findings.build_finding_records",
+        fail_normalization,
+    )
+    result = ScanResult(
+        coverage_status="partial",
+        coverage_gaps=[
+            CoverageGap(
+                gap_type="finding_normalization_error",
+                description="normalizer failed",
+            )
+        ],
+    )
+
+    data = json.loads(to_json(result))
+
+    assert data["coverage_status"] == "partial"
+    assert data["finding_records"] == []
 
 
 def test_json_overall_risk_is_lowercase_string_not_enum() -> None:

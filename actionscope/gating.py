@@ -21,6 +21,8 @@ class GateDecision:
     mode: str
     threshold: str | None
     minimum_confidence: str
+    coverage_status: str
+    coverage_gap_count: int
     matching_finding_ids: list[str]
     matching_findings: list[FindingRecord]
     reason: str
@@ -37,7 +39,10 @@ def evaluate_gate(
 ) -> GateDecision:
     """Evaluate a ScanResult without changing or suppressing report output."""
     if not fail_on:
-        return _report_only()
+        return _report_only(
+            result.coverage_status,
+            len(result.coverage_gaps),
+        )
 
     if minimum_confidence is None and not new_only:
         threshold = RiskLevel(fail_on)
@@ -47,18 +52,31 @@ def evaluate_gate(
             mode="all_current",
             threshold=threshold.name.lower(),
             minimum_confidence="legacy",
+            coverage_status=result.coverage_status,
+            coverage_gap_count=len(result.coverage_gaps),
             matching_finding_ids=[],
             matching_findings=[],
             reason=(
                 f"Observed risk {result.overall_risk.name.lower()} "
                 f"{'meets' if failed else 'is below'} the "
                 f"{threshold.name.lower()} threshold."
+                + _coverage_suffix(
+                    result.coverage_status,
+                    len(result.coverage_gaps),
+                )
             ),
             exit_code=1 if failed else 0,
         )
 
     records = list(result.finding_records)
     if not records:
+        if _normalization_failed(result.coverage_gaps):
+            return _invalid_report(
+                "Finding normalization failed, so the confidence-aware gate "
+                "could not be evaluated.",
+                coverage_status=result.coverage_status,
+                coverage_gap_count=len(result.coverage_gaps),
+            )
         from actionscope.findings import build_finding_records
 
         records = build_finding_records(result)
@@ -70,6 +88,8 @@ def evaluate_gate(
         new_only=new_only,
         delta=result.delta,
         require_baseline=require_baseline,
+        coverage_status=result.coverage_status,
+        coverage_gap_count=len(result.coverage_gaps),
     )
 
 
@@ -97,6 +117,18 @@ def evaluate_gate_payload(
                 "Run a new scan before applying a gate."
             )
         records.append(record)
+    coverage_status = str(data.get("coverage_status", "complete"))
+    raw_coverage_gaps = data.get("coverage_gaps")
+    coverage_gaps = (
+        raw_coverage_gaps if isinstance(raw_coverage_gaps, list) else []
+    )
+    if _normalization_failed(coverage_gaps):
+        return _invalid_report(
+            "Finding normalization failed, so the confidence-aware gate "
+            "could not be evaluated.",
+            coverage_status=coverage_status,
+            coverage_gap_count=len(coverage_gaps),
+        )
     delta = data.get("delta") if isinstance(data.get("delta"), dict) else None
     return _evaluate_records(
         records,
@@ -105,6 +137,8 @@ def evaluate_gate_payload(
         new_only=new_only,
         delta=delta,
         require_baseline=require_baseline,
+        coverage_status=coverage_status,
+        coverage_gap_count=len(coverage_gaps),
     )
 
 
@@ -140,11 +174,21 @@ def _evaluate_records(
     new_only: bool,
     delta: object | dict[str, Any] | None,
     require_baseline: bool,
+    coverage_status: str,
+    coverage_gap_count: int,
 ) -> GateDecision:
-    threshold = RiskLevel(fail_on)
-    confidence = FindingConfidence(
-        minimum_confidence or ("high" if new_only else "low")
-    )
+    try:
+        threshold = RiskLevel(fail_on)
+        confidence = FindingConfidence(
+            minimum_confidence or ("high" if new_only else "low")
+        )
+    except ValueError:
+        return _invalid_report(
+            f"Unknown gate threshold {fail_on!r} or confidence "
+            f"{minimum_confidence!r}.",
+            coverage_status=coverage_status,
+            coverage_gap_count=coverage_gap_count,
+        )
     mode = "new_only" if new_only else "all_current"
 
     if new_only and not _has_exact_baseline(delta):
@@ -157,9 +201,12 @@ def _evaluate_records(
             mode=mode,
             threshold=threshold.name.lower(),
             minimum_confidence=confidence.name.lower(),
+            coverage_status=coverage_status,
+            coverage_gap_count=coverage_gap_count,
             matching_finding_ids=[],
             matching_findings=[],
-            reason=reason,
+            reason=reason
+            + _coverage_suffix(coverage_status, coverage_gap_count),
             exit_code=2 if require_baseline else 0,
         )
 
@@ -188,12 +235,15 @@ def _evaluate_records(
         f"{len(candidates)} {scope}finding(s) meet or exceed "
         f"{threshold.name.lower()} severity with at least "
         f"{confidence.name.lower()} confidence."
+        + _coverage_suffix(coverage_status, coverage_gap_count)
     )
     return GateDecision(
         status="failed" if failed else "passed",
         mode=mode,
         threshold=threshold.name.lower(),
         minimum_confidence=confidence.name.lower(),
+        coverage_status=coverage_status,
+        coverage_gap_count=coverage_gap_count,
         matching_finding_ids=[record.fingerprint for record in candidates],
         matching_findings=candidates,
         reason=reason,
@@ -201,30 +251,67 @@ def _evaluate_records(
     )
 
 
-def _report_only() -> GateDecision:
+def _report_only(
+    coverage_status: str = "complete",
+    coverage_gap_count: int = 0,
+) -> GateDecision:
     return GateDecision(
         status="report_only",
         mode="report_only",
         threshold=None,
         minimum_confidence="none",
+        coverage_status=coverage_status,
+        coverage_gap_count=coverage_gap_count,
         matching_finding_ids=[],
         matching_findings=[],
-        reason="No fail-on threshold was configured.",
+        reason=(
+            "No fail-on threshold was configured."
+            + _coverage_suffix(coverage_status, coverage_gap_count)
+        ),
         exit_code=0,
     )
 
 
-def _invalid_report(reason: str) -> GateDecision:
+def _invalid_report(
+    reason: str,
+    *,
+    coverage_status: str = "unknown",
+    coverage_gap_count: int = 0,
+) -> GateDecision:
     return GateDecision(
         status="not_evaluated",
         mode="invalid_report",
         threshold=None,
         minimum_confidence="none",
+        coverage_status=coverage_status,
+        coverage_gap_count=coverage_gap_count,
         matching_finding_ids=[],
         matching_findings=[],
         reason=reason,
         exit_code=2,
     )
+
+
+def _coverage_suffix(status: str, gap_count: int) -> str:
+    if status != "partial" and gap_count == 0:
+        return ""
+    return (
+        f" Coverage is partial ({gap_count} unresolved item(s)); this decision "
+        "applies only to observed findings."
+    )
+
+
+def _normalization_failed(gaps: object) -> bool:
+    if not isinstance(gaps, list):
+        return False
+    for gap in gaps:
+        if isinstance(gap, dict):
+            gap_type = gap.get("gap_type")
+        else:
+            gap_type = getattr(gap, "gap_type", None)
+        if gap_type == "finding_normalization_error":
+            return True
+    return False
 
 
 def _has_exact_baseline(delta: object | dict[str, Any] | None) -> bool:

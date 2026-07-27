@@ -40,7 +40,14 @@ merges.
 
 Enable state saving. ActionScope only writes the shared baseline cache from a
 push to the repository's default branch. Pull requests can restore that
-baseline but cannot replace it.
+baseline but cannot replace it. Pull requests restore only the cache keyed to
+their exact base commit; they never accept a fallback cache created from the
+pull-request workspace.
+
+The baseline represents the current trusted default-branch state, not a
+"clean" scan. It is still saved when that branch reports a gate failure so an
+existing finding on the base branch does not block every unrelated pull
+request. The failing default-branch run remains visible and should be fixed.
 
 ```yaml
 - uses: r12habh/ActionScope@v0

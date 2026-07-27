@@ -303,6 +303,18 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
             "[dim]💡  Provide Terraform or policy JSON in repo for static analysis[/]"
         )
 
+    if binding.policy_source == "no_role":
+        c.print()
+        c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
+        c.print(
+            "[dim]ℹ️  AWS credentials are configured without a statically "
+            "resolvable IAM role.[/]"
+        )
+        c.print(
+            "[dim]💡  Use OIDC role assumption or --aws-verify with an "
+            "identifiable role to inspect effective permissions.[/]"
+        )
+
     c.print()
 
 
@@ -829,7 +841,7 @@ def _render_summary_panel(
 
 def _gate_header_lines(gate: object | None) -> tuple:
     if gate is None:
-        return tuple()
+        return (("\n", ""), ("Gate: REPORT ONLY", "dim"))
     status = str(getattr(gate, "status", "report_only")).upper().replace("_", " ")
     style = {
         "FAILED": "bold red",

@@ -23,6 +23,7 @@ from actionscope.models import (
     ArtifactPoisoningFinding,
     AwsCredentialSource,
     CompromisedActionFinding,
+    CoverageGap,
     EnvironmentFinding,
     ExposurePath,
     GitHubTokenPermission,
@@ -325,9 +326,39 @@ def build_scan_result(
         errors=errors,
     )
     result.overall_risk = overall_risk
-    result.coverage_gaps = build_coverage_gaps(result)
-    result.coverage_status = "partial" if result.coverage_gaps else "complete"
-    result.finding_records = build_finding_records(result)
+    return finalize_scan_metadata(result)
+
+
+def finalize_scan_metadata(result: ScanResult) -> ScanResult:
+    """Build coverage and normalized findings without aborting the scan."""
+    try:
+        result.coverage_gaps = build_coverage_gaps(result)
+    except Exception as exc:
+        message = f"Could not describe scan coverage: {exc}"
+        result.errors.append(message)
+        result.coverage_gaps = [
+            CoverageGap(
+                gap_type="coverage_normalization_error",
+                description=message,
+            )
+        ]
+
+    try:
+        result.finding_records = build_finding_records(result)
+    except Exception as exc:
+        message = f"Could not normalize findings: {exc}"
+        result.errors.append(message)
+        result.finding_records = []
+        result.coverage_gaps.append(
+            CoverageGap(
+                gap_type="finding_normalization_error",
+                description=message,
+            )
+        )
+
+    result.coverage_status = (
+        "partial" if result.coverage_gaps or result.errors else "complete"
+    )
     return result
 
 

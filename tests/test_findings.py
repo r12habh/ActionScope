@@ -12,6 +12,7 @@ from actionscope.models import (
     FindingConfidence,
     IamAction,
     PolicyFinding,
+    ReusableWorkflowReference,
     RiskLevel,
     ScanResult,
     WorkflowCredentialBinding,
@@ -247,3 +248,90 @@ def test_analyzer_error_marks_coverage_partial() -> None:
     gaps = build_coverage_gaps(result)
 
     assert gaps[0].gap_type == "analyzer_error"
+
+
+def test_empty_analyzer_error_does_not_break_coverage() -> None:
+    gaps = build_coverage_gaps(ScanResult(errors=[""]))
+
+    assert len(gaps) == 1
+    assert gaps[0].gap_type == "analyzer_error"
+    assert gaps[0].description == "Analyzer reported an unspecified error."
+
+
+def test_unmatched_policy_is_normalized_at_low_confidence() -> None:
+    policy = PolicyFinding(
+        source_file="terraform/unmatched.tf",
+        source_type="terraform",
+        role_arn="arn:aws:iam::123456789012:role/unmatched",
+        actions=[
+            IamAction(
+                action="iam:CreateAccessKey",
+                access_level="Permissions management",
+                risk_level=RiskLevel.CRITICAL,
+                description="Create an access key",
+                resource="*",
+            )
+        ],
+        overall_risk=RiskLevel.CRITICAL,
+    )
+
+    records = build_finding_records(ScanResult(policy_findings=[policy]))
+
+    assert len(records) == 1
+    assert records[0].rule_id == "AS001"
+    assert records[0].confidence is FindingConfidence.LOW
+
+
+def test_uninspected_reusable_workflow_is_not_gate_eligible() -> None:
+    reference = ReusableWorkflowReference(
+        caller_workflow=".github/workflows/caller.yml",
+        caller_job="scan",
+        uses="external/repo/.github/workflows/reuse.yml@v1",
+        target_workflow=".github/workflows/reuse.yml",
+        repository="external/repo",
+        ref="v1",
+        pin_type="tag",
+        is_local=False,
+        status="no_token",
+        depth=1,
+    )
+    result = ScanResult(reusable_workflows=[reference])
+
+    records = build_finding_records(result)
+    gaps = build_coverage_gaps(result)
+
+    assert records[0].rule_id == "AS015"
+    assert records[0].gate_eligible is False
+    assert gaps[0].gap_type == "uninspected_reusable_workflow"
+
+
+def test_out_of_tree_paths_do_not_collide_or_leak_absolute_paths(
+    tmp_path: Path,
+) -> None:
+    first = PolicyFinding(
+        source_file=str(tmp_path / "one" / "iam.tf"),
+        source_type="terraform",
+        role_arn=None,
+        overall_risk=RiskLevel.HIGH,
+    )
+    second = PolicyFinding(
+        source_file=str(tmp_path / "two" / "iam.tf"),
+        source_type="terraform",
+        role_arn=None,
+        overall_risk=RiskLevel.HIGH,
+    )
+    result = ScanResult(
+        scan_path=str(tmp_path / "repo"),
+        policy_findings=[first, second],
+    )
+
+    records = build_finding_records(result)
+
+    assert len(records) == 2
+    assert len({record.fingerprint for record in records}) == 2
+    assert all(
+        record.workflow_file
+        and record.workflow_file.startswith("_external/")
+        for record in records
+    )
+    assert all(str(tmp_path) not in (record.workflow_file or "") for record in records)

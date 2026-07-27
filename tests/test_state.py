@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from actionscope.findings import build_finding_records
 from actionscope.models import (
     CompromisedActionFinding,
+    CoverageGap,
     ExposurePath,
     RiskLevel,
     ScanResult,
@@ -179,6 +181,33 @@ def test_compute_delta_tracks_exact_finding_ids(tmp_path: Path) -> None:
     assert "tj-actions/changed-files" in delta.new_findings[0].title
 
 
+def test_compute_delta_tracks_resolved_finding_ids(tmp_path: Path) -> None:
+    baseline = ScanResult(
+        compromised_action_findings=[
+            _compromised(),
+            _compromised("tj-actions/changed-files"),
+        ]
+    )
+    state_file = tmp_path / "baseline.json"
+    save_scan_state(baseline, "/repo", str(state_file))
+    previous = load_scan_state(str(state_file))
+    assert previous is not None
+    previous_ids = {
+        str(item["fingerprint"])
+        for item in previous["findings"]
+        if isinstance(item, dict)
+    }
+
+    current = ScanResult(compromised_action_findings=[_compromised()])
+    delta = compute_delta(previous, current)
+
+    current_ids = {
+        record.fingerprint for record in build_finding_records(current)
+    }
+    assert len(delta.resolved_finding_ids) == 1
+    assert set(delta.resolved_finding_ids) == previous_ids - current_ids
+
+
 def test_state_does_not_store_raw_role_arn(tmp_path: Path) -> None:
     path = ExposurePath(
         workflow_file=".github/workflows/deploy.yml",
@@ -212,6 +241,29 @@ def test_state_does_not_store_absolute_checkout_path(tmp_path: Path) -> None:
     payload = json.loads(state_file.read_text(encoding="utf-8"))
     assert payload["repo_path"] == "."
     assert "/Users/example" not in state_file.read_text(encoding="utf-8")
+
+
+def test_normalization_failure_state_is_not_an_exact_baseline(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "baseline.json"
+    result = ScanResult(
+        coverage_status="partial",
+        coverage_gaps=[
+            CoverageGap(
+                gap_type="finding_normalization_error",
+                description="normalizer failed",
+            )
+        ],
+    )
+
+    save_scan_state(result, "/repo", str(state_file))
+    previous = load_scan_state(str(state_file))
+    assert previous is not None
+    delta = compute_delta(previous, ScanResult())
+
+    assert previous["findings_valid"] is False
+    assert delta.exact_finding_delta is False
 
 
 def test_state_file_written_atomically_without_tmp_leftover(tmp_path: Path) -> None:

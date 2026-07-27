@@ -11,6 +11,7 @@ from actionscope.models import (
     FindingRecord,
     RiskLevel,
     ScanResult,
+    get_unmatched_findings,
 )
 
 
@@ -103,6 +104,77 @@ def build_finding_records(result: ScanResult) -> list[FindingRecord]:
                     "Static AWS credentials used",
                     source.workflow_file,
                     source.job_name,
+                    role,
+                )
+            )
+
+    for finding in get_unmatched_findings(
+        result.bindings,
+        result.policy_findings,
+    ):
+        role = finding.role_arn or finding.role_name or "(unmatched policy)"
+        source_file = _relative_path(finding.source_file, result.scan_path)
+        reportable_actions = [
+            action
+            for action in finding.actions
+            if action.risk_level > RiskLevel.INFO
+        ]
+        for action in reportable_actions:
+            records.append(
+                _record(
+                    result,
+                    "AS001",
+                    action.risk_level,
+                    FindingConfidence.LOW,
+                    f"Unmatched AWS permission: {action.action} on {action.resource}",
+                    source_file,
+                    None,
+                    "unmatched_policy",
+                    role,
+                    action.action.lower(),
+                    action.resource,
+                )
+            )
+        if finding.overall_risk > RiskLevel.INFO and not reportable_actions:
+            records.append(
+                _record(
+                    result,
+                    "AS001",
+                    finding.overall_risk,
+                    FindingConfidence.LOW,
+                    f"Unmatched IAM policy risk detected for {role}",
+                    source_file,
+                    None,
+                    "unmatched_policy",
+                    role,
+                )
+            )
+        for path in finding.privesc_paths:
+            records.append(
+                _record(
+                    result,
+                    "AS002",
+                    path.severity,
+                    FindingConfidence.LOW,
+                    f"Unmatched privilege escalation path: {path.path_name}",
+                    source_file,
+                    None,
+                    "unmatched_policy",
+                    role,
+                    path.path_id,
+                )
+            )
+        if finding.has_passrole:
+            records.append(
+                _record(
+                    result,
+                    "AS003",
+                    RiskLevel.CRITICAL,
+                    FindingConfidence.LOW,
+                    f"iam:PassRole detected in unmatched policy for {role}",
+                    source_file,
+                    None,
+                    "unmatched_policy",
                     role,
                 )
             )
@@ -320,7 +392,8 @@ def _relative_path(value: str | None, scan_path: str) -> str:
     try:
         return path.resolve().relative_to(Path(scan_path).resolve()).as_posix()
     except (OSError, ValueError):
-        return path.name
+        digest = hashlib.sha256(path.as_posix().encode("utf-8")).hexdigest()[:12]
+        return f"_external/{digest}/{path.name}"
 
 
 def _match_confidence(value: str) -> FindingConfidence:

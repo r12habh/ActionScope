@@ -248,7 +248,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: r12habh/ActionScope@v0
         with:
-          fail-on: high          # block HIGH/CRITICAL findings
+          fail-on: high          # block new, high-confidence HIGH/CRITICAL findings
           new-only: true         # only newly gate-eligible findings
           min-confidence: high   # avoid blocking on heuristic matches
           save-state: true       # seed baseline from the default branch

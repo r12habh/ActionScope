@@ -47,10 +47,11 @@ def save_scan_state(
     repo_path: str,
     state_file: str = DEFAULT_STATE_FILE,
 ) -> None:
-    """Save a compact scan-result state for future comparison."""
+    """Save compact state; repo_path is retained for API compatibility."""
+    _ = repo_path
     state_path = Path(state_file)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = _state_payload(result, repo_path)
+    payload = _state_payload(result)
     tmp_path = state_path.with_name(f"{state_path.name}.tmp")
     tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     os.replace(tmp_path, state_path)
@@ -72,15 +73,15 @@ def compute_delta(
     current_result,
 ) -> ScanDelta:
     """Compute the difference between a previous state and current result."""
-    current_state = _state_payload(
-        current_result,
-        getattr(current_result, "scan_path", "."),
-    )
     current_records = list(getattr(current_result, "finding_records", []))
     if not current_records:
         from actionscope.findings import build_finding_records
 
         current_records = build_finding_records(current_result)
+    current_state = _state_payload(
+        current_result,
+        records=current_records,
+    )
     current_risk = str(current_state["overall_risk"])
     if previous_state is None:
         return ScanDelta(
@@ -115,6 +116,7 @@ def compute_delta(
     current_actions = set(_list(current_state.get("compromised_actions")))
     exact_finding_delta = (
         previous_state.get("schema_version") == 2
+        and previous_state.get("findings_valid", True) is True
         and isinstance(previous_state.get("findings"), list)
     )
     baseline_findings = (
@@ -199,15 +201,27 @@ def compute_delta(
     )
 
 
-def _state_payload(result, repo_path: str) -> dict[str, Any]:
-    records = list(getattr(result, "finding_records", []))
-    if not records:
-        from actionscope.findings import build_finding_records
+def _state_payload(
+    result,
+    *,
+    records: list[FindingRecord] | None = None,
+) -> dict[str, Any]:
+    findings_valid = not any(
+        getattr(gap, "gap_type", None) == "finding_normalization_error"
+        for gap in getattr(result, "coverage_gaps", [])
+    )
+    if records is None:
+        records = list(getattr(result, "finding_records", []))
+        if not records and findings_valid:
+            from actionscope.findings import build_finding_records
 
-        records = build_finding_records(result)
+            records = build_finding_records(result)
+    else:
+        records = list(records)
     finding_types = sorted(_finding_types(result))
     return {
         "schema_version": 2,
+        "findings_valid": findings_valid,
         "saved_at": datetime.now(timezone.utc).isoformat(),
         # State may be persisted in a shared CI cache. Do not retain the
         # developer or runner's absolute checkout path.

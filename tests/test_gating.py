@@ -7,6 +7,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import actionscope.cli as cli_module
 from actionscope.cli import main
 from actionscope.gating import evaluate_gate, evaluate_gate_payload
 from actionscope.models import (
@@ -23,6 +24,7 @@ def _record(
     *,
     risk: RiskLevel = RiskLevel.HIGH,
     confidence: FindingConfidence = FindingConfidence.HIGH,
+    gate_eligible: bool = True,
 ) -> FindingRecord:
     return FindingRecord(
         fingerprint=fingerprint,
@@ -32,6 +34,7 @@ def _record(
         title=f"Finding {fingerprint}",
         workflow_file=".github/workflows/test.yml",
         job_name="test",
+        gate_eligible=gate_eligible,
     )
 
 
@@ -63,6 +66,24 @@ def test_legacy_gate_uses_aggregate_risk() -> None:
 
 def test_minimum_confidence_filters_low_confidence_finding() -> None:
     result = _result(_record("one", confidence=FindingConfidence.LOW))
+
+    decision = evaluate_gate(
+        result,
+        "high",
+        minimum_confidence="high",
+    )
+
+    assert decision.status == "passed"
+
+
+def test_ineligible_finding_does_not_fail_gate() -> None:
+    result = _result(
+        _record(
+            "informational",
+            risk=RiskLevel.CRITICAL,
+            gate_eligible=False,
+        )
+    )
 
     decision = evaluate_gate(
         result,
@@ -247,6 +268,45 @@ def test_payload_gate_rejects_malformed_record() -> None:
     assert decision.exit_code == 2
 
 
+def test_payload_gate_rejects_invalid_policy_values() -> None:
+    decision = evaluate_gate_payload(
+        {"finding_records": []},
+        "urgent",
+        minimum_confidence="certain",
+    )
+
+    assert decision.status == "not_evaluated"
+    assert decision.exit_code == 2
+
+
+def test_partial_coverage_is_explicit_in_gate_reason() -> None:
+    data = {
+        "finding_records": [],
+        "coverage_status": "partial",
+        "coverage_gaps": [{"gap_type": "unresolved_role_policy"}],
+    }
+
+    decision = evaluate_gate_payload(data, "high")
+
+    assert decision.status == "passed"
+    assert decision.coverage_status == "partial"
+    assert decision.coverage_gap_count == 1
+    assert "applies only to observed findings" in decision.reason
+
+
+def test_normalization_failure_is_not_evaluated() -> None:
+    data = {
+        "finding_records": [],
+        "coverage_status": "partial",
+        "coverage_gaps": [{"gap_type": "finding_normalization_error"}],
+    }
+
+    decision = evaluate_gate_payload(data, "high")
+
+    assert decision.status == "not_evaluated"
+    assert decision.exit_code == 2
+
+
 def test_gate_command_writes_decision_back(tmp_path: Path) -> None:
     report = tmp_path / "report.json"
     report.write_text(
@@ -281,6 +341,37 @@ def test_gate_command_writes_decision_back(tmp_path: Path) -> None:
     assert result.exit_code == 1
     updated = json.loads(report.read_text(encoding="utf-8"))
     assert updated["gate"]["status"] == "failed"
+    assert not (tmp_path / "report.json.tmp").exists()
+
+
+def test_gate_write_back_preserves_report_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    report = tmp_path / "report.json"
+    original = json.dumps({"finding_records": []})
+    report.write_text(original, encoding="utf-8")
+
+    def fail_replace(_source, _target):
+        raise OSError("disk error")
+
+    monkeypatch.setattr(cli_module.os, "replace", fail_replace)
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "gate",
+            str(report),
+            "--fail-on",
+            "high",
+            "--write-back",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "could not update" in result.output
+    assert report.read_text(encoding="utf-8") == original
+    assert not (tmp_path / "report.json.tmp").exists()
 
 
 def test_gate_command_requires_new_only_for_required_baseline(
