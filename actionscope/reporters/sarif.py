@@ -872,12 +872,17 @@ def _apply_result_severity_overrides(
 ) -> None:
     if not isinstance(overrides, dict):
         return
+    normalized_overrides = {
+        str(rule_id).upper(): risk for rule_id, risk in overrides.items()
+    }
     for result in results:
-        raw_risk = overrides.get(str(result.get("ruleId", "")))
+        raw_risk = normalized_overrides.get(
+            str(result.get("ruleId", "")).upper()
+        )
         if not isinstance(raw_risk, str):
             continue
         try:
-            risk = RiskLevel(raw_risk)
+            risk = RiskLevel(raw_risk.lower())
         except ValueError:
             continue
         result["level"] = RISK_TO_SARIF_SEVERITY[risk]

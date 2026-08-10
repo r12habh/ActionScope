@@ -79,6 +79,8 @@ def evaluate_gate(
 
     records = list(result.finding_records)
     if not records:
+        # Order matters: normalization failures must fail closed before an
+        # empty configured record set is accepted as "all findings suppressed."
         if _normalization_failed(result.coverage_gaps):
             return _invalid_report(
                 "Finding normalization failed, so the confidence-aware gate "
@@ -86,6 +88,8 @@ def evaluate_gate(
                 coverage_status=result.coverage_status,
                 coverage_gap_count=len(result.coverage_gaps),
             )
+        # A configured scan already contains its final record set. Rebuilding
+        # here would reintroduce findings that the repository policy suppressed.
         if not result.config_applied:
             from actionscope.findings import build_finding_records
 

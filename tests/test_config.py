@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
 from actionscope.cli import main
 from actionscope.config import (
+    MAX_CONFIG_BYTES,
     ActionScopeConfig,
     ConfigError,
     CustomPrivescPath,
@@ -18,21 +20,26 @@ from actionscope.config import (
     add_custom_privesc_paths,
     apply_action_overrides,
     apply_result_configuration,
+    apply_severity_overrides_to_findings,
     load_config,
     recompute_policy_risk,
     write_starter_config,
 )
+from actionscope.findings import build_finding_records
 from actionscope.gating import evaluate_gate
 from actionscope.models import (
     CoverageGap,
     FindingConfidence,
     FindingRecord,
+    GitHubTokenPermission,
     IamAction,
     PolicyFinding,
     RiskLevel,
     ScanResult,
 )
+from actionscope.reporters.markdown import to_markdown_from_dict
 from actionscope.reporters.sarif import to_sarif_from_dict
+from actionscope.reporters.terminal import render_from_dict
 
 
 def _write_config(path: Path, body: str) -> Path:
@@ -136,6 +143,34 @@ suppress:
             "YYYY-MM-DD",
         ),
         ("version: 1\nhard_blocks: [not-an-action]\n", "invalid IAM action"),
+        (
+            "version: 1\nsuppress:\n"
+            "  - rule: AS006\n"
+            "    reason: first\n"
+            "    expires: 2099-01-01\n"
+            "  - rule: AS006\n"
+            "    reason: second\n"
+            "    expires: 2099-01-01\n",
+            "duplicates",
+        ),
+        (
+            "version: 1\ncustom_privesc_paths:\n"
+            "  - id: duplicate\n"
+            "    name: First\n"
+            "    required_actions: [iam:PassRole]\n"
+            "    description: First path.\n"
+            "    severity: high\n"
+            "  - id: duplicate\n"
+            "    name: Second\n"
+            "    required_actions: [iam:CreateRole]\n"
+            "    description: Second path.\n"
+            "    severity: critical\n",
+            "duplicates",
+        ),
+        (
+            "version: 1\nseverity_overrides:\n  AS099: low\n",
+            "unknown rule ID",
+        ),
     ],
 )
 def test_load_config_rejects_invalid_configuration(
@@ -146,6 +181,30 @@ def test_load_config_rejects_invalid_configuration(
     config_path = _write_config(tmp_path / ".actionscope.yml", body)
 
     with pytest.raises(ConfigError, match=expected):
+        load_config(str(tmp_path), config_path)
+
+
+def test_load_config_normalizes_yaml_datetime_expiry(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path / ".actionscope.yml",
+        "version: 1\nsuppress:\n"
+        "  - rule: AS006\n"
+        "    reason: Temporary exception.\n"
+        "    expires: 2099-12-31 00:00:00\n",
+    )
+
+    config = load_config(str(tmp_path), config_path)
+
+    assert config.suppressions[0].expires == date(2099, 12, 31)
+
+
+def test_load_config_rejects_oversized_file(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path / ".actionscope.yml",
+        "version: 1\n# " + ("x" * MAX_CONFIG_BYTES),
+    )
+
+    with pytest.raises(ConfigError, match="exceeds"):
         load_config(str(tmp_path), config_path)
 
 
@@ -220,6 +279,43 @@ def test_action_override_precedence_is_hard_block_then_critical_then_accepted(
     assert finding.overall_risk is RiskLevel.CRITICAL
 
 
+@pytest.mark.parametrize("grant", ["iam:*", "*"])
+def test_hard_block_matches_wildcard_iam_grant(grant: str) -> None:
+    finding = PolicyFinding(
+        source_file="iam.json",
+        source_type="json_policy",
+        role_arn=None,
+        actions=[_action(grant, RiskLevel.HIGH)],
+    )
+    config = ActionScopeConfig(
+        source_path=".actionscope.yml",
+        hard_blocks=("iam:createuser",),
+    )
+
+    hard_blocks = apply_action_overrides(finding, config)
+
+    assert hard_blocks[0].action == grant
+    assert finding.actions[0].risk_level is RiskLevel.CRITICAL
+
+
+def test_hard_block_does_not_match_disjoint_wildcard_grant() -> None:
+    finding = PolicyFinding(
+        source_file="iam.json",
+        source_type="json_policy",
+        role_arn=None,
+        actions=[_action("iam:Get*", RiskLevel.HIGH)],
+    )
+    config = ActionScopeConfig(
+        source_path=".actionscope.yml",
+        hard_blocks=("iam:createuser",),
+    )
+
+    hard_blocks = apply_action_overrides(finding, config)
+
+    assert hard_blocks == []
+    assert finding.actions[0].risk_level is RiskLevel.HIGH
+
+
 def test_custom_privesc_path_is_added_when_all_actions_match() -> None:
     finding = PolicyFinding(
         source_file="iam.json",
@@ -247,6 +343,58 @@ def test_custom_privesc_path_is_added_when_all_actions_match() -> None:
     assert finding.privesc_paths[0].path_id == "decrypt_s3"
     assert finding.has_privilege_escalation is True
     assert finding.overall_risk is RiskLevel.HIGH
+
+
+def test_as002_override_applies_to_custom_privesc_path() -> None:
+    finding = PolicyFinding(
+        source_file="iam.json",
+        source_type="json_policy",
+        role_arn=None,
+        actions=[_action("s3:GetObject"), _action("kms:Decrypt")],
+    )
+    config = ActionScopeConfig(
+        source_path=".actionscope.yml",
+        custom_privesc_paths=(
+            CustomPrivescPath(
+                path_id="decrypt_s3",
+                name="Decrypt S3 data",
+                required_actions=("s3:getobject", "kms:decrypt"),
+                description="Can read and decrypt protected objects.",
+                severity=RiskLevel.CRITICAL,
+                example_attack="Read encrypted objects and decrypt them.",
+            ),
+        ),
+        severity_overrides={"AS002": RiskLevel.LOW},
+    )
+    add_custom_privesc_paths(finding, config)
+    result = ScanResult(policy_findings=[finding])
+
+    apply_severity_overrides_to_findings(result, config)
+
+    assert finding.privesc_paths[0].severity is RiskLevel.LOW
+
+
+def test_noop_config_preserves_low_github_token_risk() -> None:
+    permission = GitHubTokenPermission(
+        workflow_file=".github/workflows/ci.yml",
+        job_name="test",
+        scope="contents",
+        access="read",
+        risk_level=RiskLevel.LOW,
+    )
+    result = ScanResult(github_token_permissions=[permission])
+    result.finding_records = build_finding_records(result)
+
+    apply_result_configuration(
+        result,
+        ActionScopeConfig(source_path=".actionscope.yml"),
+    )
+
+    assert result.overall_risk is RiskLevel.LOW
+    assert result.finding_records[0].rule_id == "AS004"
+    assert result.finding_records[0].risk_level is RiskLevel.LOW
+    assert result.finding_count_by_risk(RiskLevel.LOW) == 1
+    assert result.findings_by_risk(RiskLevel.LOW) == [permission]
 
 
 def test_result_configuration_suppresses_rule_and_overrides_severity() -> None:
@@ -287,7 +435,8 @@ def test_configuration_does_not_hide_normalization_failure() -> None:
             ),
         ),
     )
-    result = ScanResult(overall_risk=RiskLevel.HIGH)
+    result = ScanResult()
+    # ScanResult.__post_init__ recomputes constructor risk, so set it explicitly.
     result.overall_risk = RiskLevel.HIGH
     result.coverage_status = "partial"
     result.coverage_gaps = [
@@ -328,7 +477,12 @@ def test_cli_hard_block_fails_without_fail_on(
 ) -> None:
     _write_config(
         cli_repo_critical / ".actionscope.yml",
-        "version: 1\nhard_blocks: [iam:PassRole]\n",
+        "version: 1\n"
+        "hard_blocks: [iam:PassRole]\n"
+        "suppress:\n"
+        "  - rule: AS001\n"
+        "    reason: Must not neutralize a hard block.\n"
+        "    expires: 2099-12-31\n",
     )
 
     result = CliRunner().invoke(
@@ -388,9 +542,13 @@ suppress:
     )
 
     assert gate_result.exit_code == 0
-    assert "Suppressed from CI gates and SARIF" in gate_result.output
+    assert "AS006" in gate_result.output
     payload = json.loads(json_result.stdout)
-    assert payload["finding_records"] == []
+    assert all(
+        record["rule_id"] != "AS006"
+        for record in payload["finding_records"]
+    )
+    assert payload["applied_suppressions"][0]["rule_id"] == "AS006"
     report_path = tmp_path / "scan.json"
     report_path.write_text(json_result.stdout, encoding="utf-8")
     saved_gate = CliRunner().invoke(
@@ -435,8 +593,16 @@ def test_saved_json_sarif_renderer_honors_suppressions() -> None:
         ],
         "configuration": {
             "applied": True,
-            "severity_overrides": {},
+            "severity_overrides": {"as014": "low"},
         },
+        "environment_findings": [
+            {
+                "workflow_file": ".github/workflows/deploy.yml",
+                "job_name": "deploy",
+                "risk_level": "medium",
+                "description": "Deploy job has no protected environment.",
+            }
+        ],
         "applied_suppressions": [
             {
                 "rule_id": "AS006",
@@ -449,4 +615,54 @@ def test_saved_json_sarif_renderer_honors_suppressions() -> None:
 
     sarif = json.loads(to_sarif_from_dict(payload))
 
-    assert sarif["runs"][0]["results"] == []
+    results = sarif["runs"][0]["results"]
+    assert [result["ruleId"] for result in results] == ["AS014"]
+    assert results[0]["level"] == "note"
+    assert results[0]["properties"]["security-severity"] == "3.0"
+
+
+def test_saved_json_markdown_renders_policy_overrides_and_warnings() -> None:
+    markdown = to_markdown_from_dict(
+        {
+            "configuration": {
+                "applied": True,
+                "path": ".actionscope.yml",
+                "severity_overrides": {"AS014": "low"},
+                "warnings": ["Suppression AS006 expired and was not applied."],
+            }
+        }
+    )
+
+    assert "`AS014=low`" in markdown
+    assert "Suppression AS006 expired" in markdown
+
+
+def test_saved_json_terminal_treats_policy_values_as_literal_text() -> None:
+    console = Console(record=True, width=120, color_system=None)
+
+    render_from_dict(
+        {
+            "scan_path": ".",
+            "summary": {},
+            "configuration": {
+                "applied": True,
+                "path": "[red]policy.yml[/red]",
+                "severity_overrides": {"AS014": "low"},
+                "warnings": ["[red]expired[/red]"],
+            },
+            "applied_suppressions": [
+                {
+                    "rule_id": "AS006",
+                    "reason": "[red]literal reason[/red]",
+                    "expires": "2099-12-31",
+                    "finding_count": 1,
+                }
+            ],
+        },
+        console,
+    )
+
+    rendered = console.export_text()
+    assert "[red]policy.yml[/red]" in rendered
+    assert "[red]literal reason[/red]" in rendered
+    assert "[red]expired[/red]" in rendered

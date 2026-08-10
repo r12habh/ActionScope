@@ -6,7 +6,7 @@ import fnmatch
 import os
 import re
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ from actionscope.models import (
 )
 
 CONFIG_FILENAME = ".actionscope.yml"
+MAX_CONFIG_BYTES = 256 * 1024
 VALID_RULE_IDS = frozenset(f"AS{number:03d}" for number in range(1, 17))
 _ACTION_PATTERN = re.compile(
     r"^(?:\*|[a-z0-9][a-z0-9-]*):(?:\*|[a-z0-9_*?]+)$",
@@ -155,8 +156,17 @@ def load_config(
         raise ConfigError(f"configuration path is not a file: {path}")
 
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        with path.open("rb") as config_file:
+            content = config_file.read(MAX_CONFIG_BYTES + 1)
+    except OSError as exc:
+        raise ConfigError(f"could not read {path}: {exc}") from exc
+    if len(content) > MAX_CONFIG_BYTES:
+        raise ConfigError(
+            f"{path}: configuration exceeds the {MAX_CONFIG_BYTES}-byte limit"
+        )
+    try:
+        raw = yaml.safe_load(content.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError) as exc:
         raise ConfigError(f"could not read {path}: {exc}") from exc
 
     if not isinstance(raw, dict):
@@ -226,9 +236,11 @@ def apply_action_overrides(
     """Apply IAM action severity policy and return hard-block matches."""
     hard_blocks: list[HardBlockFinding] = []
     for action in finding.actions:
-        normalized = action.action.lower()
-        if _matches_any(normalized, config.hard_blocks):
-            action.risk_level = RiskLevel.CRITICAL
+        hard_blocked = _grant_matches_any(action.action, config.hard_blocks)
+        configured_risk = _configured_risk(action.action, config)
+        if configured_risk is not None:
+            action.risk_level = configured_risk
+        if hard_blocked:
             hard_blocks.append(
                 HardBlockFinding(
                     action=action.action,
@@ -238,10 +250,6 @@ def apply_action_overrides(
                     role_name=finding.role_name,
                 )
             )
-        elif _matches_any(normalized, config.critical_actions):
-            action.risk_level = RiskLevel.CRITICAL
-        elif _matches_any(normalized, config.accepted_risks):
-            action.risk_level = RiskLevel.LOW
     return hard_blocks
 
 
@@ -262,7 +270,7 @@ def add_custom_privesc_paths(
                 (
                     action
                     for action in actions
-                    if fnmatch.fnmatchcase(action, requirement)
+                    if _grant_matches_pattern(action, requirement)
                 ),
                 None,
             )
@@ -320,8 +328,9 @@ def apply_result_configuration(
         )
         return result
 
+    configured_suppressions = config.active_suppressions
     active_suppressions = {
-        item.rule_id: item for item in config.active_suppressions
+        item.rule_id: item for item in configured_suppressions
     }
     suppression_counts = {rule_id: 0 for rule_id in active_suppressions}
     active_records: list[FindingRecord] = []
@@ -345,7 +354,7 @@ def apply_result_configuration(
             expires=suppression.expires.isoformat(),
             finding_count=suppression_counts[suppression.rule_id],
         )
-        for suppression in config.active_suppressions
+        for suppression in configured_suppressions
     ]
     effective_risks = [record.risk_level for record in active_records]
     if result.hard_block_findings:
@@ -366,15 +375,12 @@ def apply_severity_overrides_to_findings(
     if "AS001" in overrides:
         for finding in result.policy_findings:
             for action in finding.actions:
-                normalized = action.action.lower()
-                if _matches_any(normalized, config.hard_blocks):
-                    action.risk_level = RiskLevel.CRITICAL
-                elif _matches_any(normalized, config.critical_actions):
-                    action.risk_level = RiskLevel.CRITICAL
-                elif _matches_any(normalized, config.accepted_risks):
-                    action.risk_level = RiskLevel.LOW
-                else:
-                    action.risk_level = overrides["AS001"]
+                configured_risk = _configured_risk(action.action, config)
+                action.risk_level = (
+                    configured_risk
+                    if configured_risk is not None
+                    else overrides["AS001"]
+                )
     if "AS002" in overrides:
         for finding in result.policy_findings:
             for path in finding.privesc_paths:
@@ -596,6 +602,8 @@ def _risk_level(value: object, label: str) -> RiskLevel:
 
 
 def _expiry_date(value: object, label: str) -> date:
+    if isinstance(value, datetime):
+        return value.date()
     if isinstance(value, date):
         return value
     if isinstance(value, str):
@@ -613,8 +621,81 @@ def _required_string(item: dict[str, Any], key: str, label: str) -> str:
     return value.strip()
 
 
+def _configured_risk(
+    action: str,
+    config: ActionScopeConfig,
+) -> RiskLevel | None:
+    """Return the highest-precedence repository risk for an IAM grant."""
+    normalized = action.lower()
+    if _grant_matches_any(normalized, config.hard_blocks):
+        return RiskLevel.CRITICAL
+    if _grant_matches_any(normalized, config.critical_actions):
+        return RiskLevel.CRITICAL
+    # An accepted-risk pattern may contain a wildcard, but a wildcard grant
+    # must not be downgraded merely because it overlaps one accepted action.
+    if _matches_any(normalized, config.accepted_risks):
+        return RiskLevel.LOW
+    return None
+
+
+def _grant_matches_any(grant: str, patterns: tuple[str, ...]) -> bool:
+    """Return True when an IAM grant can include a configured action pattern."""
+    return any(_grant_matches_pattern(grant, pattern) for pattern in patterns)
+
+
+def _grant_matches_pattern(grant: str, pattern: str) -> bool:
+    """Conservatively test whether two IAM action patterns can overlap."""
+    normalized_grant = grant.lower()
+    normalized_pattern = pattern.lower()
+    if fnmatch.fnmatchcase(normalized_grant, normalized_pattern):
+        return True
+    if not any(marker in normalized_grant for marker in "*?"):
+        return False
+    if normalized_grant == "*":
+        return True
+    if ":" not in normalized_grant or ":" not in normalized_pattern:
+        return fnmatch.fnmatchcase(normalized_pattern, normalized_grant)
+
+    grant_service, grant_action = normalized_grant.split(":", 1)
+    pattern_service, pattern_action = normalized_pattern.split(":", 1)
+    if (
+        grant_service != "*"
+        and pattern_service != "*"
+        and grant_service != pattern_service
+    ):
+        return False
+    if fnmatch.fnmatchcase(normalized_pattern, normalized_grant):
+        return True
+
+    # When both action names contain globs, reject clearly disjoint literal
+    # prefixes and otherwise fail closed. IAM wildcard grants should not bypass
+    # a hard block merely because neither raw pattern matches the other.
+    grant_prefix = re.split(r"[*?]", grant_action, maxsplit=1)[0]
+    pattern_prefix = re.split(r"[*?]", pattern_action, maxsplit=1)[0]
+    if (
+        grant_prefix
+        and pattern_prefix
+        and not grant_prefix.startswith(pattern_prefix)
+        and not pattern_prefix.startswith(grant_prefix)
+    ):
+        return False
+    grant_suffix = re.split(r"[*?]", grant_action)[-1]
+    pattern_suffix = re.split(r"[*?]", pattern_action)[-1]
+    if (
+        grant_suffix
+        and pattern_suffix
+        and not grant_suffix.endswith(pattern_suffix)
+        and not pattern_suffix.endswith(grant_suffix)
+    ):
+        return False
+    return True
+
+
 def _matches_any(action: str, patterns: tuple[str, ...]) -> bool:
-    return any(fnmatch.fnmatchcase(action, pattern) for pattern in patterns)
+    normalized = action.lower()
+    return any(
+        fnmatch.fnmatchcase(normalized, pattern.lower()) for pattern in patterns
+    )
 
 
 def _set_risk(findings: list, risk: RiskLevel | None) -> None:

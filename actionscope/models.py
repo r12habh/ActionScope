@@ -427,17 +427,18 @@ class ScanResult:
 
     def has_critical_findings(self) -> bool:
         """Return True when any finding reaches critical severity."""
-        return bool(self.findings_by_risk(RiskLevel.CRITICAL))
+        return self.finding_count_by_risk(RiskLevel.CRITICAL) > 0
+
+    def finding_count_by_risk(self, level: RiskLevel) -> int:
+        """Count effective findings at a risk level after configuration."""
+        if self.config_applied:
+            return sum(
+                finding.risk_level == level for finding in self.finding_records
+            )
+        return len(self.findings_by_risk(level))
 
     def findings_by_risk(self, level: RiskLevel) -> list:
-        """Return policy and GitHub token findings matching a risk level."""
-        if self.config_applied:
-            return [
-                finding
-                for finding in self.finding_records
-                if finding.risk_level == level
-            ]
-
+        """Return detector findings matching a risk level."""
         findings: list[object] = []
         seen_policy_ids: set[int] = set()
 

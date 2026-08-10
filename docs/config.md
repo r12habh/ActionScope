@@ -62,7 +62,9 @@ suppress:
 
 `critical_actions` elevates matching IAM actions to CRITICAL.
 `accepted_risks` lowers matching actions to LOW while keeping them visible.
-Shell-style wildcards are supported, such as `kms:*`.
+Shell-style wildcards are supported in the action part, such as `kms:*` or
+`iam:Create*`. The service name must be exact or the complete `*` wildcard;
+partial service wildcards such as `s3*:GetObject` are rejected.
 
 `hard_blocks` always fail the scan, even when `--fail-on` is not set. A hard
 block cannot be neutralized by a suppression or severity override.
@@ -80,6 +82,8 @@ When settings overlap, ActionScope applies this precedence:
 Each `custom_privesc_paths` entry triggers when all `required_actions` are
 present in one parsed IAM policy. The finding uses SARIF rule AS002 and appears
 with built-in escalation paths in terminal, Markdown, JSON, and SARIF output.
+An `AS002` entry in `severity_overrides` takes precedence over the severity on
+both built-in and repository-defined escalation paths.
 
 ## Rule Severity Overrides
 
@@ -88,6 +92,9 @@ with built-in escalation paths in terminal, Markdown, JSON, and SARIF output.
 such as AS014 to a repository's deployment model.
 
 See [SARIF and Code Scanning](sarif.md) for the rule catalog.
+
+Configuration files are limited to 256 KiB so an untrusted branch cannot make
+the Marketplace Action parse an unbounded YAML document.
 
 ## Suppressions
 

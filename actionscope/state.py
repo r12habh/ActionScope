@@ -307,7 +307,7 @@ def _finding_types(result) -> set[str]:
 
 def _count_risk(result, risk: RiskLevel) -> int:
     try:
-        return len(result.findings_by_risk(risk))
+        return result.finding_count_by_risk(risk)
     except AttributeError:
         return 0
 

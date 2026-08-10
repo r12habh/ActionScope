@@ -595,7 +595,7 @@ def _signed_delta(current: int, previous: int) -> str:
 
 def _summary_table(result: ScanResult) -> str:
     counts: dict[RiskLevel, int] = {
-        level: len(result.findings_by_risk(level)) for level in RiskLevel
+        level: result.finding_count_by_risk(level) for level in RiskLevel
     }
 
     rows = [
@@ -781,6 +781,15 @@ def to_markdown_from_dict(data: dict) -> str:
             f"Config: `{_md_cell(configuration.get('path') or '.actionscope.yml')}`",
             "",
         ]
+        overrides = configuration.get("severity_overrides", {})
+        if isinstance(overrides, dict) and overrides:
+            rendered_overrides = ", ".join(
+                f"`{_md_cell(rule_id)}={_md_cell(risk)}`"
+                for rule_id, risk in sorted(overrides.items())
+            )
+            config_lines.extend(
+                [f"Severity overrides: {rendered_overrides}", ""]
+            )
         suppressions = data.get("applied_suppressions", [])
         if isinstance(suppressions, list) and suppressions:
             config_lines.extend(
@@ -816,6 +825,10 @@ def to_markdown_from_dict(data: dict) -> str:
                     "",
                 ]
             )
+        warnings = configuration.get("warnings", [])
+        if isinstance(warnings, list):
+            for warning in warnings:
+                config_lines.extend([f"> Warning: {_md_cell(warning)}", ""])
         config_lines.extend(["---", ""])
         workflow_index = lines.index("### Workflow Findings")
         lines = lines[:workflow_index] + config_lines + lines[workflow_index:]

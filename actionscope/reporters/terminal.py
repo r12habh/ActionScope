@@ -123,7 +123,7 @@ def _iam_action_risk_counts(
 
 def _finding_risk_counts(result: ScanResult) -> dict[RiskLevel, int]:
     """Count reportable findings by risk across every detector."""
-    return {level: len(result.findings_by_risk(level)) for level in RiskLevel}
+    return {level: result.finding_count_by_risk(level) for level in RiskLevel}
 
 
 def render_scan_result(
@@ -994,16 +994,29 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
 
         if config_applied and isinstance(configuration, dict):
             c.print()
-            c.print(f"[bold]Repository Risk Policy:[/] {configuration.get('path')}")
+            policy_path = str(configuration.get("path") or ".actionscope.yml")
+            c.print(
+                Text.assemble(
+                    ("Repository Risk Policy: ", "bold"),
+                    policy_path,
+                )
+            )
+            overrides = configuration.get("severity_overrides", {})
+            if isinstance(overrides, dict) and overrides:
+                rendered_overrides = ", ".join(
+                    f"{rule_id}={risk}"
+                    for rule_id, risk in sorted(overrides.items())
+                )
+                c.print(Text(f"  Severity overrides: {rendered_overrides}"))
             for suppression in data.get("applied_suppressions", []):
                 if not isinstance(suppression, dict):
                     continue
-                c.print(
+                c.print(Text(
                     f"  {suppression.get('rule_id')} until "
                     f"{suppression.get('expires')}: "
                     f"{suppression.get('reason')} "
                     f"({suppression.get('finding_count', 0)} finding(s))"
-                )
+                ))
             hard_blocks = data.get("hard_block_findings", [])
             if hard_blocks:
                 actions = ", ".join(
@@ -1012,6 +1025,10 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                     if isinstance(item, dict)
                 )
                 c.print(f"[bold red]  Hard block matched: {escape(actions)}[/]")
+            warnings = configuration.get("warnings", [])
+            if isinstance(warnings, list):
+                for warning in warnings:
+                    c.print(Text(f"  Warning: {warning}", style="yellow"))
 
         reusable = data.get("reusable_workflows", [])
         if reusable:
