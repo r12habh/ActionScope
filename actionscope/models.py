@@ -330,6 +330,27 @@ class CoverageGap:
     job_name: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class AppliedSuppression:
+    """A configured rule suppression and the findings it affected."""
+
+    rule_id: str
+    reason: str
+    expires: str
+    finding_count: int
+
+
+@dataclass(frozen=True)
+class HardBlockFinding:
+    """An IAM action matched by a repository policy hard block."""
+
+    action: str
+    resource: str
+    source_file: str
+    role_arn: Optional[str] = None
+    role_name: Optional[str] = None
+
+
 @dataclass
 class ScanResult:
     """Aggregate result for a single ActionScope scan."""
@@ -365,6 +386,12 @@ class ScanResult:
     finding_records: list[FindingRecord] = field(default_factory=list)
     coverage_status: str = "complete"
     coverage_gaps: list[CoverageGap] = field(default_factory=list)
+    config_applied: bool = False
+    config_path: Optional[str] = None
+    config_warnings: list[str] = field(default_factory=list)
+    severity_overrides: dict[str, str] = field(default_factory=dict)
+    applied_suppressions: list[AppliedSuppression] = field(default_factory=list)
+    hard_block_findings: list[HardBlockFinding] = field(default_factory=list)
     gate: "GateDecision | None" = None
     delta: "ScanDelta | None" = None
     overall_risk: RiskLevel = RiskLevel.INFO
@@ -400,10 +427,18 @@ class ScanResult:
 
     def has_critical_findings(self) -> bool:
         """Return True when any finding reaches critical severity."""
-        return bool(self.findings_by_risk(RiskLevel.CRITICAL))
+        return self.finding_count_by_risk(RiskLevel.CRITICAL) > 0
+
+    def finding_count_by_risk(self, level: RiskLevel) -> int:
+        """Count effective findings at a risk level after configuration."""
+        if self.config_applied:
+            return sum(
+                finding.risk_level == level for finding in self.finding_records
+            )
+        return len(self.findings_by_risk(level))
 
     def findings_by_risk(self, level: RiskLevel) -> list:
-        """Return policy and GitHub token findings matching a risk level."""
+        """Return detector findings matching a risk level."""
         findings: list[object] = []
         seen_policy_ids: set[int] = set()
 

@@ -150,12 +150,15 @@ ActionScope does not currently check:
 
 ## Suppression and configuration
 
-ActionScope does not currently support repository-local suppressions or
-custom risk tuning. That work is tracked in
-[issue #23](https://github.com/r12habh/ActionScope/issues/23).
+Repository-local tuning is available through `.actionscope.yml`. It supports
+IAM action overrides, hard blocks, custom escalation paths, rule severity
+overrides, deploy-job calibration, and time-bounded suppressions. See
+[Repository Risk Policy](config.md).
 
-Until that lands, treat accepted findings as documented risk decisions in
-your own security review process rather than hiding them from the scan.
+Configuration does not add policy-source coverage. An accepted or suppressed
+finding can still be incomplete when the related IAM policy is unavailable or
+uses an unsupported infrastructure format. Review `Coverage: PARTIAL`
+separately from the configured effective risk.
 
 ---
 

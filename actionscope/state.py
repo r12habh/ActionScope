@@ -75,7 +75,11 @@ def compute_delta(
     """Compute the difference between a previous state and current result."""
     current_records = list(getattr(current_result, "finding_records", []))
     findings_valid = not _normalization_failed(current_result)
-    if not current_records and findings_valid:
+    if (
+        not current_records
+        and findings_valid
+        and not getattr(current_result, "config_applied", False)
+    ):
         from actionscope.findings import build_finding_records
 
         current_records = build_finding_records(current_result)
@@ -211,7 +215,11 @@ def _state_payload(
     findings_valid = not _normalization_failed(result)
     if records is None:
         records = list(getattr(result, "finding_records", []))
-        if not records and findings_valid:
+        if (
+            not records
+            and findings_valid
+            and not getattr(result, "config_applied", False)
+        ):
             from actionscope.findings import build_finding_records
 
             records = build_finding_records(result)
@@ -299,7 +307,7 @@ def _finding_types(result) -> set[str]:
 
 def _count_risk(result, risk: RiskLevel) -> int:
     try:
-        return len(result.findings_by_risk(risk))
+        return result.finding_count_by_risk(risk)
     except AttributeError:
         return 0
 

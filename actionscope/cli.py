@@ -50,6 +50,37 @@ def version_command() -> None:
     click.echo(f"ActionScope v{__version__}")
 
 
+@main.group("config")
+def config_group() -> None:
+    """Create and manage repository-local ActionScope policy."""
+
+
+@config_group.command("init")
+@click.option(
+    "--output",
+    "output_path",
+    default=".actionscope.yml",
+    show_default=True,
+    type=click.Path(dir_okay=False),
+    help="Configuration file to create",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Replace an existing configuration file",
+)
+def config_init(output_path: str, force: bool) -> None:
+    """Create a documented starter .actionscope.yml file."""
+    from actionscope.config import ConfigError, write_starter_config
+
+    try:
+        path = write_starter_config(output_path, force=force)
+    except ConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Created ActionScope configuration: {path}")
+
+
 @main.command()
 @click.argument("path", default=".", type=click.Path(exists=True))
 @click.option(
@@ -133,6 +164,13 @@ def version_command() -> None:
     help="Disable all scan-time network calls; local cache data is still used",
 )
 @click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Risk policy file (default: PATH/.actionscope.yml when present)",
+)
+@click.option(
     "--max-policy-files",
     type=int,
     default=None,
@@ -160,6 +198,7 @@ def scan(
     resolve_pins: bool,
     github_token: str | None,
     offline: bool,
+    config_path: str | None,
     max_policy_files: int | None,
 ) -> None:
     """Scan a repository for AWS blast radius in GitHub Actions workflows."""
@@ -178,6 +217,13 @@ def scan(
         load_state = True
 
     repo_path = os.path.abspath(path)
+    from actionscope.config import ConfigError, load_config
+
+    try:
+        scan_config = load_config(repo_path, config_path)
+    except ConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+
     console = Console(no_color=no_color)
     status_console = (
         console
@@ -280,6 +326,7 @@ def scan(
             errors=all_errors,
             reusable_scan=reusable_scan,
             offline=offline,
+            config=scan_config,
         )
     except Exception as exc:
         result = ScanResult(
@@ -291,7 +338,7 @@ def scan(
             policy_findings=all_policy_findings,
             errors=all_errors + [f"Could not correlate scan results: {exc}"],
         )
-        finalize_scan_metadata(result)
+        finalize_scan_metadata(result, config=scan_config)
 
     if resolve_pins:
         status_console.print("[dim]Resolving action pins via GitHub API...[/dim]")

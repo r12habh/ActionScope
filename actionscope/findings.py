@@ -180,7 +180,7 @@ def build_finding_records(result: ScanResult) -> list[FindingRecord]:
             )
 
     for permission in result.github_token_permissions:
-        if permission.risk_level < RiskLevel.MEDIUM:
+        if permission.risk_level <= RiskLevel.INFO:
             continue
         records.append(
             _record(

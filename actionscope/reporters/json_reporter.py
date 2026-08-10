@@ -126,6 +126,8 @@ def _summary_dict(
         "compromised_actions": len(result.compromised_action_findings),
         "environment_issues": len(result.environment_findings),
         "pin_suggestions": len(result.pin_suggestions),
+        "suppressed_rules": len(result.applied_suppressions),
+        "hard_blocks": len(result.hard_block_findings),
         "coverage_gaps": (
             len(result.coverage_gaps)
             if coverage_gap_count is None
@@ -152,7 +154,11 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         gap.gap_type == "finding_normalization_error"
         for gap in coverage_gaps
     )
-    if not finding_records and not normalization_failed:
+    if (
+        not finding_records
+        and not normalization_failed
+        and not result.config_applied
+    ):
         from actionscope.findings import build_finding_records
 
         finding_records = build_finding_records(result)
@@ -210,6 +216,20 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         ],
         "finding_records": [
             _serialize_for_json(asdict(record)) for record in finding_records
+        ],
+        "configuration": {
+            "applied": result.config_applied,
+            "path": result.config_path,
+            "severity_overrides": dict(result.severity_overrides),
+            "warnings": list(result.config_warnings),
+        },
+        "applied_suppressions": [
+            _serialize_for_json(asdict(item))
+            for item in result.applied_suppressions
+        ],
+        "hard_block_findings": [
+            _serialize_for_json(asdict(item))
+            for item in result.hard_block_findings
         ],
         "pin_suggestions": [
             _serialize_for_json(asdict(finding) if is_dataclass(finding) else finding)

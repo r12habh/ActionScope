@@ -25,6 +25,14 @@ def test_action_exposes_confidence_and_new_only_inputs() -> None:
     assert inputs["require-baseline"]["default"] == "false"
 
 
+def test_action_exposes_custom_risk_policy_input() -> None:
+    inputs = _action()["inputs"]
+    text = ACTION_FILE.read_text(encoding="utf-8")
+
+    assert inputs["config"]["default"] == ""
+    assert 'SCAN_FLAGS+=(--config "$INPUT_CONFIG")' in text
+
+
 def test_action_uses_cache_for_cross_run_baseline() -> None:
     text = ACTION_FILE.read_text(encoding="utf-8")
 
@@ -60,6 +68,15 @@ def test_action_scans_once_and_uses_gate_command() -> None:
     assert text.count('actionscope scan "$INPUT_PATH"') == 1
     assert "actionscope gate /tmp/actionscope-results.json" in text
     assert "RISK_ORDER" not in text
+
+
+def test_action_preserves_hard_block_report_before_failing_policy() -> None:
+    text = ACTION_FILE.read_text(encoding="utf-8")
+
+    assert 'SCAN_EXIT=$?' in text
+    assert '[ "$SCAN_EXIT" -gt 1 ]' in text
+    assert "d.get('gate', {}).get('exit_code', 0)" in text
+    assert "steps.scan.outputs.gate-exit-code != '0'" in text
 
 
 def test_action_surfaces_report_generation_failures() -> None:

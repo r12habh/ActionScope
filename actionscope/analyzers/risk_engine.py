@@ -39,6 +39,7 @@ from actionscope.models import (
 
 if TYPE_CHECKING:
     from actionscope.analyzers.reusable_workflows import ReusableWorkflowScan
+    from actionscope.config import ActionScopeConfig
 
 
 @dataclass(frozen=True)
@@ -200,6 +201,7 @@ def build_scan_result(
     errors: list[str] | None = None,
     reusable_scan: ReusableWorkflowScan | None = None,
     offline: bool = False,
+    config: ActionScopeConfig | None = None,
 ) -> ScanResult:
     """Build the final correlated scan result."""
     if errors is None:
@@ -217,8 +219,21 @@ def build_scan_result(
         if isinstance(finding, UnpinnedActionFinding)
     ]
 
+    hard_block_findings = []
     for finding in policy_findings:
+        if config is not None:
+            from actionscope.config import apply_action_overrides
+
+            hard_block_findings.extend(apply_action_overrides(finding, config))
         finding.privesc_paths = detect_privesc_paths(finding, finding.source_file)
+        if config is not None:
+            from actionscope.config import (
+                add_custom_privesc_paths,
+                recompute_policy_risk,
+            )
+
+            add_custom_privesc_paths(finding, config)
+            recompute_policy_risk(finding)
 
     oidc_trust_findings, oidc_errors = _safe_scan_oidc(repo_path)
     script_injection_findings, script_errors = _safe_scan_script_injection(repo_path)
@@ -242,6 +257,10 @@ def build_scan_result(
         repo_path,
         credential_sources,
         oidc_trust_findings,
+        deploy_job_patterns=(config.deploy_job_patterns if config else ()),
+        non_deploy_job_patterns=(
+            config.non_deploy_job_patterns if config else ()
+        ),
     )
     if reusable_scan is not None:
         script_injection_findings.extend(
@@ -323,14 +342,22 @@ def build_scan_result(
         policy_findings=policy_findings,
         bindings=bindings,
         exposure_paths=exposure_paths,
+        hard_block_findings=hard_block_findings,
         errors=errors,
     )
     result.overall_risk = overall_risk
-    return finalize_scan_metadata(result)
+    return finalize_scan_metadata(result, config=config)
 
 
-def finalize_scan_metadata(result: ScanResult) -> ScanResult:
+def finalize_scan_metadata(
+    result: ScanResult,
+    config: ActionScopeConfig | None = None,
+) -> ScanResult:
     """Build coverage and normalized findings without aborting the scan."""
+    if config is not None:
+        from actionscope.config import apply_severity_overrides_to_findings
+
+        apply_severity_overrides_to_findings(result, config)
     try:
         result.coverage_gaps = build_coverage_gaps(result)
     except Exception as exc:
@@ -359,6 +386,10 @@ def finalize_scan_metadata(result: ScanResult) -> ScanResult:
     result.coverage_status = (
         "partial" if result.coverage_gaps or result.errors else "complete"
     )
+    if config is not None:
+        from actionscope.config import apply_result_configuration
+
+        apply_result_configuration(result, config)
     return result
 
 
@@ -476,12 +507,17 @@ def _safe_scan_environments(
     repo_path: str,
     credential_sources: list[AwsCredentialSource],
     oidc_trust_findings: list[OidcTrustFinding],
+    *,
+    deploy_job_patterns: tuple[str, ...] = (),
+    non_deploy_job_patterns: tuple[str, ...] = (),
 ) -> tuple[list[EnvironmentFinding], list[str]]:
     try:
         return scan_environment_usage(
             repo_path,
             credential_sources,
             oidc_trust_findings,
+            deploy_job_patterns=deploy_job_patterns,
+            non_deploy_job_patterns=non_deploy_job_patterns,
         )
     except Exception as exc:
         return [], [_scan_error("GitHub Environments scan", exc)]

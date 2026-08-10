@@ -7,6 +7,7 @@ trust-policy scoping.
 
 from __future__ import annotations
 
+import fnmatch
 from pathlib import Path
 
 import yaml
@@ -72,9 +73,16 @@ def extract_job_environments(workflow_data: dict) -> list[dict]:
 def is_deploy_job(
     job_data: dict,
     credential_sources: list,
+    *,
+    deploy_job_patterns: tuple[str, ...] = (),
+    non_deploy_job_patterns: tuple[str, ...] = (),
 ) -> bool:
     """Return True if a job appears to deploy production infrastructure."""
     job_name = str(job_data.get("__job_name") or "").lower()
+    if job_name and _matches_job_pattern(job_name, non_deploy_job_patterns):
+        return False
+    if job_name and _matches_job_pattern(job_name, deploy_job_patterns):
+        return True
     if job_name and any(hint in job_name for hint in DEPLOY_JOB_NAME_HINTS):
         return True
 
@@ -111,6 +119,9 @@ def analyze_environment_usage(
     workflow_file: str,
     credential_sources: list,
     oidc_trust_findings: list,
+    *,
+    deploy_job_patterns: tuple[str, ...] = (),
+    non_deploy_job_patterns: tuple[str, ...] = (),
 ) -> list[EnvironmentFinding]:
     """Analyze workflow environment declarations for AWS deploy jobs."""
     jobs = workflow_data.get("jobs") or {}
@@ -132,7 +143,12 @@ def analyze_environment_usage(
             continue
         job_with_name = dict(job)
         job_with_name["__job_name"] = job_name_str
-        if not is_deploy_job(job_with_name, credential_sources):
+        if not is_deploy_job(
+            job_with_name,
+            credential_sources,
+            deploy_job_patterns=deploy_job_patterns,
+            non_deploy_job_patterns=non_deploy_job_patterns,
+        ):
             continue
 
         environment = environment_by_job.get(job_name_str)
@@ -190,6 +206,9 @@ def scan_environment_usage(
     repo_path: str,
     credential_sources: list,
     oidc_trust_findings: list,
+    *,
+    deploy_job_patterns: tuple[str, ...] = (),
+    non_deploy_job_patterns: tuple[str, ...] = (),
 ) -> tuple[list[EnvironmentFinding], list[str]]:
     """Scan workflow files for GitHub Environment hardening opportunities."""
     findings: list[EnvironmentFinding] = []
@@ -217,9 +236,17 @@ def scan_environment_usage(
                 str(workflow_file.resolve()),
                 workflow_sources,
                 oidc_trust_findings,
+                deploy_job_patterns=deploy_job_patterns,
+                non_deploy_job_patterns=non_deploy_job_patterns,
             )
         )
     return findings, errors
+
+
+def _matches_job_pattern(job_name: str, patterns: tuple[str, ...]) -> bool:
+    return any(
+        fnmatch.fnmatchcase(job_name, pattern.lower()) for pattern in patterns
+    )
 
 
 def _matching_sources(

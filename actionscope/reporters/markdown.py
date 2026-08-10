@@ -595,7 +595,7 @@ def _signed_delta(current: int, previous: int) -> str:
 
 def _summary_table(result: ScanResult) -> str:
     counts: dict[RiskLevel, int] = {
-        level: len(result.findings_by_risk(level)) for level in RiskLevel
+        level: result.finding_count_by_risk(level) for level in RiskLevel
     }
 
     rows = [
@@ -609,6 +609,59 @@ def _summary_table(result: ScanResult) -> str:
     return "\n".join(rows)
 
 
+def _configuration_section(result: ScanResult) -> str:
+    if not result.config_applied:
+        return ""
+
+    lines = [
+        "### Repository Risk Policy",
+        "",
+        f"Config: `{_md_cell(result.config_path or '.actionscope.yml')}`",
+        "",
+    ]
+    if result.severity_overrides:
+        overrides = ", ".join(
+            f"`{rule_id}={risk}`"
+            for rule_id, risk in result.severity_overrides.items()
+        )
+        lines.extend([f"Severity overrides: {overrides}", ""])
+    if result.applied_suppressions:
+        lines.extend(
+            [
+                "> Suppressed rules are excluded from CI gates and SARIF, "
+                "but their findings remain visible below for audit.",
+                "",
+                "| Rule | Expires | Matching Findings | Reason |",
+                "|------|---------|-------------------|--------|",
+            ]
+        )
+        for suppression in result.applied_suppressions:
+            lines.append(
+                f"| `{suppression.rule_id}` | {suppression.expires} | "
+                f"{suppression.finding_count} | "
+                f"{_md_cell(suppression.reason)} |"
+            )
+        lines.append("")
+    if result.hard_block_findings:
+        actions = ", ".join(
+            f"`{_md_cell(action)}`"
+            for action in sorted(
+                {finding.action for finding in result.hard_block_findings}
+            )
+        )
+        lines.extend(
+            [
+                f"> **Hard block matched:** {actions}. The scan fails "
+                "regardless of `--fail-on`.",
+                "",
+            ]
+        )
+    for warning in result.config_warnings:
+        lines.extend([f"> Warning: {_md_cell(warning)}", ""])
+    lines.extend(["---", ""])
+    return "\n".join(lines)
+
+
 def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     """
     Generate a Markdown report suitable for GitHub PR comments.
@@ -616,10 +669,11 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     cred_count = len(result.credential_sources)
     overall = RISK_DISPLAY.get(result.overall_risk, result.overall_risk.name)
     gate_status = _gate_status(result.gate)
+    risk_label = "Effective Risk" if result.config_applied else "Observed Risk"
 
     header = (
         "## 🔍 ActionScope — Blast Radius Report\n\n"
-        f"**Observed Risk:** {overall} | "
+        f"**{risk_label}:** {overall} | "
         f"**Coverage:** {result.coverage_status.upper()} | "
         f"**Gate:** {gate_status}\n\n"
         f"**Workflows:** {result.workflow_count} | "
@@ -631,6 +685,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     compromised_part = _compromised_actions_section(
         result.compromised_action_findings
     )
+    configuration_part = _configuration_section(result)
     delta_part = _delta_section(delta)
     reusable_part = _reusable_workflows_section(result.reusable_workflows)
     exposure_part = _exposure_paths_section(result.exposure_paths)
@@ -658,6 +713,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
 
     return (
         header
+        + configuration_part
         + compromised_part
         + delta_part
         + reusable_part
@@ -696,11 +752,16 @@ def to_markdown_from_dict(data: dict) -> str:
         if isinstance(gate_data, dict)
         else "REPORT ONLY"
     )
+    configuration = data.get("configuration")
+    config_applied = bool(
+        isinstance(configuration, dict) and configuration.get("applied")
+    )
+    risk_label = "Effective Risk" if config_applied else "Observed Risk"
 
     lines = [
         "## 🔍 ActionScope — Blast Radius Report",
         "",
-        f"**Observed Risk:** {risk_display} | "
+        f"**{risk_label}:** {risk_display} | "
         f"**Coverage:** {coverage_status} | **Gate:** {gate_status}",
         "",
         f"**Workflows:** {data.get('workflow_count', 0)} | "
@@ -712,6 +773,65 @@ def to_markdown_from_dict(data: dict) -> str:
         "### Workflow Findings",
         "",
     ]
+
+    if config_applied and isinstance(configuration, dict):
+        config_lines = [
+            "### Repository Risk Policy",
+            "",
+            f"Config: `{_md_cell(configuration.get('path') or '.actionscope.yml')}`",
+            "",
+        ]
+        overrides = configuration.get("severity_overrides", {})
+        if isinstance(overrides, dict) and overrides:
+            rendered_overrides = ", ".join(
+                f"`{_md_cell(rule_id)}={_md_cell(risk)}`"
+                for rule_id, risk in sorted(overrides.items())
+            )
+            config_lines.extend(
+                [f"Severity overrides: {rendered_overrides}", ""]
+            )
+        suppressions = data.get("applied_suppressions", [])
+        if isinstance(suppressions, list) and suppressions:
+            config_lines.extend(
+                [
+                    "> Suppressed rules are excluded from CI gates and SARIF, "
+                    "but their findings remain visible below for audit.",
+                    "",
+                    "| Rule | Expires | Matching Findings | Reason |",
+                    "|------|---------|-------------------|--------|",
+                ]
+            )
+            for suppression in suppressions:
+                if not isinstance(suppression, dict):
+                    continue
+                config_lines.append(
+                    f"| `{_md_cell(suppression.get('rule_id', ''))}` | "
+                    f"{_md_cell(suppression.get('expires', ''))} | "
+                    f"{suppression.get('finding_count', 0)} | "
+                    f"{_md_cell(suppression.get('reason', ''))} |"
+                )
+            config_lines.append("")
+        hard_blocks = data.get("hard_block_findings", [])
+        if isinstance(hard_blocks, list) and hard_blocks:
+            actions = ", ".join(
+                f"`{_md_cell(item.get('action', ''))}`"
+                for item in hard_blocks
+                if isinstance(item, dict)
+            )
+            config_lines.extend(
+                [
+                    f"> **Hard block matched:** {actions}. The scan fails "
+                    "regardless of `--fail-on`.",
+                    "",
+                ]
+            )
+        warnings = configuration.get("warnings", [])
+        if isinstance(warnings, list):
+            for warning in warnings:
+                config_lines.extend([f"> Warning: {_md_cell(warning)}", ""])
+        config_lines.extend(["---", ""])
+        workflow_index = lines.index("### Workflow Findings")
+        lines = lines[:workflow_index] + config_lines + lines[workflow_index:]
 
     compromised = data.get("compromised_action_findings", [])
     if compromised:
