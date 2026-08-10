@@ -4,6 +4,8 @@ All notable changes to ActionScope are documented here.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-09
+
 ### Added
 - Repository-local `.actionscope.yml` policies can elevate or accept IAM
   actions, enforce unconditional hard blocks, define custom escalation paths,
@@ -14,6 +16,20 @@ All notable changes to ActionScope are documented here.
 - `actionscope config init` creates a validated starter policy, and `scan
   --config` plus the Marketplace Action's `config` input select an alternate
   policy file.
+
+### Fixed
+- Hard blocks and custom escalation paths recognize wildcard IAM grants such
+  as `Action: "*"` and `iam:*`, so broad policies cannot bypass exact action
+  rules.
+- Applying an otherwise empty repository policy preserves LOW GITHUB_TOKEN
+  findings instead of reducing the effective risk to INFO.
+- Saved Markdown, terminal, and SARIF reports preserve configuration warnings
+  and severity overrides while treating repository-provided text as literal
+  output.
+
+### Security
+- Repository policy files are capped at 256 KiB before YAML parsing to bound
+  untrusted configuration input in Marketplace Action runs.
 
 ## [0.4.1] - 2026-07-26
 
