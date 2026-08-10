@@ -38,6 +38,15 @@ def evaluate_gate(
     require_baseline: bool = False,
 ) -> GateDecision:
     """Evaluate a ScanResult without changing or suppressing report output."""
+    if result.hard_block_findings:
+        actions = sorted(
+            {finding.action for finding in result.hard_block_findings}
+        )
+        return _hard_block_decision(
+            actions,
+            coverage_status=result.coverage_status,
+            coverage_gap_count=len(result.coverage_gaps),
+        )
     if not fail_on:
         return _report_only(
             result.coverage_status,
@@ -77,9 +86,10 @@ def evaluate_gate(
                 coverage_status=result.coverage_status,
                 coverage_gap_count=len(result.coverage_gaps),
             )
-        from actionscope.findings import build_finding_records
+        if not result.config_applied:
+            from actionscope.findings import build_finding_records
 
-        records = build_finding_records(result)
+            records = build_finding_records(result)
 
     return _evaluate_records(
         records,
@@ -102,6 +112,23 @@ def evaluate_gate_payload(
     require_baseline: bool = False,
 ) -> GateDecision:
     """Evaluate a previously saved ActionScope JSON report."""
+    raw_hard_blocks = data.get("hard_block_findings")
+    if isinstance(raw_hard_blocks, list) and raw_hard_blocks:
+        actions = sorted(
+            {
+                str(item.get("action", "unknown"))
+                for item in raw_hard_blocks
+                if isinstance(item, dict)
+            }
+        )
+        coverage_status = str(data.get("coverage_status", "complete"))
+        raw_gaps = data.get("coverage_gaps")
+        gap_count = len(raw_gaps) if isinstance(raw_gaps, list) else 0
+        return _hard_block_decision(
+            actions,
+            coverage_status=coverage_status,
+            coverage_gap_count=gap_count,
+        )
     raw_records = data.get("finding_records")
     if not isinstance(raw_records, list):
         return _invalid_report(
@@ -269,6 +296,30 @@ def _report_only(
             + _coverage_suffix(coverage_status, coverage_gap_count)
         ),
         exit_code=0,
+    )
+
+
+def _hard_block_decision(
+    actions: list[str],
+    *,
+    coverage_status: str,
+    coverage_gap_count: int,
+) -> GateDecision:
+    action_list = ", ".join(actions) if actions else "unknown action"
+    return GateDecision(
+        status="failed",
+        mode="hard_block",
+        threshold=None,
+        minimum_confidence="none",
+        coverage_status=coverage_status,
+        coverage_gap_count=coverage_gap_count,
+        matching_finding_ids=[],
+        matching_findings=[],
+        reason=(
+            f"Repository policy hard block matched: {action_list}."
+            + _coverage_suffix(coverage_status, coverage_gap_count)
+        ),
+        exit_code=1,
     )
 
 

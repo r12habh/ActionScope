@@ -161,6 +161,7 @@ def _render_scan_result_impl(
     delta_lines = _delta_header_lines(delta)
     gate_lines = _gate_header_lines(result.gate)
     coverage_style = "yellow" if result.coverage_status == "partial" else "green"
+    risk_label = "Effective Risk" if result.config_applied else "Observed Risk"
 
     header_body = Text.assemble(
         ("ActionScope — Blast Radius Report\n", "bold"),
@@ -171,7 +172,7 @@ def _render_scan_result_impl(
             "",
         ),
         (
-            "Observed Risk: "
+            f"{risk_label}: "
             f"{RISK_ICONS[result.overall_risk]} {result.overall_risk.name}\n",
             RISK_COLORS[result.overall_risk],
         ),
@@ -193,6 +194,7 @@ def _render_scan_result_impl(
     )
     c.print()
 
+    _render_configuration_section(c, result)
     _render_compromised_actions_section(c, result.compromised_action_findings)
     _render_reusable_workflows_section(c, result.reusable_workflows)
     _render_exposure_paths_section(c, result.exposure_paths)
@@ -227,6 +229,46 @@ def _render_scan_result_impl(
         c.print("[yellow]⚠️  Warnings:[/]")
         for err in result.errors:
             c.print(f"  [dim]- {err}[/]")
+
+
+def _render_configuration_section(c: Console, result: ScanResult) -> None:
+    if not result.config_applied:
+        return
+
+    lines = Text.assemble(
+        ("Repository Risk Policy\n", "bold"),
+        (f"Config: {result.config_path or '.actionscope.yml'}", ""),
+    )
+    if result.severity_overrides:
+        overrides = ", ".join(
+            f"{rule_id}={risk}"
+            for rule_id, risk in result.severity_overrides.items()
+        )
+        lines.append(f"\nSeverity overrides: {overrides}")
+    if result.applied_suppressions:
+        lines.append(
+            "\nSuppressed from CI gates and SARIF; retained below for audit:",
+            style="yellow",
+        )
+        for suppression in result.applied_suppressions:
+            lines.append(
+                f"\n  {suppression.rule_id} until {suppression.expires}: "
+                f"{suppression.reason} "
+                f"({suppression.finding_count} finding(s))"
+            )
+    if result.hard_block_findings:
+        actions = ", ".join(
+            sorted({finding.action for finding in result.hard_block_findings})
+        )
+        lines.append(
+            f"\nHard block matched: {actions}",
+            style="bold red",
+        )
+    for warning in result.config_warnings:
+        lines.append(f"\nWarning: {warning}", style="yellow")
+
+    c.print(Panel(lines, box=box.ROUNDED, padding=(0, 2)))
+    c.print()
 
 
 def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
@@ -813,6 +855,8 @@ def _render_summary_panel(
             "",
         ),
         (f"Environment issues: {len(result.environment_findings)}\n", ""),
+        (f"Configured suppressions: {len(result.applied_suppressions)}\n", ""),
+        (f"Hard-block matches: {len(result.hard_block_findings)}\n", ""),
         (
             f"Workflow injection risks: {workflow_injection_count}\n",
             "",
@@ -929,6 +973,11 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
             if isinstance(gate, dict)
             else "REPORT ONLY"
         )
+        configuration = data.get("configuration")
+        config_applied = bool(
+            isinstance(configuration, dict) and configuration.get("applied")
+        )
+        observed_label = "Effective Risk" if config_applied else "Observed Risk"
         body = Text.assemble(
             ("ActionScope — Blast Radius Report\n", "bold"),
             (f"Path: {data.get('scan_path', '(unknown)')}\n", ""),
@@ -937,11 +986,32 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 f"Credential Sources: {summary.get('credential_sources', 0)}\n",
                 "",
             ),
-            (f"Observed Risk: {risk_label}\n", ""),
+            (f"{observed_label}: {risk_label}\n", ""),
             (f"Coverage: {coverage_status} ({gap_count} unresolved item(s))\n", ""),
             (f"Gate: {gate_status}", ""),
         )
         c.print(Panel(body, box=box.ROUNDED, padding=(0, 2)))
+
+        if config_applied and isinstance(configuration, dict):
+            c.print()
+            c.print(f"[bold]Repository Risk Policy:[/] {configuration.get('path')}")
+            for suppression in data.get("applied_suppressions", []):
+                if not isinstance(suppression, dict):
+                    continue
+                c.print(
+                    f"  {suppression.get('rule_id')} until "
+                    f"{suppression.get('expires')}: "
+                    f"{suppression.get('reason')} "
+                    f"({suppression.get('finding_count', 0)} finding(s))"
+                )
+            hard_blocks = data.get("hard_block_findings", [])
+            if hard_blocks:
+                actions = ", ".join(
+                    str(item.get("action", ""))
+                    for item in hard_blocks
+                    if isinstance(item, dict)
+                )
+                c.print(f"[bold red]  Hard block matched: {escape(actions)}[/]")
 
         reusable = data.get("reusable_workflows", [])
         if reusable:

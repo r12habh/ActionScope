@@ -44,6 +44,8 @@ actionscope scan tests/fixtures/demo_repo --output-format json
 | `--resolve-pins` | none | `False` | Resolve unpinned GitHub Action tags to current commit SHAs via GitHub API. | `actionscope scan . --resolve-pins` |
 | `--github-token` | none | `$GITHUB_TOKEN` | GitHub token used for pin resolution and authenticated inspection of external reusable workflows. | `actionscope scan . --github-token "$GITHUB_TOKEN"` |
 | `--offline` | none | `False` | Disable all scan-time network calls. Cannot be combined with `--aws-verify` or `--resolve-pins`. | `actionscope scan . --offline` |
+| `--config` | none | `PATH/.actionscope.yml` when present | Load a custom repository risk policy file. | `actionscope scan . --config security/actionscope.yml` |
+| `--max-policy-files` | none | `800` | Limit JSON policy candidates outside common policy directories. Set to `0` for unlimited. | `actionscope scan . --max-policy-files 2000` |
 
 ### Common Scan Examples
 
@@ -74,6 +76,24 @@ actionscope scan . --github-token "$GITHUB_TOKEN"
 # Guarantee that ambient credentials cannot trigger API calls
 actionscope scan . --offline
 ```
+
+## `actionscope config init [OPTIONS]`
+
+Create a validated starter `.actionscope.yml` with examples for IAM action
+overrides, hard blocks, custom escalation paths, suppressions, and deploy-job
+calibration.
+
+```bash
+actionscope config init
+actionscope config init --output security/actionscope.yml
+```
+
+| Flag | Default | Description | Example |
+|------|---------|-------------|---------|
+| `--output` | `.actionscope.yml` | Configuration file to create. | `actionscope config init --output security/actionscope.yml` |
+| `--force` | `False` | Replace an existing configuration file. | `actionscope config init --force` |
+
+See [Repository Risk Policy](config.md) for schema and precedence details.
 
 ## `actionscope update-db [OPTIONS]`
 

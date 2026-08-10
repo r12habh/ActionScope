@@ -86,6 +86,7 @@ nav:
       - Output Formats: output-formats.md
       - Limitations and Calibration: limitations.md
       - Confidence-Aware CI Gating: ci-gating.md
+      - Repository Risk Policy: config.md
       - FAQ: faq.md
       - CLI Reference: cli-reference.md
   - Detectors:

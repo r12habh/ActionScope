@@ -330,6 +330,9 @@ def to_sarif(result: ScanResult) -> str:
             )
         )
 
+    _apply_result_severity_overrides(results, result.severity_overrides)
+    suppressed = {item.rule_id for item in result.applied_suppressions}
+    results = [item for item in results if item.get("ruleId") not in suppressed]
     results = _expand_multi_location_results(results)
     sarif_doc = {
         "$schema": SARIF_SCHEMA,
@@ -660,6 +663,19 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
             )
         )
 
+    configuration = data.get("configuration")
+    raw_overrides = (
+        configuration.get("severity_overrides", {})
+        if isinstance(configuration, dict)
+        else {}
+    )
+    _apply_result_severity_overrides(results, raw_overrides)
+    suppressed = {
+        str(item.get("rule_id", "")).upper()
+        for item in data.get("applied_suppressions", [])
+        if isinstance(item, dict)
+    }
+    results = [item for item in results if item.get("ruleId") not in suppressed]
     results = _expand_multi_location_results(results)
     sarif_doc = {
         "$schema": SARIF_SCHEMA,
@@ -848,6 +864,25 @@ def _make_result(
             for path in location_paths
         ],
     }
+
+
+def _apply_result_severity_overrides(
+    results: list[dict[str, Any]],
+    overrides: object,
+) -> None:
+    if not isinstance(overrides, dict):
+        return
+    for result in results:
+        raw_risk = overrides.get(str(result.get("ruleId", "")))
+        if not isinstance(raw_risk, str):
+            continue
+        try:
+            risk = RiskLevel(raw_risk)
+        except ValueError:
+            continue
+        result["level"] = RISK_TO_SARIF_SEVERITY[risk]
+        properties = result.setdefault("properties", {})
+        properties["security-severity"] = RISK_TO_SECURITY_SEVERITY[risk]
 
 
 def _add_policy_related_location(

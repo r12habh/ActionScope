@@ -121,6 +121,28 @@ def test_is_deploy_job_false_for_test_only_job() -> None:
     )
 
 
+def test_custom_deploy_pattern_marks_repository_specific_job() -> None:
+    assert (
+        is_deploy_job(
+            {"__job_name": "ship-production"},
+            [],
+            deploy_job_patterns=("ship-*",),
+        )
+        is True
+    )
+
+
+def test_custom_non_deploy_pattern_overrides_builtin_heuristic() -> None:
+    assert (
+        is_deploy_job(
+            {"__job_name": "deploy-plan"},
+            [],
+            non_deploy_job_patterns=("*plan*",),
+        )
+        is False
+    )
+
+
 def test_deploy_job_without_environment_produces_medium_finding() -> None:
     workflow = {"jobs": {"deploy": {"steps": [{"run": "terraform apply"}]}}}
 

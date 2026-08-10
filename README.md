@@ -69,11 +69,15 @@ actionscope scan . --fail-on high --min-confidence high
 actionscope scan . --fail-on high --new-only --min-confidence high
 actionscope scan . --output-format sarif --output-file results.sarif
 actionscope scan . --save-state        # save state for PR delta comparison
+actionscope config init                # create a repository risk policy
 ```
 
 For CI, start in report-only mode. Once a default-branch baseline exists,
 block only new, high-confidence findings. See
 [Confidence-Aware CI Gating](docs/ci-gating.md).
+Use [`.actionscope.yml`](docs/config.md) for reviewed hard blocks,
+time-bounded suppressions, custom IAM escalation paths, and repository-specific
+risk calibration.
 
 ## Example Output
 

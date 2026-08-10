@@ -4,6 +4,17 @@ All notable changes to ActionScope are documented here.
 
 ## [Unreleased]
 
+### Added
+- Repository-local `.actionscope.yml` policies can elevate or accept IAM
+  actions, enforce unconditional hard blocks, define custom escalation paths,
+  override rule severity, and calibrate deploy-job detection.
+- Time-bounded rule suppressions are excluded from CI gates and SARIF while
+  remaining visible with their reason and expiry in terminal, Markdown, and
+  JSON reports.
+- `actionscope config init` creates a validated starter policy, and `scan
+  --config` plus the Marketplace Action's `config` input select an alternate
+  policy file.
+
 ## [0.4.1] - 2026-07-26
 
 ### Added

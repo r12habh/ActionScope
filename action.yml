@@ -43,6 +43,10 @@ inputs:
     description: 'Disable scan-time GitHub and AWS API calls'
     required: false
     default: 'false'
+  config:
+    description: 'Custom ActionScope risk policy file (default: path/.actionscope.yml)'
+    required: false
+    default: ''
   save-state:
     description: 'Save scan state for delta comparison in future scans'
     required: false
@@ -176,6 +180,7 @@ runs:
         INPUT_LOAD_STATE: ${{ inputs.load-state }}
         INPUT_SAVE_STATE: ${{ inputs.save-state }}
         INPUT_OFFLINE: ${{ inputs.offline }}
+        INPUT_CONFIG: ${{ inputs.config }}
         INPUT_RESOLVE_PINS: ${{ inputs.resolve-pins }}
         INPUT_OUTPUT_FORMAT: ${{ inputs.output-format }}
         INPUT_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
@@ -195,19 +200,35 @@ runs:
         elif [ "$INPUT_RESOLVE_PINS" = "true" ]; then
           SCAN_FLAGS+=(--resolve-pins)
         fi
+        if [ -n "$INPUT_CONFIG" ]; then
+          SCAN_FLAGS+=(--config "$INPUT_CONFIG")
+        fi
 
+        set +e
         actionscope scan "$INPUT_PATH" \
           --output-format json \
           --output-file /tmp/actionscope-results.json \
           "${SCAN_FLAGS[@]}" \
-          --no-color 2>/tmp/actionscope-stderr.txt || {
-            echo "ActionScope scan failed. See stderr:"
-            cat /tmp/actionscope-stderr.txt || true
-            exit 1
-          }
+          --no-color 2>/tmp/actionscope-stderr.txt
+        SCAN_EXIT=$?
+        set -e
+        if [ ! -f /tmp/actionscope-results.json ]; then
+          echo "ActionScope scan did not produce a JSON report. See stderr:"
+          cat /tmp/actionscope-stderr.txt || true
+          exit 2
+        fi
+        if [ "$SCAN_EXIT" -gt 1 ]; then
+          echo "ActionScope scan failed. See stderr:"
+          cat /tmp/actionscope-stderr.txt || true
+          exit "$SCAN_EXIT"
+        fi
 
         if [ -f /tmp/actionscope-results.json ]; then
-          GATE_EXIT=0
+          GATE_EXIT=$(python3 -c "
+        import json
+        d = json.load(open('/tmp/actionscope-results.json'))
+        print(d.get('gate', {}).get('exit_code', 0))
+          ")
           if [ -n "$INPUT_FAIL_ON" ]; then
             GATE_FLAGS=(
               --fail-on "$INPUT_FAIL_ON"
@@ -314,8 +335,8 @@ runs:
         gh pr comment "$PR_NUMBER" \
           --body "$MARKDOWN"
 
-    - name: Evaluate risk threshold
-      if: inputs.fail-on != ''
+    - name: Evaluate risk policy
+      if: inputs.fail-on != '' || steps.scan.outputs.gate-exit-code != '0'
       shell: bash
       run: |
         if [ ! -f /tmp/actionscope-gate-exit ]; then
