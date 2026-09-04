@@ -282,6 +282,32 @@ def test_scan_rejects_oversized_template(
     assert "template exceeds 128 bytes" in errors[0]
 
 
+def test_scan_finds_iam_resource_after_initial_peek(tmp_path: Path) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        "Resources:\n"
+        + ("#" + (" padding" * 20_000) + "\n")
+        + "  LateRole:\n"
+        "    Type: AWS::IAM::Role\n"
+        "    Properties:\n"
+        "      RoleName: late-role\n"
+        "      Policies:\n"
+        "        - PolicyDocument:\n"
+        "            Statement:\n"
+        "              Effect: Allow\n"
+        "              Action: s3:GetObject\n"
+        "              Resource: '*'\n",
+        encoding="utf-8",
+    )
+
+    assert template.stat().st_size > cloudformation._PEEK_BYTES
+    findings, errors = scan_cloudformation_files(str(tmp_path))
+
+    assert errors == []
+    assert len(findings) == 1
+    assert findings[0].role_name == "late-role"
+
+
 def test_scan_cloudformation_files_returns_findings_without_errors() -> None:
     findings, errors = scan_cloudformation_files(str(FIXTURE_REPO))
 

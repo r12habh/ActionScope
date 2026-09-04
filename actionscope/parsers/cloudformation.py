@@ -552,18 +552,41 @@ def _role_name_from_arn(role_arn: str | None) -> str | None:
 
 
 def _looks_like_cloudformation(path: Path) -> bool:
+    resource_markers = (b'"Resources"', b"Resources:")
+    type_markers = (b"AWS::IAM::", b"AWS::Serverless::")
+    carry_size = max(len(marker) for marker in resource_markers + type_markers) - 1
+    has_resources = False
+    has_resource_type = False
+    bytes_read = 0
+    carry = b""
     try:
         if path.is_symlink():
             return False
         with path.open("rb") as template_file:
             if not stat.S_ISREG(os.fstat(template_file.fileno()).st_mode):
                 return False
-            head = template_file.read(_PEEK_BYTES)
+            while bytes_read <= _MAX_TEMPLATE_BYTES:
+                remaining = _MAX_TEMPLATE_BYTES + 1 - bytes_read
+                chunk = template_file.read(min(_PEEK_BYTES, remaining))
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                window = carry + chunk
+                has_resources = has_resources or any(
+                    marker in window for marker in resource_markers
+                )
+                has_resource_type = has_resource_type or any(
+                    marker in window for marker in type_markers
+                )
+                if has_resources and has_resource_type:
+                    return True
+                carry = window[-carry_size:]
     except (OSError, PermissionError):
         return False
-    has_resources = b'"Resources"' in head or b"Resources:" in head
-    has_resource_type = b"AWS::IAM::" in head or b"AWS::Serverless::" in head
-    return has_resources and has_resource_type
+
+    # Let the bounded parser report a useful coverage error for an oversized
+    # file that at least declares a CloudFormation Resources section.
+    return bytes_read > _MAX_TEMPLATE_BYTES and has_resources
 
 
 def _read_template_text(path: Path) -> tuple[str | None, str | None]:

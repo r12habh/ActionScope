@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
+from actionscope.analyzers.risk_engine import build_bindings
 from actionscope.cli import main
 from actionscope.config import (
     MAX_CONFIG_BYTES,
@@ -28,6 +29,7 @@ from actionscope.config import (
 from actionscope.findings import build_finding_records
 from actionscope.gating import evaluate_gate
 from actionscope.models import (
+    AwsCredentialSource,
     CoverageGap,
     FindingConfidence,
     FindingRecord,
@@ -417,7 +419,48 @@ def test_configuration_ignores_report_only_record_for_overall_risk() -> None:
     )
 
     assert result.overall_risk is RiskLevel.INFO
+    assert result.finding_count_by_risk(RiskLevel.CRITICAL) == 0
     assert result.finding_records[0].gate_eligible is False
+
+
+def test_as001_override_recomputes_aggregated_binding_risk() -> None:
+    source = AwsCredentialSource(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        step_name="Configure AWS credentials",
+        role_arn="arn:aws:iam::123456789012:role/deploy-role",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+    )
+    findings = [
+        PolicyFinding(
+            source_file=f"policy-{index}.tf",
+            source_type="terraform",
+            role_arn=None,
+            role_name="deploy-role",
+            actions=[_action(action, RiskLevel.CRITICAL)],
+            overall_risk=RiskLevel.CRITICAL,
+        )
+        for index, action in enumerate(
+            ("s3:DeleteBucket", "ec2:TerminateInstances"),
+            start=1,
+        )
+    ]
+    bindings = build_bindings([source], findings, ".")
+    result = ScanResult(policy_findings=findings, bindings=bindings)
+    config = ActionScopeConfig(
+        source_path=".actionscope.yml",
+        severity_overrides={"AS001": RiskLevel.INFO},
+    )
+
+    apply_severity_overrides_to_findings(result, config)
+
+    aggregate = bindings[0].policy_finding
+    assert aggregate is not None
+    assert aggregate.overall_risk is RiskLevel.INFO
+    result.finding_records = build_finding_records(result)
+    assert result.finding_records == []
 
 
 def test_result_configuration_suppresses_rule_and_overrides_severity() -> None:
