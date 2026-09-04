@@ -14,6 +14,7 @@ from actionscope.analyzers.risk_engine import (
 from actionscope.models import (
     AwsCredentialSource,
     GitHubTokenPermission,
+    IamAction,
     PolicyFinding,
     RiskLevel,
     ScanResult,
@@ -124,6 +125,60 @@ def test_build_bindings_reports_high_confidence_for_role_relationship() -> None:
     assert bindings[0].policy_finding is finding
     assert bindings[0].match_confidence == "high"
     assert "Terraform role relationship" in bindings[0].match_reason
+
+
+def test_build_bindings_aggregates_every_policy_for_the_role() -> None:
+    read_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/read.tf",
+        role_name="github-deploy-role",
+    )
+    read_policy.actions = [
+        IamAction(
+            action="s3:GetObject",
+            access_level="Read",
+            risk_level=RiskLevel.LOW,
+            description="Read objects",
+            resource="arn:aws:s3:::builds/*",
+        )
+    ]
+    critical_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/admin.tf",
+        role_name="github-deploy-role",
+    )
+    critical_policy.actions = [
+        IamAction(
+            action="iam:PassRole",
+            access_level="Permissions management",
+            risk_level=RiskLevel.CRITICAL,
+            description="Pass a role",
+            resource="*",
+        )
+    ]
+    critical_policy.has_passrole = True
+
+    bindings = build_bindings(
+        [credential_source()],
+        [read_policy, critical_policy],
+        "/repo",
+    )
+
+    binding = bindings[0]
+    assert binding.policy_finding is not None
+    assert {action.action for action in binding.policy_finding.actions} == {
+        "iam:PassRole",
+        "s3:GetObject",
+    }
+    assert binding.policy_finding.overall_risk is RiskLevel.CRITICAL
+    assert binding.matched_policy_findings == [read_policy, critical_policy]
+    assert get_unmatched_findings(bindings, [read_policy, critical_policy]) == []
+
+    result = ScanResult(
+        policy_findings=[read_policy, critical_policy],
+        bindings=bindings,
+    )
+    assert result.finding_count_by_risk(RiskLevel.CRITICAL) == 1
 
 
 def test_build_bindings_creates_dynamic_reference_for_secret_refs() -> None:

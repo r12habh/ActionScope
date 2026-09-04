@@ -154,13 +154,117 @@ def extract_iam_policies_from_cloudformation(
     if not isinstance(resources, dict):
         return []
 
-    role_names = {
-        logical_id: _static_string(properties.get("RoleName"))
+    roles = {
+        logical_id: properties
         for logical_id, _display_name, properties in iter_cloudformation_iam_roles(
             template
         )
     }
+    role_names = {
+        logical_id: _static_string(properties.get("RoleName"))
+        for logical_id, properties in roles.items()
+    }
+    role_documents = {
+        logical_id: _role_inline_policy_documents(properties)
+        for logical_id, properties in roles.items()
+    }
+    role_policy_ids = {
+        logical_id: [str(logical_id)] if role_documents[logical_id] else []
+        for logical_id in roles
+    }
+    role_policy_names = {
+        logical_id: _role_inline_policy_names(properties)
+        for logical_id, properties in roles.items()
+    }
+
+    policy_resources: dict[str, tuple[str, dict, dict]] = {}
+    for logical_id, resource in resources.items():
+        if not isinstance(resource, dict):
+            continue
+        resource_type = str(resource.get("Type", ""))
+        properties = resource.get("Properties") or {}
+        if (
+            resource_type in {"AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"}
+            and isinstance(properties, dict)
+            and isinstance(properties.get("PolicyDocument"), dict)
+        ):
+            policy_resources[str(logical_id)] = (
+                resource_type,
+                properties,
+                properties["PolicyDocument"],
+            )
+
+    attached_policy_roles: dict[str, set[str]] = {
+        logical_id: set() for logical_id in policy_resources
+    }
+    for role_id, properties in roles.items():
+        for policy_id in _logical_resource_references(
+            properties.get("ManagedPolicyArns")
+        ):
+            if policy_id in policy_resources:
+                attached_policy_roles[policy_id].add(role_id)
+
+    standalone_policy_findings: list[PolicyFinding] = []
+    for policy_id, (resource_type, properties, document) in policy_resources.items():
+        resolved_role_ids, unresolved_targets = _resolve_role_targets(
+            properties.get("Roles"),
+            role_names,
+        )
+        policy_name = (
+            _static_string(properties.get("PolicyName"))
+            or _static_string(properties.get("ManagedPolicyName"))
+            or policy_id
+        )
+        resolved_role_ids.update(attached_policy_roles[policy_id])
+        for role_id in resolved_role_ids:
+            role_documents[role_id].append(document)
+            role_policy_ids[role_id].append(policy_id)
+            role_policy_names[role_id].append(policy_name)
+
+        if not resolved_role_ids and not unresolved_targets:
+            unresolved_targets = [(None, None)]
+        for role_name, role_arn in unresolved_targets:
+            standalone_policy_findings.append(
+                _finding_from_documents(
+                    [document],
+                    source_file,
+                    role_name=role_name,
+                    role_arn=role_arn,
+                    policy_name=policy_name,
+                    metadata={
+                        "cloudformation_logical_id": policy_id,
+                        "cloudformation_resource_type": resource_type,
+                    },
+                )
+            )
+
     findings: list[PolicyFinding] = []
+
+    for logical_id, properties in roles.items():
+        documents = role_documents[logical_id]
+        if not documents:
+            continue
+        policy_ids = list(dict.fromkeys(role_policy_ids[logical_id]))
+        policy_names = list(dict.fromkeys(role_policy_names[logical_id]))
+        findings.append(
+            _finding_from_documents(
+                documents,
+                source_file,
+                role_name=role_names[logical_id],
+                policy_name=(
+                    policy_names[0]
+                    if len(policy_names) == 1
+                    else f"{logical_id}.effective-policies"
+                ),
+                metadata={
+                    "cloudformation_logical_id": logical_id,
+                    "cloudformation_resource_type": "AWS::IAM::Role",
+                    "cloudformation_policy_logical_ids": policy_ids,
+                },
+            )
+        )
+
+    findings.extend(standalone_policy_findings)
 
     for logical_id, resource in resources.items():
         if not isinstance(resource, dict):
@@ -170,47 +274,11 @@ def extract_iam_policies_from_cloudformation(
         if not isinstance(properties, dict):
             continue
 
-        if resource_type == "AWS::IAM::Role":
-            documents = _role_inline_policy_documents(properties)
-            if documents:
-                finding = _finding_from_documents(
-                    documents,
-                    source_file,
-                    role_name=role_names.get(str(logical_id)),
-                    policy_name=f"{logical_id}.Policies",
-                    metadata={
-                        "cloudformation_logical_id": str(logical_id),
-                        "cloudformation_resource_type": resource_type,
-                    },
-                )
-                findings.append(finding)
-            continue
-
-        if resource_type in {"AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"}:
-            document = properties.get("PolicyDocument")
-            if not isinstance(document, dict):
-                continue
-            targets = _role_targets(properties.get("Roles"), role_names)
-            if not targets:
-                targets = [(None, None)]
-            for role_name, role_arn in targets:
-                findings.append(
-                    _finding_from_documents(
-                        [document],
-                        source_file,
-                        role_name=role_name,
-                        role_arn=role_arn,
-                        policy_name=(
-                            _static_string(properties.get("PolicyName"))
-                            or _static_string(properties.get("ManagedPolicyName"))
-                            or str(logical_id)
-                        ),
-                        metadata={
-                            "cloudformation_logical_id": str(logical_id),
-                            "cloudformation_resource_type": resource_type,
-                        },
-                    )
-                )
+        if resource_type in {
+            "AWS::IAM::Role",
+            "AWS::IAM::Policy",
+            "AWS::IAM::ManagedPolicy",
+        }:
             continue
 
         if resource_type.startswith("AWS::Serverless::"):
@@ -324,6 +392,19 @@ def _role_inline_policy_documents(properties: dict) -> list[dict]:
     ]
 
 
+def _role_inline_policy_names(properties: dict) -> list[str]:
+    policies = properties.get("Policies") or []
+    if isinstance(policies, dict):
+        policies = [policies]
+    if not isinstance(policies, list):
+        return []
+    return [
+        _static_string(policy.get("PolicyName")) or "inline-policy"
+        for policy in policies
+        if isinstance(policy, dict) and isinstance(policy.get("PolicyDocument"), dict)
+    ]
+
+
 def _collect_policy_documents(value: Any) -> list[dict]:
     if isinstance(value, list):
         return [
@@ -358,6 +439,65 @@ def _role_targets(
         role_arn = _literal_role_arn(static)
         targets.append((_role_name_from_arn(role_arn) or static, role_arn))
     return targets
+
+
+def _resolve_role_targets(
+    value: Any,
+    role_names: dict[str, str | None],
+) -> tuple[set[str], list[tuple[str | None, str | None]]]:
+    """Split policy role targets into known template roles and external roles."""
+    values = value if isinstance(value, list) else [value]
+    resolved: set[str] = set()
+    unresolved: list[tuple[str | None, str | None]] = []
+
+    for item in values:
+        referenced_roles = _logical_resource_references(item) & role_names.keys()
+        if referenced_roles:
+            resolved.update(referenced_roles)
+            continue
+
+        static = _static_string(item)
+        if static is None:
+            continue
+        matching_role_ids = {
+            role_id
+            for role_id, role_name in role_names.items()
+            if role_name == static
+        }
+        if matching_role_ids:
+            resolved.update(matching_role_ids)
+            continue
+        role_arn = _literal_role_arn(static)
+        unresolved.append((_role_name_from_arn(role_arn) or static, role_arn))
+
+    return resolved, unresolved
+
+
+def _logical_resource_references(value: Any) -> set[str]:
+    """Return logical resource IDs referenced through Ref or Fn::GetAtt."""
+    if isinstance(value, list):
+        return {
+            reference
+            for item in value
+            for reference in _logical_resource_references(item)
+        }
+    if not isinstance(value, dict):
+        return set()
+
+    references: set[str] = set()
+    ref = value.get("Ref")
+    if isinstance(ref, str):
+        references.add(ref)
+
+    get_att = value.get("Fn::GetAtt")
+    if isinstance(get_att, list) and get_att and isinstance(get_att[0], str):
+        references.add(get_att[0])
+    elif isinstance(get_att, str):
+        references.add(get_att.split(".", 1)[0])
+
+    for nested in value.values():
+        references.update(_logical_resource_references(nested))
+    return references
 
 
 def _static_strings(value: Any, *, preserve_dynamic: bool) -> list[str]:

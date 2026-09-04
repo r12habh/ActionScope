@@ -47,6 +47,7 @@ class _PolicyMatch:
     finding: PolicyFinding | None
     confidence: str
     reason: str
+    matched_findings: tuple[PolicyFinding, ...] = ()
 
 
 def match_role_to_policies(
@@ -72,46 +73,95 @@ def _match_role_to_policy_with_confidence(
     if _is_dynamic_reference(role_arn):
         return _PolicyMatch(None, "none", "role ARN is a dynamic reference")
 
-    for finding in policy_findings:
-        if finding.role_arn == role_arn:
-            return _PolicyMatch(finding, "high", "exact role ARN match")
+    exact_arn_matches = [
+        finding for finding in policy_findings if finding.role_arn == role_arn
+    ]
+    if exact_arn_matches:
+        return _policy_match(
+            exact_arn_matches,
+            credential_source,
+            "high",
+            "exact role ARN match",
+        )
 
     role_name = _role_name_from_arn(role_arn)
     if role_name is None:
         return _PolicyMatch(None, "none", "role ARN is not a static IAM role ARN")
 
     normalized_role_name = role_name.lower()
-    for finding in _aws_verified_findings(policy_findings):
-        if _finding_matches_role_name(finding, normalized_role_name):
-            return _PolicyMatch(finding, "high", "AWS-verified role name match")
+    verified_matches = [
+        finding
+        for finding in _aws_verified_findings(policy_findings)
+        if _finding_matches_role_name(finding, normalized_role_name)
+    ]
+    if verified_matches:
+        return _policy_match(
+            verified_matches,
+            credential_source,
+            "high",
+            "AWS-verified role name match",
+        )
 
-    for finding in policy_findings:
-        if finding.source_type == "aws_verified":
-            continue
-
-        if finding.role_name and normalized_role_name == finding.role_name.lower():
-            relationship = {
-                "terraform": "Terraform",
-                "cloudformation": "CloudFormation/SAM",
-            }.get(finding.source_type, "Repository IAM")
-            return _PolicyMatch(
-                finding,
-                "high",
-                f"{relationship} role relationship match",
-            )
-
+    repository_findings = [
+        finding
+        for finding in policy_findings
+        if finding.source_type != "aws_verified"
+    ]
+    relationship_matches = [
+        finding
+        for finding in repository_findings
         if (
+            finding.role_name
+            and normalized_role_name == finding.role_name.lower()
+        )
+        or (
             finding.role_arn
             and normalized_role_name
             == finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
-        ):
-            return _PolicyMatch(finding, "high", "role name extracted from finding")
+        )
+    ]
+    if relationship_matches:
+        source_types = {finding.source_type for finding in relationship_matches}
+        relationship = (
+            {
+                "terraform": "Terraform",
+                "cloudformation": "CloudFormation/SAM",
+            }.get(next(iter(source_types)), "Repository IAM")
+            if len(source_types) == 1
+            else "Repository IAM"
+        )
+        return _policy_match(
+            relationship_matches,
+            credential_source,
+            "high",
+            f"{relationship} role relationship match",
+        )
 
-        if normalized_role_name in finding.source_file.lower():
-            return _PolicyMatch(finding, "medium", "role name appears in policy path")
+    path_matches = [
+        finding
+        for finding in repository_findings
+        if normalized_role_name in finding.source_file.lower()
+    ]
+    if path_matches:
+        return _policy_match(
+            path_matches,
+            credential_source,
+            "medium",
+            "role name appears in policy path",
+        )
 
-        if _file_contains(finding.source_file, role_name):
-            return _PolicyMatch(finding, "low", "role name appears in policy file")
+    content_matches = [
+        finding
+        for finding in repository_findings
+        if _file_contains(finding.source_file, role_name)
+    ]
+    if content_matches:
+        return _policy_match(
+            content_matches,
+            credential_source,
+            "low",
+            "role name appears in policy file",
+        )
 
     return _PolicyMatch(None, "none", "no matching policy found")
 
@@ -148,6 +198,7 @@ def build_bindings(
                 policy_source=policy_source,
                 match_confidence=match.confidence,
                 match_reason=match.reason,
+                matched_policy_findings=list(match.matched_findings),
             )
         )
 
@@ -449,6 +500,94 @@ def _finding_matches_role_name(
     return normalized_role_name == finding.role_arn.strip("/").rsplit("/", 1)[
         -1
     ].lower()
+
+
+def _policy_match(
+    findings: list[PolicyFinding],
+    credential_source: AwsCredentialSource,
+    confidence: str,
+    reason: str,
+) -> _PolicyMatch:
+    matched = tuple(findings)
+    finding = (
+        findings[0]
+        if len(findings) == 1
+        else _aggregate_policy_findings(findings, credential_source)
+    )
+    if len(findings) > 1:
+        reason = f"{reason}; aggregated {len(findings)} policy sources"
+    return _PolicyMatch(finding, confidence, reason, matched)
+
+
+def _aggregate_policy_findings(
+    findings: list[PolicyFinding],
+    credential_source: AwsCredentialSource,
+) -> PolicyFinding:
+    """Combine every matched permission source into one effective role view."""
+    actions = []
+    seen_actions: set[tuple[str, str, str, RiskLevel]] = set()
+    for finding in findings:
+        for action in finding.actions:
+            key = (
+                action.action.lower(),
+                action.resource,
+                action.access_level,
+                action.risk_level,
+            )
+            if key not in seen_actions:
+                actions.append(action)
+                seen_actions.add(key)
+
+    role_name = _role_name_from_arn(credential_source.role_arn)
+    source_files = list(dict.fromkeys(finding.source_file for finding in findings))
+    policy_names = list(
+        dict.fromkeys(
+            finding.policy_name
+            for finding in findings
+            if finding.policy_name is not None
+        )
+    )
+    aggregate = PolicyFinding(
+        source_file=source_files[0],
+        source_type=findings[0].source_type,
+        role_arn=credential_source.role_arn,
+        actions=actions,
+        has_star_action=any(finding.has_star_action for finding in findings),
+        has_star_resource=any(finding.has_star_resource for finding in findings),
+        has_passrole=any(finding.has_passrole for finding in findings),
+        overall_risk=max(
+            (finding.overall_risk for finding in findings),
+            default=RiskLevel.INFO,
+        ),
+        role_name=role_name or next(
+            (finding.role_name for finding in findings if finding.role_name),
+            None,
+        ),
+        policy_name=f"effective-policy-set ({len(findings)} sources)",
+        metadata={
+            "aggregated_policy_count": len(findings),
+            "aggregated_source_files": source_files,
+            "aggregated_policy_names": policy_names,
+        },
+    )
+
+    detected_paths = detect_privesc_paths(aggregate, aggregate.source_file)
+    path_by_id = {
+        path.path_id: path
+        for finding in findings
+        for path in finding.privesc_paths
+    }
+    path_by_id.update({path.path_id: path for path in detected_paths})
+    aggregate.privesc_paths = list(path_by_id.values())
+    aggregate.has_privilege_escalation = bool(aggregate.privesc_paths) or any(
+        finding.has_privilege_escalation for finding in findings
+    )
+    aggregate.overall_risk = max(
+        [aggregate.overall_risk]
+        + [action.risk_level for action in aggregate.actions]
+        + [path.severity for path in aggregate.privesc_paths]
+    )
+    return aggregate
 
 
 def _file_contains(filepath: str, needle: str) -> bool:

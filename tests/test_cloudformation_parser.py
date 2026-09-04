@@ -135,6 +135,92 @@ def test_unknown_dynamic_resource_is_not_treated_as_wildcard() -> None:
     assert not finding.has_star_resource
 
 
+def test_role_aggregates_inline_and_attached_policy_documents() -> None:
+    template = {
+        "Resources": {
+            "DeployRole": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "RoleName": "deploy-role",
+                    "Policies": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": "arn:aws:s3:::builds/*",
+                                }
+                            }
+                        }
+                    ],
+                },
+            },
+            "EscalationPolicy": {
+                "Type": "AWS::IAM::Policy",
+                "Properties": {
+                    "Roles": [{"Ref": "DeployRole"}],
+                    "PolicyDocument": {
+                        "Statement": {
+                            "Effect": "Allow",
+                            "Action": "iam:PassRole",
+                            "Resource": "*",
+                        }
+                    },
+                },
+            },
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+
+    assert len(findings) == 1
+    assert {action.action for action in findings[0].actions} == {
+        "iam:PassRole",
+        "s3:GetObject",
+    }
+    assert findings[0].has_passrole
+    assert findings[0].overall_risk is RiskLevel.CRITICAL
+
+
+def test_role_side_managed_policy_ref_is_resolved() -> None:
+    template = {
+        "Resources": {
+            "DeployRole": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "RoleName": "deploy-role",
+                    "ManagedPolicyArns": [{"Ref": "EscalationPolicy"}],
+                },
+            },
+            "EscalationPolicy": {
+                "Type": "AWS::IAM::ManagedPolicy",
+                "Properties": {
+                    "ManagedPolicyName": "deploy-escalation",
+                    "PolicyDocument": {
+                        "Statement": {
+                            "Effect": "Allow",
+                            "Action": "iam:CreatePolicyVersion",
+                            "Resource": "*",
+                        }
+                    },
+                },
+            },
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+
+    assert len(findings) == 1
+    assert findings[0].role_name == "deploy-role"
+    assert [action.action for action in findings[0].actions] == [
+        "iam:CreatePolicyVersion"
+    ]
+    assert findings[0].overall_risk is RiskLevel.CRITICAL
+    assert findings[0].metadata["cloudformation_policy_logical_ids"] == [
+        "EscalationPolicy"
+    ]
+
+
 def test_scan_cloudformation_files_returns_findings_without_errors() -> None:
     findings, errors = scan_cloudformation_files(str(FIXTURE_REPO))
 

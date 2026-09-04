@@ -286,6 +286,7 @@ class WorkflowCredentialBinding:
     policy_source: str
     match_confidence: str = "none"
     match_reason: str = ""
+    matched_policy_findings: list[PolicyFinding] = field(default_factory=list)
 
 
 @dataclass
@@ -438,11 +439,13 @@ class ScanResult:
                 finding.gate_eligible and finding.risk_level == level
                 for finding in self.finding_records
             )
-        bound_policy_ids = {
-            id(binding.policy_finding)
-            for binding in self.bindings
-            if binding.policy_finding is not None
-        }
+        bound_policy_ids: set[int] = set()
+        for binding in self.bindings:
+            bound_policy_ids.update(
+                id(finding) for finding in binding.matched_policy_findings
+            )
+            if binding.policy_finding is not None:
+                bound_policy_ids.add(id(binding.policy_finding))
         return sum(
             not isinstance(finding, PolicyFinding)
             or id(finding) in bound_policy_ids
@@ -454,8 +457,16 @@ class ScanResult:
         findings: list[object] = []
         seen_policy_ids: set[int] = set()
 
+        bound_source_ids: set[int] = set()
+        for binding in self.bindings:
+            bound_source_ids.update(
+                id(finding) for finding in binding.matched_policy_findings
+            )
+            if binding.policy_finding is not None:
+                bound_source_ids.add(id(binding.policy_finding))
+
         for finding in self.policy_findings:
-            if finding.overall_risk == level:
+            if finding.overall_risk == level and id(finding) not in bound_source_ids:
                 findings.append(finding)
                 seen_policy_ids.add(id(finding))
 
@@ -496,11 +507,11 @@ def get_unmatched_findings(
     all_findings: list[PolicyFinding],
 ) -> list[PolicyFinding]:
     """Return policy findings that are not referenced by any binding."""
-    matched_ids = {
-        id(binding.policy_finding)
-        for binding in bindings
-        if binding.policy_finding is not None
-    }
+    matched_ids: set[int] = set()
+    for binding in bindings:
+        matched_ids.update(id(finding) for finding in binding.matched_policy_findings)
+        if binding.policy_finding is not None:
+            matched_ids.add(id(binding.policy_finding))
 
     return [
         finding
