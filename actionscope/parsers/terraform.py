@@ -290,27 +290,31 @@ def _finding_from_statements(
         if not isinstance(statement, dict):
             continue
 
-        if _has_not_actions(statement):
-            _warn(f"Skipping not_actions statement in {source_file}")
-            continue
-
         effect = _statement_value(statement, "effect", "Effect")
         if _clean_string(effect or "").lower() == "deny":
             continue
         if effect is not None and _clean_string(effect).lower() != "allow":
             continue
 
-        raw_actions = _statement_value(
-            statement,
-            "actions" if terraform_document else "Action",
-            "Action",
-            "actions",
+        raw_actions = (
+            "*"
+            if _has_not_actions(statement)
+            else _statement_value(
+                statement,
+                "actions" if terraform_document else "Action",
+                "Action",
+                "actions",
+            )
         )
-        raw_resources = _statement_value(
-            statement,
-            "resources" if terraform_document else "Resource",
-            "Resource",
-            "resources",
+        raw_resources = (
+            "*"
+            if _has_not_resources(statement)
+            else _statement_value(
+                statement,
+                "resources" if terraform_document else "Resource",
+                "Resource",
+                "resources",
+            )
         )
 
         statement_actions = _string_list(raw_actions)
@@ -539,6 +543,12 @@ def _statement_value(statement: dict, *keys: str) -> Any:
 def _has_not_actions(statement: dict) -> bool:
     return any(
         key in statement for key in ("not_actions", "NotAction", "not_action")
+    )
+
+
+def _has_not_resources(statement: dict) -> bool:
+    return any(
+        key in statement for key in ("not_resources", "NotResource", "not_resource")
     )
 
 

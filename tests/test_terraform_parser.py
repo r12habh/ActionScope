@@ -161,7 +161,7 @@ def test_aws_iam_role_policy_resource_extracts_all_actions() -> None:
     ]
 
 
-def test_not_actions_statement_is_skipped(capsys) -> None:
+def test_not_actions_statement_is_classified_conservatively() -> None:
     tf_data = {
         "data": [
             {
@@ -182,8 +182,33 @@ def test_not_actions_statement_is_skipped(capsys) -> None:
 
     findings = extract_iam_policies_from_terraform(tf_data, "complex.tf")
 
-    assert findings[0].overall_risk is RiskLevel.INFO
-    assert "not_actions" in capsys.readouterr().err
+    assert findings[0].overall_risk is RiskLevel.CRITICAL
+    assert findings[0].has_star_action
+
+
+def test_not_resources_statement_is_classified_conservatively() -> None:
+    tf_data = {
+        "data": [
+            {
+                "aws_iam_policy_document": {
+                    "complex": {
+                        "statement": [
+                            {
+                                "effect": "Allow",
+                                "actions": ["s3:PutObject"],
+                                "not_resources": ["arn:aws:s3:::audit/*"],
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "complex.tf")
+
+    assert findings[0].overall_risk is RiskLevel.MEDIUM
+    assert findings[0].has_star_resource
 
 
 def test_unresolvable_policy_reference_returns_info_finding() -> None:

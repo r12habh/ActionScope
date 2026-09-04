@@ -344,12 +344,19 @@ def scan_workflows(
             for source in delegated_sources
             if source.uses_access_keys
         }
+        delegated_access_key_callers = _local_action_access_key_locations(
+            workflow_data
+        )
         direct_sources = [
             source
             for source in direct_sources
             if not (
-                source.step_name == "Workflow/job environment"
-                and source.job_name in delegated_access_key_jobs
+                source.job_name in delegated_access_key_jobs
+                and (
+                    source.step_name == "Workflow/job environment"
+                    or (source.job_name, source.step_name)
+                    in delegated_access_key_callers
+                )
             )
         ]
         credential_sources.extend(direct_sources)
@@ -481,6 +488,10 @@ def _inspect_local_composite_action(
     caller_with = caller_step.get("with", {})
     if not isinstance(caller_with, dict):
         caller_with = {}
+    caller_env = {
+        **(inherited_env or {}),
+        **extract_env_var_references(caller_step),
+    }
 
     sources: list[AwsCredentialSource] = []
     for nested_step in steps:
@@ -493,12 +504,42 @@ def _inspect_local_composite_action(
             job_name,
             has_oidc_permission,
             step_name_prefix=f"Local action {uses_ref}",
-            inherited_env=inherited_env,
+            inherited_env=caller_env,
         )
         if source is not None:
             sources.append(source)
 
     return sources, []
+
+
+def _local_action_access_key_locations(
+    workflow_data: dict,
+) -> set[tuple[str, str]]:
+    """Return local-action caller steps that expose static AWS key variables."""
+    jobs = workflow_data.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return set()
+    workflow_env = _environment_mapping(workflow_data.get("env"))
+    locations: set[tuple[str, str]] = set()
+    for job_name, job_data in jobs.items():
+        if not isinstance(job_data, dict):
+            continue
+        inherited_env = {
+            **workflow_env,
+            **_environment_mapping(job_data.get("env")),
+        }
+        for step in _job_steps(job_data):
+            uses = step.get("uses")
+            if not isinstance(uses, str) or not _is_local_action_reference(
+                uses.strip()
+            ):
+                continue
+            caller_env = {**inherited_env, **extract_env_var_references(step)}
+            if AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(caller_env):
+                locations.add(
+                    (str(job_name), str(step.get("name") or "Shell step environment"))
+                )
+    return locations
 
 
 def _resolve_composite_inputs(step: dict, caller_with: dict) -> dict:

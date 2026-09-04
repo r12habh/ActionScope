@@ -5,6 +5,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import actionscope.parsers.cloudformation as cloudformation
 from actionscope.analyzers.oidc_trust import scan_oidc_trust_policies
 from actionscope.analyzers.risk_engine import build_bindings
 from actionscope.cli import main
@@ -219,6 +220,66 @@ def test_role_side_managed_policy_ref_is_resolved() -> None:
     assert findings[0].metadata["cloudformation_policy_logical_ids"] == [
         "EscalationPolicy"
     ]
+
+
+def test_not_action_and_not_resource_are_classified_conservatively() -> None:
+    template = {
+        "Resources": {
+            "BroadRole": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "RoleName": "broad-role",
+                    "Policies": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": [
+                                    {
+                                        "Effect": "Allow",
+                                        "NotAction": "iam:DeleteUser",
+                                        "Resource": "*",
+                                    },
+                                    {
+                                        "Effect": "Allow",
+                                        "Action": "s3:PutObject",
+                                        "NotResource": "arn:aws:s3:::audit/*",
+                                    },
+                                ]
+                            }
+                        }
+                    ],
+                },
+            }
+        }
+    }
+
+    finding = extract_iam_policies_from_cloudformation(template, "template.yml")[0]
+
+    assert finding.has_star_action
+    assert finding.has_star_resource
+    assert finding.overall_risk is RiskLevel.CRITICAL
+
+
+def test_scan_rejects_oversized_template(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(cloudformation, "_MAX_TEMPLATE_BYTES", 128)
+    template = tmp_path / "template.yml"
+    template.write_text(
+        "Resources:\n"
+        "  Role:\n"
+        "    Type: AWS::IAM::Role\n"
+        "    Properties:\n"
+        "      RoleName: oversized\n"
+        + ("# padding\n" * 20),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_cloudformation_files(str(tmp_path))
+
+    assert findings == []
+    assert len(errors) == 1
+    assert "template exceeds 128 bytes" in errors[0]
 
 
 def test_scan_cloudformation_files_returns_findings_without_errors() -> None:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any, Iterator
@@ -13,6 +15,7 @@ from actionscope.models import PolicyFinding
 from actionscope.parsers.policy_json import extract_actions_from_policy
 
 _PEEK_BYTES = 131_072
+_MAX_TEMPLATE_BYTES = 8 * 1024 * 1024
 _SKIPPED_DIRS = {
     ".git",
     ".mypy_cache",
@@ -100,13 +103,16 @@ def parse_cloudformation_file(filepath: str) -> dict | None:
 def _load_cloudformation_file(filepath: str) -> tuple[dict | None, str | None]:
     """Return a supported template and an error only for malformed input."""
     path = Path(filepath)
+    text, read_error = _read_template_text(path)
+    if read_error:
+        return None, read_error
+    assert text is not None
     try:
-        text = path.read_text(encoding="utf-8")
         if path.suffix.lower() == ".json" or text.lstrip().startswith("{"):
             data = json.loads(text)
         else:
             data = yaml.load(text, Loader=CloudFormationLoader)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
+    except (json.JSONDecodeError, yaml.YAMLError) as exc:
         return None, f"Could not parse CloudFormation file {filepath}: {exc}"
 
     if not isinstance(data, dict) or not is_cloudformation_template(data):
@@ -547,12 +553,47 @@ def _role_name_from_arn(role_arn: str | None) -> str | None:
 
 def _looks_like_cloudformation(path: Path) -> bool:
     try:
-        head = path.read_bytes()[:_PEEK_BYTES]
+        if path.is_symlink():
+            return False
+        with path.open("rb") as template_file:
+            if not stat.S_ISREG(os.fstat(template_file.fileno()).st_mode):
+                return False
+            head = template_file.read(_PEEK_BYTES)
     except (OSError, PermissionError):
         return False
     has_resources = b'"Resources"' in head or b"Resources:" in head
     has_resource_type = b"AWS::IAM::" in head or b"AWS::Serverless::" in head
     return has_resources and has_resource_type
+
+
+def _read_template_text(path: Path) -> tuple[str | None, str | None]:
+    """Read one regular template file with a strict byte limit."""
+    try:
+        if path.is_symlink():
+            return (
+                None,
+                f"Could not parse CloudFormation file {path}: not a regular file",
+            )
+        with path.open("rb") as template_file:
+            if not stat.S_ISREG(os.fstat(template_file.fileno()).st_mode):
+                return (
+                    None,
+                    f"Could not parse CloudFormation file {path}: not a regular file",
+                )
+            payload = template_file.read(_MAX_TEMPLATE_BYTES + 1)
+    except (OSError, PermissionError) as exc:
+        return None, f"Could not parse CloudFormation file {path}: {exc}"
+
+    if len(payload) > _MAX_TEMPLATE_BYTES:
+        return (
+            None,
+            f"Could not parse CloudFormation file {path}: "
+            f"template exceeds {_MAX_TEMPLATE_BYTES} bytes",
+        )
+    try:
+        return payload.decode("utf-8"), None
+    except UnicodeDecodeError as exc:
+        return None, f"Could not parse CloudFormation file {path}: {exc}"
 
 
 def _warn(message: str) -> None:

@@ -401,6 +401,55 @@ runs:
     assert sources[0].step_name.startswith("Local action ./actions/configure")
 
 
+def test_scan_propagates_and_deduplicates_caller_step_keys_for_local_action(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure through local action
+        uses: ./actions/configure
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+""",
+        encoding="utf-8",
+    )
+    action_dir = tmp_path / "actions" / "configure"
+    action_dir.mkdir(parents=True)
+    action_dir.joinpath("action.yml").write_text(
+        """
+name: Configure
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::123456789012:role/deploy
+        aws-region: us-east-1
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/deploy"
+    assert sources[0].uses_access_keys
+    assert sources[0].uses_oidc
+    assert sources[0].step_name.startswith("Local action ./actions/configure")
+
+
 def test_step_without_with_block_returns_source_with_no_role() -> None:
     workflow_data = {
         "jobs": {

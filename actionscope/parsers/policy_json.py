@@ -120,15 +120,25 @@ def extract_actions_from_policy(
         if str(statement.get("Effect", "")).lower() != "allow":
             continue
 
-        if "Action" not in statement or "Resource" not in statement:
+        has_action = "Action" in statement or "NotAction" in statement
+        has_resource = "Resource" in statement or "NotResource" in statement
+        if not has_action or not has_resource:
             _warn(
                 f"Skipping statement {index} in {source_file}: "
                 "missing Action or Resource"
             )
             continue
 
-        statement_actions = _string_list(statement.get("Action"))
-        resources = _string_list(statement.get("Resource"))
+        statement_actions = (
+            _string_list(statement.get("Action"))
+            if "Action" in statement
+            else ["*"]
+        )
+        resources = (
+            _string_list(statement.get("Resource"))
+            if "Resource" in statement
+            else ["*"]
+        )
         if not statement_actions or not resources:
             _warn(
                 f"Skipping statement {index} in {source_file}: "
