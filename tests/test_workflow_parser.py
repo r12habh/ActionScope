@@ -272,6 +272,135 @@ def test_env_access_key_marks_uses_access_keys_true() -> None:
     assert sources[0].uses_access_keys is True
 
 
+def test_job_environment_access_keys_are_inherited_by_configure_step() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "env": {
+                    "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+                    "AWS_SECRET_ACCESS_KEY": "${{ secrets.AWS_SECRET_ACCESS_KEY }}",
+                },
+                "steps": [
+                    {"uses": "aws-actions/configure-aws-credentials@v4"}
+                ],
+            }
+        }
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys is True
+
+
+def test_workflow_environment_access_keys_create_source_without_action() -> None:
+    workflow_data = {
+        "env": {
+            "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+            "AWS_SECRET_ACCESS_KEY": "${{ secrets.AWS_SECRET_ACCESS_KEY }}",
+            "AWS_REGION": "us-west-2",
+        },
+        "jobs": {
+            "deploy": {
+                "steps": [{"name": "Deploy", "run": "aws s3 ls"}],
+            }
+        },
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].step_name == "Workflow/job environment"
+    assert sources[0].uses_access_keys is True
+    assert sources[0].aws_region == "us-west-2"
+
+
+def test_shell_step_environment_access_keys_create_source() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {
+                        "name": "Deploy directly",
+                        "run": "aws s3 ls",
+                        "env": {
+                            "AWS_SECRET_ACCESS_KEY": "${{ secrets.AWS_SECRET }}"
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].step_name == "Deploy directly"
+    assert sources[0].uses_access_keys is True
+
+
+def test_inherited_access_keys_do_not_duplicate_configure_source() -> None:
+    workflow_data = {
+        "env": {"AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}"},
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {"uses": "aws-actions/configure-aws-credentials@v4"},
+                    {"run": "aws s3 ls"},
+                ]
+            }
+        },
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys is True
+
+
+def test_scan_deduplicates_inherited_keys_used_by_local_action(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/configure
+""",
+        encoding="utf-8",
+    )
+    action_dir = tmp_path / "actions" / "configure"
+    action_dir.mkdir(parents=True)
+    action_dir.joinpath("action.yml").write_text(
+        """
+name: Configure
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-region: us-east-1
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys
+    assert sources[0].step_name.startswith("Local action ./actions/configure")
+
+
 def test_step_without_with_block_returns_source_with_no_role() -> None:
     workflow_data = {
         "jobs": {

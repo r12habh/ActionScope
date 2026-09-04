@@ -14,8 +14,8 @@ A scan returning `Observed Risk: ℹ️ INFO` with `Coverage: COMPLETE` and no
 detector hits means the inspected evidence did not contain one of the
 patterns ActionScope reports. Specifically:
 
-- No `aws-actions/configure-aws-credentials` step in any workflow (so
-  there's no AWS surface to analyse)
+- No AWS role-assumption step or static AWS credential environment in any
+  workflow (so there's no AWS surface to analyse)
 - No `uses:` reference matches the compromised-actions database
 - No `${{ github.event.* }}` interpolation in `run:` blocks
 - No `pull_request_target` jobs with write-capable token permissions
@@ -53,8 +53,9 @@ is not classified as low or informational.
 This isn't a bug — it just means the policy isn't co-located with the
 workflow. Common reasons:
 
-- IAM is managed in a separate "infrastructure" repository (Terraform
-  monorepo, terragrunt, AWS CDK, CloudFormation in a different repo, …)
+- IAM is managed in a separate infrastructure repository
+- IAM is authored in CDK, Pulumi, or another unsupported source format and
+  no synthesized CloudFormation template is checked into the scanned tree
 - IAM is created out-of-band (ClickOps, AWS Console, scripts you ran
   once and don't keep in version control)
 - The role is in a different AWS account and you don't have the policy
@@ -72,6 +73,8 @@ ActionScope looks for IAM policies in these paths:
 
 - `*.tf` (Terraform files with `aws_iam_role`, `aws_iam_role_policy`,
   `aws_iam_policy` resources)
+- CloudFormation/SAM `*.yaml`, `*.yml`, or `*.json` templates containing IAM
+  resources or inline SAM policies
 - `**/iam/*.json` (raw IAM policy JSON)
 - `**/policies/*.json` (same)
 
@@ -222,10 +225,9 @@ scope (private repo metadata isn't needed for resolving public actions).
 
 ## How long does a scan take?
 
-Sub-second on a typical repo. The largest factor is the number of `.tf`
-files (Terraform HCL parsing is the dominant cost). ActionScope is
-designed to feel free — it's intentionally cheap enough to put in
-pre-commit hooks if you want to.
+Sub-second on a typical repo. The largest factors are the number of `.tf`
+files and CloudFormation/SAM templates. ActionScope is designed to feel free —
+it's intentionally cheap enough to put in pre-commit hooks if you want to.
 
 ## How do I report a bug or a false positive?
 

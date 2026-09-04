@@ -280,6 +280,7 @@ def test_unmatched_policy_is_normalized_at_low_confidence() -> None:
     assert len(records) == 1
     assert records[0].rule_id == "AS001"
     assert records[0].confidence is FindingConfidence.LOW
+    assert records[0].gate_eligible is False
 
 
 def test_uninspected_reusable_workflow_is_not_gate_eligible() -> None:

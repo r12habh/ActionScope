@@ -24,12 +24,13 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
                 )
             )
         elif binding.policy_source == "dynamic_reference":
+            reference_kind = source.role_reference_kind.replace("_", " ")
             gaps.append(
                 CoverageGap(
                     gap_type="dynamic_role_reference",
                     description=(
-                        "The workflow role uses an expression that cannot be "
-                        "resolved statically."
+                        f"The workflow role uses a {reference_kind}-backed "
+                        "reference that cannot be resolved statically."
                     ),
                     workflow_file=source.workflow_file,
                     job_name=source.job_name,

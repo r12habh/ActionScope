@@ -1,0 +1,271 @@
+"""Tests for CloudFormation and SAM IAM evidence extraction."""
+
+import json
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from actionscope.analyzers.oidc_trust import scan_oidc_trust_policies
+from actionscope.analyzers.risk_engine import build_bindings
+from actionscope.cli import main
+from actionscope.models import AwsCredentialSource, RiskLevel
+from actionscope.parsers.cloudformation import (
+    extract_iam_policies_from_cloudformation,
+    find_cloudformation_files,
+    is_cloudformation_template,
+    parse_cloudformation_file,
+    scan_cloudformation_files,
+)
+
+FIXTURE_REPO = Path(__file__).parent / "fixtures" / "cloudformation_repo"
+TEMPLATE = FIXTURE_REPO / "infrastructure" / "template.yml"
+
+
+def _credential(role_name: str) -> AwsCredentialSource:
+    return AwsCredentialSource(
+        workflow_file=".github/workflows/deploy.yml",
+        job_name="deploy",
+        step_name="Configure AWS credentials",
+        role_arn=f"arn:aws:iam::123456789012:role/{role_name}",
+        uses_access_keys=False,
+        uses_oidc=True,
+        aws_region="us-east-1",
+        role_reference_kind="literal_arn",
+    )
+
+
+def test_find_cloudformation_files_only_returns_template_candidates() -> None:
+    files = find_cloudformation_files(str(FIXTURE_REPO))
+
+    assert files == [str(TEMPLATE.resolve())]
+
+
+def test_parse_cloudformation_file_preserves_intrinsic_functions() -> None:
+    template = parse_cloudformation_file(str(TEMPLATE))
+
+    assert template is not None
+    federated = template["Resources"]["DeployRole"]["Properties"][
+        "AssumeRolePolicyDocument"
+    ]["Statement"][0]["Principal"]["Federated"]
+    assert federated == {
+        "Fn::Sub": (
+            "arn:aws:iam::${AWS::AccountId}:oidc-provider/"
+            "token.actions.githubusercontent.com"
+        )
+    }
+
+
+def test_is_cloudformation_template_rejects_ordinary_yaml() -> None:
+    assert not is_cloudformation_template({"Resources": {"Bucket": {}}})
+
+
+def test_role_inline_policy_is_linked_to_explicit_role_name() -> None:
+    template = parse_cloudformation_file(str(TEMPLATE))
+    assert template is not None
+
+    findings = extract_iam_policies_from_cloudformation(template, str(TEMPLATE))
+    deploy = next(
+        finding for finding in findings if finding.role_name == "github-deploy-role"
+    )
+
+    assert deploy.source_type == "cloudformation"
+    assert {action.action for action in deploy.actions} == {
+        "ec2:TerminateInstances",
+        "s3:PutObject",
+    }
+    assert deploy.overall_risk is RiskLevel.HIGH
+
+
+def test_iam_policy_ref_resolves_attached_role_name() -> None:
+    template = parse_cloudformation_file(str(TEMPLATE))
+    assert template is not None
+
+    findings = extract_iam_policies_from_cloudformation(template, str(TEMPLATE))
+    audit = next(
+        finding for finding in findings if finding.role_name == "github-audit-role"
+    )
+
+    assert [action.action for action in audit.actions] == ["cloudtrail:LookupEvents"]
+    assert audit.policy_name == "audit-policy"
+
+
+def test_sam_inline_policy_preserves_literal_role_arn() -> None:
+    template = parse_cloudformation_file(str(TEMPLATE))
+    assert template is not None
+
+    findings = extract_iam_policies_from_cloudformation(template, str(TEMPLATE))
+    worker = next(
+        finding for finding in findings if finding.role_name == "github-worker-role"
+    )
+
+    assert worker.role_arn == ("arn:aws:iam::123456789012:role/github-worker-role")
+    assert [action.action for action in worker.actions] == ["sqs:SendMessage"]
+    assert worker.actions[0].resource == (
+        "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:jobs"
+    )
+    assert not worker.has_star_resource
+
+
+def test_unknown_dynamic_resource_is_not_treated_as_wildcard() -> None:
+    template = {
+        "Resources": {
+            "DeployRole": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "RoleName": "deploy-role",
+                    "Policies": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": {
+                                    "Effect": "Allow",
+                                    "Action": "s3:PutObject",
+                                    "Resource": {"Fn::GetAtt": ["Bucket", "Arn"]},
+                                }
+                            }
+                        }
+                    ],
+                },
+            }
+        }
+    }
+
+    finding = extract_iam_policies_from_cloudformation(template, "template.yml")[0]
+
+    assert finding.actions[0].resource == "<dynamic:Fn::GetAtt>"
+    assert not finding.has_star_resource
+
+
+def test_scan_cloudformation_files_returns_findings_without_errors() -> None:
+    findings, errors = scan_cloudformation_files(str(FIXTURE_REPO))
+
+    assert errors == []
+    assert len(findings) == 3
+
+
+def test_scan_ignores_serverless_framework_wrapper(tmp_path: Path) -> None:
+    (tmp_path / "serverless.yml").write_text(
+        """
+service: example
+resources:
+  Resources:
+    DeployRole:
+      Type: AWS::IAM::Role
+""",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_cloudformation_files(str(tmp_path))
+
+    assert findings == []
+    assert errors == []
+
+
+def test_scan_reports_malformed_template_once(tmp_path: Path) -> None:
+    (tmp_path / "template.yml").write_text(
+        """
+Resources:
+  Broken:
+    Type: AWS::IAM::Role
+    Properties: [
+""",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_cloudformation_files(str(tmp_path))
+
+    assert findings == []
+    assert len(errors) == 1
+    assert "Could not parse CloudFormation file" in errors[0]
+
+
+def test_json_cloudformation_template_is_parsed(tmp_path: Path) -> None:
+    template_file = tmp_path / "template.json"
+    template_file.write_text(
+        json.dumps(
+            {
+                "Resources": {
+                    "DeployRole": {
+                        "Type": "AWS::IAM::Role",
+                        "Properties": {
+                            "RoleName": "json-deploy-role",
+                            "Policies": [
+                                {
+                                    "PolicyName": "deploy",
+                                    "PolicyDocument": {
+                                        "Statement": [
+                                            {
+                                                "Effect": "Allow",
+                                                "Action": "s3:PutObject",
+                                                "Resource": "*",
+                                            }
+                                        ]
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_cloudformation_files(str(tmp_path))
+
+    assert errors == []
+    assert len(findings) == 1
+    assert findings[0].role_name == "json-deploy-role"
+    assert [action.action for action in findings[0].actions] == ["s3:PutObject"]
+
+
+def test_cloudformation_role_matches_workflow_binding_with_high_confidence() -> None:
+    findings, _errors = scan_cloudformation_files(str(FIXTURE_REPO))
+
+    binding = build_bindings(
+        [_credential("github-deploy-role")],
+        findings,
+        str(FIXTURE_REPO),
+    )[0]
+
+    assert binding.policy_source == "cloudformation"
+    assert binding.match_confidence == "high"
+    assert binding.match_reason == "CloudFormation/SAM role relationship match"
+    assert binding.policy_finding is not None
+    assert binding.policy_finding.role_name == "github-deploy-role"
+
+
+def test_cloudformation_github_oidc_trust_is_analyzed() -> None:
+    findings, errors = scan_oidc_trust_policies(str(FIXTURE_REPO))
+
+    assert errors == []
+    wildcard = next(
+        finding for finding in findings if finding.issue_id == "wildcard_repo"
+    )
+    assert wildcard.role_name == "github-deploy-role"
+    assert wildcard.risk_level is RiskLevel.CRITICAL
+
+
+def test_cli_correlates_cloudformation_policy_with_workflow() -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "scan",
+            str(FIXTURE_REPO),
+            "--output-format",
+            "json",
+            "--offline",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    deploy = next(
+        finding for finding in payload["findings"] if finding["job_name"] == "deploy"
+    )
+    assert deploy["policy_source"] == "cloudformation"
+    assert deploy["match_confidence"] == "high"
+    assert deploy["role_reference_kind"] == "literal_arn"
+    assert {action["action"] for action in deploy["actions"]} == {
+        "ec2:TerminateInstances",
+        "s3:PutObject",
+    }

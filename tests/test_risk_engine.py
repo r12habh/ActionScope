@@ -152,6 +152,16 @@ def test_compute_overall_risk_returns_info_when_no_bindings_have_findings() -> N
     assert risk is RiskLevel.INFO
 
 
+def test_compute_overall_risk_ignores_unmatched_policy_risk() -> None:
+    risk = compute_overall_risk(
+        [binding_for(None)],
+        [],
+        [policy_finding(RiskLevel.CRITICAL, source_file="/repo/unrelated.json")],
+    )
+
+    assert risk is RiskLevel.INFO
+
+
 def test_get_unmatched_findings_returns_policies_not_tied_to_workflow() -> None:
     matched = policy_finding(RiskLevel.HIGH, source_file="/repo/matched.tf")
     unmatched = policy_finding(RiskLevel.LOW, source_file="/repo/unmatched.tf")
@@ -173,10 +183,28 @@ def test_build_scan_result_produces_correct_workflow_count() -> None:
     assert result.workflow_count == 2
 
 
-def test_scan_result_has_critical_findings_for_critical_overall_risk() -> None:
+def test_unmatched_critical_policy_is_report_only() -> None:
     critical = policy_finding(RiskLevel.CRITICAL)
 
     result = build_scan_result("/repo", [], [], [critical], [])
+
+    assert result.overall_risk is RiskLevel.INFO
+    assert result.has_critical_findings() is False
+
+
+def test_matched_critical_policy_sets_critical_overall_risk() -> None:
+    critical = policy_finding(
+        RiskLevel.CRITICAL,
+        role_name="github-deploy-role",
+    )
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [critical],
+        [],
+    )
 
     assert result.overall_risk is RiskLevel.CRITICAL
     assert result.has_critical_findings() is True

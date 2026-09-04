@@ -17,6 +17,11 @@ from typing import Any, Iterator
 import hcl2
 
 from actionscope.models import OidcTrustFinding, RiskLevel
+from actionscope.parsers.cloudformation import (
+    find_cloudformation_files,
+    iter_cloudformation_iam_roles,
+    parse_cloudformation_file,
+)
 
 GITHUB_OIDC_ISSUER = "token.actions.githubusercontent.com"
 GITHUB_OIDC_PROVIDER_URL = "https://token.actions.githubusercontent.com"
@@ -204,7 +209,7 @@ def analyze_json_oidc_trust(
 def scan_oidc_trust_policies(
     repo_path: str,
 ) -> tuple[list[OidcTrustFinding], list[str]]:
-    """Scan Terraform and JSON files for GitHub OIDC trust policy issues."""
+    """Scan Terraform, CloudFormation, and JSON for GitHub OIDC trust issues."""
     repo = Path(repo_path).expanduser()
     findings: list[OidcTrustFinding] = []
     errors: list[str] = []
@@ -225,6 +230,19 @@ def scan_oidc_trust_policies(
             continue
         if isinstance(data, dict):
             findings.extend(analyze_terraform_oidc_trust(data, str(tf_file.resolve())))
+
+    for template_file in find_cloudformation_files(repo_path):
+        template = parse_cloudformation_file(template_file)
+        if template is None:
+            continue
+        for _logical_id, role_name, properties in iter_cloudformation_iam_roles(
+            template
+        ):
+            policy = properties.get("AssumeRolePolicyDocument")
+            if isinstance(policy, dict) and is_github_oidc_trust(policy):
+                findings.extend(
+                    analyze_json_oidc_trust(policy, template_file, role_name)
+                )
 
     for json_file in sorted(repo.rglob("*.json")):
         try:

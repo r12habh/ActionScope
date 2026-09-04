@@ -9,7 +9,8 @@ more workflows can assume the role than intended.
 
 ## What ActionScope Checks
 
-ActionScope scans Terraform and JSON trust policies for GitHub's OIDC provider:
+ActionScope scans Terraform, CloudFormation/SAM, and standalone JSON trust
+policies for GitHub's OIDC provider:
 
 ```text
 token.actions.githubusercontent.com

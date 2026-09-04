@@ -356,7 +356,9 @@ def apply_result_configuration(
         )
         for suppression in configured_suppressions
     ]
-    effective_risks = [record.risk_level for record in active_records]
+    effective_risks = [
+        record.risk_level for record in active_records if record.gate_eligible
+    ]
     if result.hard_block_findings:
         effective_risks.append(RiskLevel.CRITICAL)
     result.overall_risk = max(effective_risks, default=RiskLevel.INFO)

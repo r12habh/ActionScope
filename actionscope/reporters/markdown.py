@@ -126,6 +126,7 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
         role_cell = "`(none)`"
 
     lines.append(f"| AWS Role | {role_cell} |")
+    lines.append(f"| Role Reference | {src.role_reference_kind} |")
     lines.append(f"| Auth Type | {_auth_display(src)} |")
     lines.append(f"| Policy Source | {binding.policy_source} |")
     lines.append(f"| Match Confidence | {binding.match_confidence} |")
@@ -923,6 +924,9 @@ def to_markdown_from_dict(data: dict) -> str:
             )
             job = _md_cell(str(finding.get("job_name") or "(default)"))
             role = _md_cell(finding.get("role_arn") or "(none)")
+            role_reference = _md_cell(
+                str(finding.get("role_reference_kind", "unknown"))
+            )
             auth_type = _md_cell(finding.get("auth_type", "unknown"))
             policy_source = _md_cell(finding.get("policy_source", "unknown"))
             match_confidence = _md_cell(finding.get("match_confidence", "none"))
@@ -944,6 +948,7 @@ def to_markdown_from_dict(data: dict) -> str:
                     "| Field | Value |",
                     "|-------|-------|",
                     f"| AWS Role | `{role}` |",
+                    f"| Role Reference | {role_reference} |",
                     f"| Auth Type | {auth_type} |",
                     f"| Policy Source | {policy_source} |",
                     f"| Match Confidence | {match_confidence} |",

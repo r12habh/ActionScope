@@ -18,8 +18,9 @@
 **Your GitHub Actions workflows hold AWS credentials. Do you know what they can do?**
 
 ActionScope reads your `.github/workflows/` files, Terraform IAM resources,
-and JSON IAM policies, then tells you in plain English what your CI/CD
-pipeline can do in AWS if it is compromised.
+CloudFormation/SAM templates, and JSON IAM policies. It reports the AWS
+permissions recoverable from that evidence and marks missing policy context as
+a coverage gap instead of treating unknown permissions as safe.
 
 It also detects:
 - 🚨 **Known-compromised actions** (`actions-cool`, `tj-actions`, `trivy-action`)
@@ -183,15 +184,16 @@ credentials are present in the environment.
 
 ```text
 .github/workflows/*.yml
-terraform/**/*.tf          →  ActionScope  →  Blast Radius Report
-policies/**/*.json                              + PR Comment
-                                                + SARIF → GitHub Security Tab
+terraform/**/*.tf
+CloudFormation/SAM templates  →  ActionScope  →  Blast Radius Report
+IAM policy JSON                                  + PR Comment
+                                                 + SARIF → GitHub Security Tab
 ```
 
-1. Find `aws-actions/configure-aws-credentials` in workflows
+1. Find AWS role assumptions and static credential environments in workflows
 2. Follow local reusable workflows and optionally inspect external calls
 3. Extract role ARNs and credential patterns
-4. Match roles to IAM policies in Terraform or JSON files
+4. Match roles to IAM policies in Terraform, CloudFormation/SAM, or JSON files
 5. Classify IAM actions using the `policy-sentry` action database
 6. Correlate risky actions with AWS credentials in the same job
 7. Detect privilege escalation paths
@@ -290,10 +292,14 @@ and 3,981 GitHub Actions workflow files using AWS.
 
 | Finding | Result |
 |---------|--------|
-| Using static AWS keys (not OIDC) | 58.2% of repos |
+| Using static AWS keys (not OIDC) | 58.2% of repos (lower bound) |
 | Using unpinned external actions | 95.5% of repos |
 | `pull_request_target` + write permissions | 8.1% of repos |
 | Exposing role ARNs directly in workflows | 44.0% of repos |
+
+The static-key collector used for this 2026 snapshot did not count credentials
+provided only through environment variables, so 58.2% is a lower bound. The
+current product parser reports those forms; the historical dataset is unchanged.
 
 → [Full research findings](research/FINDINGS.md) |
 [Scanner and anonymized dataset](research/)
@@ -319,10 +325,10 @@ finding with the advisory URL.
 
 ### What can my GitHub Actions workflow do in my AWS account?
 
-ActionScope extracts every `aws-actions/configure-aws-credentials` step from
-your workflows, follows the role ARN, and correlates it with Terraform or JSON
-IAM policy files in the same repo. The output is a plain-English blast-radius
-report — every IAM action the workflow can perform, classified by risk. Add
+ActionScope extracts AWS credential configuration from your workflows, follows
+literal role ARNs, and correlates them with Terraform, CloudFormation/SAM, or
+JSON IAM policy files in the same repo. The output is a plain-English
+blast-radius report with each recovered IAM action classified by risk. Add
 `--aws-verify` to fetch the live policies from AWS using read-only IAM calls.
 
 ### How do I scan a GitHub Actions workflow for security issues without AWS credentials?

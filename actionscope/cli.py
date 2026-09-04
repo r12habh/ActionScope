@@ -19,6 +19,7 @@ from actionscope.analyzers.risk_engine import (
     finalize_scan_metadata,
 )
 from actionscope.models import PolicyFinding, ScanResult
+from actionscope.parsers.cloudformation import scan_cloudformation_files
 from actionscope.parsers.policy_json import scan_policy_files
 from actionscope.parsers.terraform import scan_terraform_files
 from actionscope.parsers.workflow import (
@@ -275,8 +276,22 @@ def scan(
     except Exception as exc:
         tf_findings, tf_errors = [], [str(exc)]
 
-    all_policy_findings = json_findings + tf_findings
-    all_errors = workflow_errors + json_errors + tf_errors
+    try:
+        cloudformation_findings, cloudformation_errors = (
+            scan_cloudformation_files(repo_path)
+        )
+    except Exception as exc:
+        cloudformation_findings, cloudformation_errors = [], [str(exc)]
+
+    all_policy_findings = (
+        json_findings + tf_findings + cloudformation_findings
+    )
+    all_errors = (
+        workflow_errors
+        + json_errors
+        + tf_errors
+        + cloudformation_errors
+    )
 
     if aws_verify:
         try:

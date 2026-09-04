@@ -397,6 +397,29 @@ def test_noop_config_preserves_low_github_token_risk() -> None:
     assert result.findings_by_risk(RiskLevel.LOW) == [permission]
 
 
+def test_configuration_ignores_report_only_record_for_overall_risk() -> None:
+    result = ScanResult(
+        finding_records=[
+            FindingRecord(
+                fingerprint="unmatched-policy",
+                rule_id="AS001",
+                risk_level=RiskLevel.CRITICAL,
+                confidence=FindingConfidence.LOW,
+                title="Unmatched policy",
+                gate_eligible=False,
+            )
+        ]
+    )
+
+    apply_result_configuration(
+        result,
+        ActionScopeConfig(source_path=".actionscope.yml"),
+    )
+
+    assert result.overall_risk is RiskLevel.INFO
+    assert result.finding_records[0].gate_eligible is False
+
+
 def test_result_configuration_suppresses_rule_and_overrides_severity() -> None:
     config = ActionScopeConfig(
         source_path=".actionscope.yml",

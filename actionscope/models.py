@@ -91,6 +91,7 @@ VALID_POLICY_SOURCE_TYPES = frozenset(
     {
         "workflow",
         "terraform",
+        "cloudformation",
         "json_policy",
         "aws_verified",
     }
@@ -119,6 +120,7 @@ class AwsCredentialSource:
     uses_access_keys: bool
     uses_oidc: bool
     aws_region: Optional[str]
+    role_reference_kind: str = "absent"
 
 
 @dataclass
@@ -430,12 +432,22 @@ class ScanResult:
         return self.finding_count_by_risk(RiskLevel.CRITICAL) > 0
 
     def finding_count_by_risk(self, level: RiskLevel) -> int:
-        """Count effective findings at a risk level after configuration."""
+        """Count gate-eligible findings at a risk level."""
         if self.config_applied:
             return sum(
-                finding.risk_level == level for finding in self.finding_records
+                finding.gate_eligible and finding.risk_level == level
+                for finding in self.finding_records
             )
-        return len(self.findings_by_risk(level))
+        bound_policy_ids = {
+            id(binding.policy_finding)
+            for binding in self.bindings
+            if binding.policy_finding is not None
+        }
+        return sum(
+            not isinstance(finding, PolicyFinding)
+            or id(finding) in bound_policy_ids
+            for finding in self.findings_by_risk(level)
+        )
 
     def findings_by_risk(self, level: RiskLevel) -> list:
         """Return detector findings matching a risk level."""

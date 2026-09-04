@@ -17,6 +17,10 @@ from actionscope.models import (
 )
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
+IAM_ROLE_ARN_PATTERN = re.compile(r"^arn:[^:]+:iam::\d{12}:role/.+")
+AWS_STATIC_CREDENTIAL_ENV_KEYS = frozenset(
+    {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+)
 
 
 class GitHubWorkflowLoader(yaml.SafeLoader):
@@ -83,7 +87,7 @@ def extract_aws_credential_sources(
     workflow_data: dict,
     workflow_file: str,
 ) -> list[AwsCredentialSource]:
-    """Extract aws-actions/configure-aws-credentials usage from workflow data."""
+    """Extract AWS credential sources from one workflow."""
     jobs = workflow_data.get("jobs")
     if jobs is None:
         return []
@@ -91,6 +95,7 @@ def extract_aws_credential_sources(
         return []
 
     credential_sources: list[AwsCredentialSource] = []
+    workflow_env = _environment_mapping(workflow_data.get("env"))
     workflow_has_oidc = _permissions_have_id_token_write(
         workflow_data.get("permissions")
     )
@@ -99,7 +104,12 @@ def extract_aws_credential_sources(
         if not isinstance(job_data, dict):
             continue
 
+        inherited_env = {
+            **workflow_env,
+            **_environment_mapping(job_data.get("env")),
+        }
         job_has_oidc = _permissions_have_id_token_write(job_data.get("permissions"))
+        job_sources: list[AwsCredentialSource] = []
 
         for step in _job_steps(job_data):
             source = _credential_source_from_step(
@@ -107,9 +117,22 @@ def extract_aws_credential_sources(
                 workflow_file,
                 str(job_name),
                 workflow_has_oidc or job_has_oidc,
+                inherited_env=inherited_env,
             )
             if source is not None:
-                credential_sources.append(source)
+                job_sources.append(source)
+
+        if not any(source.uses_access_keys for source in job_sources):
+            environment_source = _credential_source_from_environment(
+                job_data,
+                workflow_file,
+                str(job_name),
+                inherited_env,
+            )
+            if environment_source is not None:
+                job_sources.append(environment_source)
+
+        credential_sources.extend(job_sources)
 
     return credential_sources
 
@@ -126,6 +149,7 @@ def extract_delegated_credential_sources(
 
     credential_sources: list[AwsCredentialSource] = []
     warnings: list[str] = []
+    workflow_env = _environment_mapping(workflow_data.get("env"))
     workflow_has_oidc = _permissions_have_id_token_write(
         workflow_data.get("permissions")
     )
@@ -135,6 +159,10 @@ def extract_delegated_credential_sources(
             continue
 
         job_name_str = str(job_name)
+        inherited_env = {
+            **workflow_env,
+            **_environment_mapping(job_data.get("env")),
+        }
         job_has_oidc = _permissions_have_id_token_write(job_data.get("permissions"))
         has_oidc = workflow_has_oidc or job_has_oidc
 
@@ -153,6 +181,7 @@ def extract_delegated_credential_sources(
                 workflow_file,
                 job_name_str,
                 has_oidc,
+                inherited_env,
             )
             credential_sources.extend(sources)
             warnings.extend(local_warnings)
@@ -167,6 +196,29 @@ def extract_env_var_references(step: dict) -> dict[str, str]:
         return {}
 
     return {str(name): str(value) for name, value in env_block.items()}
+
+
+def classify_role_reference(role_reference: str | None) -> str:
+    """Classify the provenance of a workflow's ``role-to-assume`` value."""
+    if role_reference is None or not role_reference.strip():
+        return "absent"
+
+    value = role_reference.strip()
+    if IAM_ROLE_ARN_PATTERN.fullmatch(value):
+        return "literal_arn"
+    if "${{" not in value:
+        return "literal_name"
+
+    lowered = value.lower()
+    for marker, kind in (
+        ("secrets.", "secret"),
+        ("vars.", "variable"),
+        ("env.", "environment"),
+        ("inputs.", "input"),
+    ):
+        if marker in lowered:
+            return kind
+    return "expression"
 
 
 def is_pinned_to_sha(uses_ref: str) -> bool:
@@ -279,14 +331,28 @@ def scan_workflows(
             errors.append(f"Could not parse workflow file: {workflow_file}")
             continue
 
-        credential_sources.extend(
-            extract_aws_credential_sources(workflow_data, workflow_file)
+        direct_sources = extract_aws_credential_sources(
+            workflow_data, workflow_file
         )
         delegated_sources, delegated_errors = extract_delegated_credential_sources(
             workflow_data,
             workflow_file,
             repo_path,
         )
+        delegated_access_key_jobs = {
+            source.job_name
+            for source in delegated_sources
+            if source.uses_access_keys
+        }
+        direct_sources = [
+            source
+            for source in direct_sources
+            if not (
+                source.step_name == "Workflow/job environment"
+                and source.job_name in delegated_access_key_jobs
+            )
+        ]
+        credential_sources.extend(direct_sources)
         credential_sources.extend(delegated_sources)
         errors.extend(delegated_errors)
         token_permissions.extend(
@@ -313,6 +379,7 @@ def _credential_source_from_step(
     job_name: str,
     has_oidc_permission: bool,
     step_name_prefix: str = "",
+    inherited_env: dict[str, str] | None = None,
 ) -> AwsCredentialSource | None:
     uses = step.get("uses")
     if not _is_configure_aws_credentials_action(uses):
@@ -322,7 +389,10 @@ def _credential_source_from_step(
     if not isinstance(with_block, dict):
         with_block = {}
 
-    env_vars = extract_env_var_references(step)
+    env_vars = {
+        **(inherited_env or {}),
+        **extract_env_var_references(step),
+    }
     role_arn = _optional_string(with_block.get("role-to-assume"))
     step_name = str(step.get("name") or uses)
     if step_name_prefix:
@@ -334,11 +404,46 @@ def _credential_source_from_step(
         step_name=step_name,
         role_arn=role_arn,
         uses_access_keys=(
-            "aws-access-key-id" in with_block or "AWS_ACCESS_KEY_ID" in env_vars
+            "aws-access-key-id" in with_block
+            or bool(AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(env_vars))
         ),
         uses_oidc=bool(role_arn and has_oidc_permission),
         aws_region=_optional_string(with_block.get("aws-region")),
+        role_reference_kind=classify_role_reference(role_arn),
     )
+
+
+def _credential_source_from_environment(
+    job_data: dict,
+    workflow_file: str,
+    job_name: str,
+    inherited_env: dict[str, str],
+) -> AwsCredentialSource | None:
+    """Return a source when a job exposes AWS SDK credential variables."""
+    candidates = [("Workflow/job environment", inherited_env)]
+    candidates.extend(
+        (
+            str(step.get("name") or "Shell step environment"),
+            {**inherited_env, **extract_env_var_references(step)},
+        )
+        for step in _job_steps(job_data)
+    )
+
+    for location, env_vars in candidates:
+        if not AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(env_vars):
+            continue
+        return AwsCredentialSource(
+            workflow_file=workflow_file,
+            job_name=job_name,
+            step_name=location,
+            role_arn=None,
+            uses_access_keys=True,
+            uses_oidc=False,
+            aws_region=env_vars.get("AWS_REGION")
+            or env_vars.get("AWS_DEFAULT_REGION"),
+            role_reference_kind="absent",
+        )
+    return None
 
 
 def _inspect_local_composite_action(
@@ -348,6 +453,7 @@ def _inspect_local_composite_action(
     workflow_file: str,
     job_name: str,
     has_oidc_permission: bool,
+    inherited_env: dict[str, str] | None = None,
 ) -> tuple[list[AwsCredentialSource], list[str]]:
     action_file = _local_action_file(repo_path, uses_ref)
     if action_file is None:
@@ -387,6 +493,7 @@ def _inspect_local_composite_action(
             job_name,
             has_oidc_permission,
             step_name_prefix=f"Local action {uses_ref}",
+            inherited_env=inherited_env,
         )
         if source is not None:
             sources.append(source)
@@ -409,6 +516,12 @@ def _resolve_composite_inputs(step: dict, caller_with: dict) -> dict:
             for key, value in env_block.items()
         }
     return resolved
+
+
+def _environment_mapping(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(name): str(item) for name, item in value.items()}
 
 
 def _resolve_input_expression(value: Any, caller_with: dict) -> Any:

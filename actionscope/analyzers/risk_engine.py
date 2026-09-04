@@ -90,7 +90,15 @@ def _match_role_to_policy_with_confidence(
             continue
 
         if finding.role_name and normalized_role_name == finding.role_name.lower():
-            return _PolicyMatch(finding, "high", "Terraform role relationship match")
+            relationship = {
+                "terraform": "Terraform",
+                "cloudformation": "CloudFormation/SAM",
+            }.get(finding.source_type, "Repository IAM")
+            return _PolicyMatch(
+                finding,
+                "high",
+                f"{relationship} role relationship match",
+            )
 
         if (
             finding.role_arn
@@ -158,7 +166,12 @@ def compute_overall_risk(
     environment_findings: list[EnvironmentFinding] | None = None,
     exposure_paths: list[ExposurePath] | None = None,
 ) -> RiskLevel:
-    """Compute the highest risk across bindings, token perms, and policies."""
+    """Compute risk from workflow-reachable findings and detector results.
+
+    Unmatched policy files remain visible as low-confidence audit context, but
+    they cannot establish a workflow blast radius and therefore do not raise the
+    repository's overall workflow risk.
+    """
     binding_risks = [
         binding.policy_finding.overall_risk
         for binding in bindings
@@ -169,9 +182,7 @@ def compute_overall_risk(
         for permission in github_token_perms
         if permission.risk_level >= RiskLevel.MEDIUM
     ]
-    unmatched_risks = [
-        finding.overall_risk for finding in unmatched_policy_findings
-    ]
+    _ = unmatched_policy_findings
     detector_risks = [
         finding.risk_level
         for findings in (
@@ -187,7 +198,7 @@ def compute_overall_risk(
     ]
 
     return max(
-        binding_risks + token_risks + unmatched_risks + detector_risks,
+        binding_risks + token_risks + detector_risks,
         default=RiskLevel.INFO,
     )
 

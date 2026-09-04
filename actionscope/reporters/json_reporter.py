@@ -62,6 +62,7 @@ def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, An
         "workflow_file": src.workflow_file,
         "job_name": src.job_name,
         "role_arn": src.role_arn,
+        "role_reference_kind": src.role_reference_kind,
         "auth_type": _auth_type_for_binding(binding),
         "policy_source": binding.policy_source,
         "match_confidence": binding.match_confidence,

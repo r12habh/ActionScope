@@ -314,6 +314,12 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         c.print()
         c.print(Text("    ActionScope looked for IAM policies in:", style="dim"))
         c.print(Text("    • *.tf files (Terraform)", style="dim"))
+        c.print(
+            Text(
+                "    • CloudFormation/SAM *.yaml, *.yml, and *.json templates",
+                style="dim",
+            )
+        )
         c.print(Text("    • **/iam/*.json (JSON policy files)", style="dim"))
         c.print(Text("    • **/policies/*.json", style="dim"))
         c.print()
@@ -339,10 +345,12 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         c.print()
         c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
         c.print(
-            f"[dim]ℹ️  Role ARN is a dynamic reference: {src.role_arn}[/]"
+            "[dim]ℹ️  Role ARN is a dynamic "
+            f"{src.role_reference_kind} reference: {src.role_arn}[/]"
         )
         c.print(
-            "[dim]💡  Provide Terraform or policy JSON in repo for static analysis[/]"
+            "[dim]💡  Resolve this value or provide supported IAM evidence "
+            "for static analysis[/]"
         )
 
     if binding.policy_source == "no_role":
@@ -1119,6 +1127,11 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 f"[dim]→[/] [bold]Job:[/] {finding.get('job_name', '')}"
             )
             c.print(f"[bold]AWS Role:[/] {finding.get('role_arn') or '(none)'}")
+            if finding.get("role_reference_kind"):
+                c.print(
+                    "[bold]Role Reference:[/] "
+                    f"{finding.get('role_reference_kind')}"
+                )
             c.print(f"[bold]Policy Source:[/] {finding.get('policy_source')}")
             if finding.get("match_confidence"):
                 c.print(
