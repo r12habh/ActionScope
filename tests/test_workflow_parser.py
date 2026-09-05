@@ -509,13 +509,63 @@ runs:
     assert errors == []
     assert len(sources) == 2
     assert {source.step_name for source in sources} == {
-        "Expose keys only",
+        "Local action ./actions/noop -> Shell step environment",
         (
             "Local action ./actions/configure -> "
             "aws-actions/configure-aws-credentials@v4"
         ),
     }
     assert all(source.uses_access_keys for source in sources)
+
+
+def test_scan_detects_keys_mapped_to_local_action_shell_environment(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy through local action
+        uses: ./actions/deploy
+        with:
+          access-key: ${{ secrets.DEPLOY_ACCESS_KEY }}
+          secret-key: ${{ secrets.DEPLOY_SECRET_KEY }}
+""",
+        encoding="utf-8",
+    )
+    action_dir = tmp_path / "actions" / "deploy"
+    action_dir.mkdir(parents=True)
+    action_dir.joinpath("action.yml").write_text(
+        """
+name: Deploy
+runs:
+  using: composite
+  steps:
+    - name: Upload release
+      run: aws s3 sync dist/ s3://releases/
+      shell: bash
+      env:
+        AWS_ACCESS_KEY_ID: ${{ inputs.access-key }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.secret-key }}
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys
+    assert sources[0].role_arn is None
+    assert sources[0].step_name == (
+        "Local action ./actions/deploy -> Upload release"
+    )
 
 
 def test_step_without_with_block_returns_source_with_no_role() -> None:

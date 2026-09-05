@@ -497,6 +497,7 @@ def _inspect_local_composite_action(
     }
 
     sources: list[AwsCredentialSource] = []
+    environment_sources: list[AwsCredentialSource] = []
     for nested_step in steps:
         if not isinstance(nested_step, dict):
             continue
@@ -511,6 +512,36 @@ def _inspect_local_composite_action(
         )
         if source is not None:
             sources.append(source)
+
+        nested_env = {
+            **caller_env,
+            **extract_env_var_references(resolved_step),
+        }
+        if (
+            isinstance(resolved_step.get("run"), str)
+            and AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(nested_env)
+        ):
+            nested_name = str(
+                resolved_step.get("name") or "Shell step environment"
+            )
+            environment_sources.append(
+                AwsCredentialSource(
+                    workflow_file=workflow_file,
+                    job_name=job_name,
+                    step_name=f"Local action {uses_ref} -> {nested_name}",
+                    role_arn=None,
+                    uses_access_keys=True,
+                    uses_oidc=False,
+                    aws_region=nested_env.get("AWS_REGION")
+                    or nested_env.get("AWS_DEFAULT_REGION"),
+                    role_reference_kind="absent",
+                )
+            )
+
+    if environment_sources and not any(
+        source.uses_access_keys for source in sources
+    ):
+        sources.append(environment_sources[0])
 
     return sources, []
 
