@@ -181,6 +181,38 @@ def test_build_bindings_aggregates_every_policy_for_the_role() -> None:
     assert result.finding_count_by_risk(RiskLevel.CRITICAL) == 1
 
 
+def test_build_bindings_preserves_partial_policy_coverage_when_aggregating() -> None:
+    cloudformation_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/template.yml",
+        source_type="cloudformation",
+        role_name="github-deploy-role",
+    )
+    cloudformation_policy.metadata = {
+        "policy_coverage_complete": False,
+        "unresolved_policy_attachments": [
+            "arn:aws:iam::aws:policy/AdministratorAccess"
+        ],
+    }
+    terraform_policy = policy_finding(
+        RiskLevel.MEDIUM,
+        source_file="/repo/terraform/iam.tf",
+        role_name="github-deploy-role",
+    )
+
+    binding = build_bindings(
+        [credential_source()],
+        [cloudformation_policy, terraform_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is not None
+    assert binding.policy_finding.metadata["policy_coverage_complete"] is False
+    assert binding.policy_finding.metadata["unresolved_policy_attachments"] == [
+        "arn:aws:iam::aws:policy/AdministratorAccess"
+    ]
+
+
 def test_build_bindings_creates_dynamic_reference_for_secret_refs() -> None:
     bindings = build_bindings(
         [credential_source(role_arn="${{ secrets.ROLE_ARN }}")],

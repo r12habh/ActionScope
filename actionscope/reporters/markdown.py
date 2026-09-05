@@ -141,6 +141,19 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
             "| Coverage | **INCOMPLETE** — the AWS role or its permissions "
             "could not be resolved statically. |"
         )
+    elif (
+        binding.policy_finding is not None
+        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+    ):
+        attachments = binding.policy_finding.metadata.get(
+            "unresolved_policy_attachments", []
+        )
+        evidence = ", ".join(f"`{_md_cell(item)}`" for item in attachments)
+        lines.append(
+            "| Coverage | **PARTIAL** — attached managed policy contents are "
+            f"unavailable: {evidence or 'unknown attachment'}. Run with "
+            "`--aws-verify` for complete effective permissions. |"
+        )
 
     if binding.policy_finding is not None:
         pf = binding.policy_finding
@@ -940,6 +953,8 @@ def to_markdown_from_dict(data: dict) -> str:
             }.get(finding_risk, finding_risk.upper())
             if finding.get("risk_status") == "unknown":
                 finding_risk_display = "UNKNOWN (coverage incomplete)"
+            elif finding.get("risk_status") == "partial":
+                finding_risk_display += " (partial evidence)"
 
             lines.extend(
                 [
@@ -971,6 +986,20 @@ def to_markdown_from_dict(data: dict) -> str:
                     [
                         "> **Coverage incomplete:** the AWS role or its "
                         "permissions could not be resolved statically.",
+                        "",
+                    ]
+                )
+            elif finding.get("risk_status") == "partial":
+                attachments = finding.get("unresolved_policy_attachments", [])
+                evidence = ", ".join(
+                    f"`{_md_cell(item)}`" for item in attachments
+                )
+                lines.extend(
+                    [
+                        "> **Coverage partial:** attached managed policy "
+                        "contents are unavailable: "
+                        f"{evidence or 'unknown attachment'}. Run with "
+                        "`--aws-verify` for complete effective permissions.",
                         "",
                     ]
                 )

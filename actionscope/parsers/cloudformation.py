@@ -182,6 +182,9 @@ def extract_iam_policies_from_cloudformation(
         logical_id: _role_inline_policy_names(properties)
         for logical_id, properties in roles.items()
     }
+    role_unresolved_attachments: dict[str, list[str]] = {
+        logical_id: [] for logical_id in roles
+    }
 
     policy_resources: dict[str, tuple[str, dict, dict]] = {}
     for logical_id, resource in resources.items():
@@ -204,11 +207,20 @@ def extract_iam_policies_from_cloudformation(
         logical_id: set() for logical_id in policy_resources
     }
     for role_id, properties in roles.items():
-        for policy_id in _logical_resource_references(
-            properties.get("ManagedPolicyArns")
-        ):
-            if policy_id in policy_resources:
+        managed_policy_arns = properties.get("ManagedPolicyArns") or []
+        values = (
+            managed_policy_arns
+            if isinstance(managed_policy_arns, list)
+            else [managed_policy_arns]
+        )
+        for value in values:
+            policy_id = _direct_local_policy_reference(value, policy_resources)
+            if policy_id is not None:
                 attached_policy_roles[policy_id].add(role_id)
+            else:
+                role_unresolved_attachments[role_id].append(
+                    _attachment_display(value)
+                )
 
     standalone_policy_findings: list[PolicyFinding] = []
     for policy_id, (resource_type, properties, document) in policy_resources.items():
@@ -248,7 +260,10 @@ def extract_iam_policies_from_cloudformation(
 
     for logical_id, properties in roles.items():
         documents = role_documents[logical_id]
-        if not documents:
+        unresolved_attachments = list(
+            dict.fromkeys(role_unresolved_attachments[logical_id])
+        )
+        if not documents and not unresolved_attachments:
             continue
         policy_ids = list(dict.fromkeys(role_policy_ids[logical_id]))
         policy_names = list(dict.fromkeys(role_policy_names[logical_id]))
@@ -266,6 +281,8 @@ def extract_iam_policies_from_cloudformation(
                     "cloudformation_logical_id": logical_id,
                     "cloudformation_resource_type": "AWS::IAM::Role",
                     "cloudformation_policy_logical_ids": policy_ids,
+                    "policy_coverage_complete": not unresolved_attachments,
+                    "unresolved_policy_attachments": unresolved_attachments,
                 },
             )
         )
@@ -288,18 +305,16 @@ def extract_iam_policies_from_cloudformation(
             continue
 
         if resource_type.startswith("AWS::Serverless::"):
+            # SAM ignores Policies when an explicit execution Role is supplied.
+            if properties.get("Role") is not None:
+                continue
             documents = _collect_policy_documents(properties.get("Policies"))
             if not documents:
                 continue
-            role_value = properties.get("Role")
-            role_arn = _literal_role_arn(role_value)
-            role_name = _role_name_from_arn(role_arn)
             findings.append(
                 _finding_from_documents(
                     documents,
                     source_file,
-                    role_name=role_name,
-                    role_arn=role_arn,
                     policy_name=f"{logical_id}.Policies",
                     metadata={
                         "cloudformation_logical_id": str(logical_id),
@@ -504,6 +519,48 @@ def _logical_resource_references(value: Any) -> set[str]:
     for nested in value.values():
         references.update(_logical_resource_references(nested))
     return references
+
+
+def _direct_local_policy_reference(
+    value: Any,
+    policy_resources: dict[str, tuple[str, dict, dict]],
+) -> str | None:
+    """Resolve only an unambiguous managed-policy resource in this template."""
+    if not isinstance(value, dict) or len(value) != 1:
+        return None
+
+    ref = value.get("Ref")
+    if (
+        isinstance(ref, str)
+        and ref in policy_resources
+        and policy_resources[ref][0] == "AWS::IAM::ManagedPolicy"
+    ):
+        return ref
+
+    get_att = value.get("Fn::GetAtt")
+    if isinstance(get_att, list) and get_att and isinstance(get_att[0], str):
+        policy_id = get_att[0]
+    elif isinstance(get_att, str):
+        policy_id = get_att.split(".", 1)[0]
+    else:
+        return None
+    if (
+        policy_id in policy_resources
+        and policy_resources[policy_id][0] == "AWS::IAM::ManagedPolicy"
+    ):
+        return policy_id
+    return None
+
+
+def _attachment_display(value: Any) -> str:
+    """Return stable, readable evidence for an unresolved policy attachment."""
+    static = _static_string(value)
+    if static is not None:
+        return static
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return repr(value)
 
 
 def _static_strings(value: Any, *, preserve_dynamic: bool) -> list[str]:

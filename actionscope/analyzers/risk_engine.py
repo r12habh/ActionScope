@@ -547,6 +547,11 @@ def _aggregate_policy_findings(
             if finding.policy_name is not None
         )
     )
+    unresolved_policy_attachments = _unresolved_policy_attachments(findings)
+    policy_coverage_complete = all(
+        finding.metadata.get("policy_coverage_complete") is not False
+        for finding in findings
+    ) and not unresolved_policy_attachments
     aggregate = PolicyFinding(
         source_file=source_files[0],
         source_type=findings[0].source_type,
@@ -568,6 +573,8 @@ def _aggregate_policy_findings(
             "aggregated_policy_count": len(findings),
             "aggregated_source_files": source_files,
             "aggregated_policy_names": policy_names,
+            "policy_coverage_complete": policy_coverage_complete,
+            "unresolved_policy_attachments": unresolved_policy_attachments,
         },
     )
 
@@ -588,6 +595,17 @@ def _aggregate_policy_findings(
         + [path.severity for path in aggregate.privesc_paths]
     )
     return aggregate
+
+
+def _unresolved_policy_attachments(
+    findings: list[PolicyFinding],
+) -> list[str]:
+    attachments: list[str] = []
+    for finding in findings:
+        values = finding.metadata.get("unresolved_policy_attachments", [])
+        if isinstance(values, list):
+            attachments.extend(str(value) for value in values)
+    return list(dict.fromkeys(attachments))
 
 
 def _file_contains(filepath: str, needle: str) -> bool:

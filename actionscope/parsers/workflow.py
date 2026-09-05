@@ -204,10 +204,12 @@ def classify_role_reference(role_reference: str | None) -> str:
         return "absent"
 
     value = role_reference.strip()
-    if IAM_ROLE_ARN_PATTERN.fullmatch(value):
-        return "literal_arn"
     if "${{" not in value:
-        return "literal_name"
+        return (
+            "literal_arn"
+            if IAM_ROLE_ARN_PATTERN.fullmatch(value)
+            else "literal_name"
+        )
 
     lowered = value.lower()
     for marker, kind in (

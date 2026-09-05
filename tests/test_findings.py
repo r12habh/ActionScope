@@ -242,6 +242,31 @@ def test_unresolved_policy_creates_coverage_gap_not_finding() -> None:
     assert records == []
 
 
+def test_unresolved_managed_policy_attachment_creates_coverage_gap() -> None:
+    policy = PolicyFinding(
+        source_file="infrastructure/template.yml",
+        source_type="cloudformation",
+        role_arn=None,
+        role_name="deploy",
+        overall_risk=RiskLevel.INFO,
+        metadata={
+            "policy_coverage_complete": False,
+            "unresolved_policy_attachments": [
+                "arn:aws:iam::aws:policy/AdministratorAccess"
+            ],
+        },
+    )
+    result = ScanResult(
+        bindings=[_binding(policy=policy, source="cloudformation")]
+    )
+
+    gaps = build_coverage_gaps(result)
+
+    assert len(gaps) == 1
+    assert gaps[0].gap_type == "unresolved_managed_policy_attachment"
+    assert "reported IAM risk is partial" in gaps[0].description
+
+
 def test_analyzer_error_marks_coverage_partial() -> None:
     result = ScanResult(errors=["Scan incomplete: parser failed"])
 

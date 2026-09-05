@@ -305,6 +305,27 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
             for msg in concerns:
                 c.print(f"  [yellow]⚠️[/]  {msg}")
 
+    if (
+        binding.policy_finding is not None
+        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+    ):
+        attachments = binding.policy_finding.metadata.get(
+            "unresolved_policy_attachments", []
+        )
+        c.print()
+        c.print("[bold yellow]Coverage: PARTIAL — attached policy unavailable[/]")
+        c.print(
+            "[dim]ℹ️  The permissions shown above exclude these managed "
+            "policy attachments:[/]"
+        )
+        if isinstance(attachments, list):
+            for attachment in attachments:
+                c.print(f"[dim]    • {escape(str(attachment))}[/]")
+        c.print(
+            "[dim]💡  Run with --aws-verify to inspect the role's complete "
+            "effective permissions.[/]"
+        )
+
     if binding.policy_source == "not_found" and src.role_arn:
         c.print()
         c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
@@ -1142,6 +1163,14 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 c.print(
                     "[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]"
                 )
+            elif finding.get("risk_status") == "partial":
+                c.print(
+                    "[bold yellow]Coverage: PARTIAL — attached policy unavailable[/]"
+                )
+                for attachment in finding.get(
+                    "unresolved_policy_attachments", []
+                ):
+                    c.print(f"[dim]    • {escape(str(attachment))}[/]")
             actions = finding.get("actions", [])
             if actions:
                 table = Table(box=box.SQUARE, show_header=True)

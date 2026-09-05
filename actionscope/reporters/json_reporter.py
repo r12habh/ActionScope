@@ -57,6 +57,17 @@ def _auth_type_for_binding(binding: WorkflowCredentialBinding) -> str:
 def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, Any]:
     src = binding.credential_source
     pf = binding.policy_finding
+    policy_coverage_complete = (
+        pf is not None
+        and pf.metadata.get("policy_coverage_complete") is not False
+    )
+    risk_status = (
+        "unknown"
+        if pf is None
+        else "known"
+        if policy_coverage_complete
+        else "partial"
+    )
 
     out: dict[str, Any] = {
         "workflow_file": src.workflow_file,
@@ -67,7 +78,16 @@ def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, An
         "policy_source": binding.policy_source,
         "match_confidence": binding.match_confidence,
         "match_reason": binding.match_reason,
-        "risk_status": "known" if pf is not None else "unknown",
+        "risk_status": risk_status,
+        "policy_coverage_complete": policy_coverage_complete,
+        "unresolved_policy_attachments": (
+            list(pf.metadata.get("unresolved_policy_attachments", []))
+            if pf is not None
+            and isinstance(
+                pf.metadata.get("unresolved_policy_attachments", []), list
+            )
+            else []
+        ),
     }
 
     if pf is not None:
@@ -102,6 +122,12 @@ def _summary_dict(
     policies_not_found = sum(
         1 for b in result.bindings if b.policy_source == "not_found"
     )
+    policies_partial = sum(
+        1
+        for binding in result.bindings
+        if binding.policy_finding is not None
+        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+    )
     github_token_risks = sum(
         1
         for p in result.github_token_permissions
@@ -111,6 +137,7 @@ def _summary_dict(
         "credential_sources": len(result.credential_sources),
         "policies_found": policies_found,
         "policies_not_found": policies_not_found,
+        "policies_partial": policies_partial,
         "github_token_risks": github_token_risks,
         "unpinned_actions": len(result.unpinned_actions),
         "reusable_workflows": len(result.reusable_workflows),
