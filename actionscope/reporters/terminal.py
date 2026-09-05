@@ -97,7 +97,9 @@ def _critical_concerns(finding: PolicyFinding) -> list[str]:
             seen.add(msg)
             messages.append(msg)
 
-    if finding.has_passrole or any(a.action == "iam:PassRole" for a in finding.actions):
+    if finding.has_passrole or any(
+        a.action == "iam:PassRole" for a in finding.actions
+    ):
         add("iam:PassRole on * creates a privilege escalation path")
 
     if any(a.action == "ec2:TerminateInstances" for a in finding.actions):
@@ -239,7 +241,8 @@ def _render_configuration_section(c: Console, result: ScanResult) -> None:
     )
     if result.severity_overrides:
         overrides = ", ".join(
-            f"{rule_id}={risk}" for rule_id, risk in result.severity_overrides.items()
+            f"{rule_id}={risk}"
+            for rule_id, risk in result.severity_overrides.items()
         )
         lines.append(f"\nSeverity overrides: {overrides}")
     if result.applied_suppressions:
@@ -302,31 +305,12 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
             for msg in concerns:
                 c.print(f"  [yellow]⚠️[/]  {msg}")
 
-    if (
-        binding.policy_finding is not None
-        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
-    ):
-        attachments = binding.policy_finding.metadata.get(
-            "unresolved_policy_attachments", []
-        )
-        c.print()
-        c.print("[bold yellow]Coverage: PARTIAL — attached policy unavailable[/]")
-        c.print(
-            "[dim]ℹ️  The permissions shown above exclude these managed "
-            "policy attachments:[/]"
-        )
-        if isinstance(attachments, list):
-            for attachment in attachments:
-                c.print(f"[dim]    • {escape(str(attachment))}[/]")
-        c.print(
-            "[dim]💡  Run with --aws-verify to inspect the role's complete "
-            "effective permissions.[/]"
-        )
-
     if binding.policy_source == "not_found" and src.role_arn:
         c.print()
         c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
-        c.print(f"[dim]ℹ️  Policy not found in repo for role: {src.role_arn}[/]")
+        c.print(
+            f"[dim]ℹ️  Policy not found in repo for role: {src.role_arn}[/]"
+        )
         c.print()
         c.print(Text("    ActionScope looked for IAM policies in:", style="dim"))
         c.print(Text("    • *.tf files (Terraform)", style="dim"))
@@ -509,7 +493,9 @@ def _render_github_token_section(c: Console, result: ScanResult) -> None:
         else:
             loc = f"{wf} — workflow level"
         hint = _token_permission_hint(permission)
-        c.print(f"{icon} [bold]{scope_line}[/] [dim]({loc})[/] — {hint}")
+        c.print(
+            f"{icon} [bold]{scope_line}[/] [dim]({loc})[/] — {hint}"
+        )
 
 
 def _render_compromised_actions_section(
@@ -533,7 +519,9 @@ def _render_compromised_actions_section(
             f"   Status: Compromised {finding.compromise_date} — documented "
             "supply-chain compromise"
         )
-        c.print("   Impact: Mutable tags may run credential-stealing code in this job")
+        c.print(
+            "   Impact: Mutable tags may run credential-stealing code in this job"
+        )
         c.print("   Fix: Remove this action OR pin to a verified pre-compromise SHA")
         c.print(f"   Advisory: {finding.advisory_url}")
 
@@ -573,7 +561,8 @@ def _render_reusable_workflows_section(
             and reference.root_workflow != reference.caller_workflow
         ):
             c.print(
-                f"   Root caller: {escape(_workflow_basename(reference.root_workflow))}"
+                "   Root caller: "
+                f"{escape(_workflow_basename(reference.root_workflow))}"
             )
         if reference.error:
             c.print(f"   [dim]{escape(reference.error)}[/]")
@@ -604,7 +593,8 @@ def _render_oidc_trust_section(
     for finding in findings:
         icon = RISK_ICONS[finding.risk_level]
         c.print(
-            f"{icon} [bold]{finding.risk_level.name}:[/] {finding.issue_description}"
+            f"{icon} [bold]{finding.risk_level.name}:[/] "
+            f"{finding.issue_description}"
         )
         c.print(
             f"   Role: {finding.role_name} "
@@ -868,7 +858,8 @@ def _render_summary_panel(
         ),
         (f"OIDC trust issues: {len(result.oidc_trust_findings)}\n", ""),
         (
-            f"Known-compromised actions: {len(result.compromised_action_findings)}\n",
+            f"Known-compromised actions: "
+            f"{len(result.compromised_action_findings)}\n",
             "",
         ),
         (f"Environment issues: {len(result.environment_findings)}\n", ""),
@@ -918,7 +909,6 @@ def _delta_header_lines(delta: object | None) -> tuple:
         return tuple()
     if not getattr(delta, "risk_changed", False):
         return tuple()
-
     def _risk_label(value: object) -> str:
         if hasattr(value, "name"):
             return value.name
@@ -1022,20 +1012,19 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
             overrides = configuration.get("severity_overrides", {})
             if isinstance(overrides, dict) and overrides:
                 rendered_overrides = ", ".join(
-                    f"{rule_id}={risk}" for rule_id, risk in sorted(overrides.items())
+                    f"{rule_id}={risk}"
+                    for rule_id, risk in sorted(overrides.items())
                 )
                 c.print(Text(f"  Severity overrides: {rendered_overrides}"))
             for suppression in data.get("applied_suppressions", []):
                 if not isinstance(suppression, dict):
                     continue
-                c.print(
-                    Text(
-                        f"  {suppression.get('rule_id')} until "
-                        f"{suppression.get('expires')}: "
-                        f"{suppression.get('reason')} "
-                        f"({suppression.get('finding_count', 0)} finding(s))"
-                    )
-                )
+                c.print(Text(
+                    f"  {suppression.get('rule_id')} until "
+                    f"{suppression.get('expires')}: "
+                    f"{suppression.get('reason')} "
+                    f"({suppression.get('finding_count', 0)} finding(s))"
+                ))
             hard_blocks = data.get("hard_block_findings", [])
             if hard_blocks:
                 actions = ", ".join(
@@ -1052,14 +1041,20 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
         reusable = data.get("reusable_workflows", [])
         if reusable:
             c.print()
-            c.rule(f"[bold]Reusable Workflows ({len(reusable)} call(s))[/]")
+            c.rule(
+                f"[bold]Reusable Workflows ({len(reusable)} call(s))[/]"
+            )
             for reference in reusable[:20]:
                 caller = escape(
-                    _workflow_basename(str(reference.get("caller_workflow", "")))
+                    _workflow_basename(
+                        str(reference.get("caller_workflow", ""))
+                    )
                 )
                 caller_job = escape(str(reference.get("caller_job", "")))
                 uses = escape(str(reference.get("uses", "")))
-                c.print(f"{caller} → {caller_job} → {uses}")
+                c.print(
+                    f"{caller} → {caller_job} → {uses}"
+                )
                 c.print(
                     f"   Status: {reference.get('status', 'unknown')} | "
                     f"Pin: {reference.get('pin_type', 'unknown')}"
@@ -1068,7 +1063,8 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 caller_workflow = str(reference.get("caller_workflow") or "")
                 if root_workflow and root_workflow != caller_workflow:
                     c.print(
-                        f"   Root caller: {escape(_workflow_basename(root_workflow))}"
+                        "   Root caller: "
+                        f"{escape(_workflow_basename(root_workflow))}"
                     )
                 if reference.get("error"):
                     c.print(f"   {escape(str(reference.get('error')))}")
@@ -1077,7 +1073,8 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
         if exposure_paths:
             c.print()
             c.rule(
-                f"[bold]Correlated Exposure Paths ({len(exposure_paths)} found)[/]",
+                f"[bold]Correlated Exposure Paths "
+                f"({len(exposure_paths)} found)[/]",
                 style="red",
             )
             for path in exposure_paths[:10]:
@@ -1111,7 +1108,8 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
         if compromised:
             c.print()
             c.rule(
-                f"[bold red]⛔ KNOWN COMPROMISED ACTIONS ({len(compromised)} found)[/]"
+                f"[bold red]⛔ KNOWN COMPROMISED ACTIONS "
+                f"({len(compromised)} found)[/]"
             )
             for finding in compromised:
                 c.print(
@@ -1131,19 +1129,19 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
             c.print(f"[bold]AWS Role:[/] {finding.get('role_arn') or '(none)'}")
             if finding.get("role_reference_kind"):
                 c.print(
-                    f"[bold]Role Reference:[/] {finding.get('role_reference_kind')}"
+                    "[bold]Role Reference:[/] "
+                    f"{finding.get('role_reference_kind')}"
                 )
             c.print(f"[bold]Policy Source:[/] {finding.get('policy_source')}")
             if finding.get("match_confidence"):
-                c.print(f"[bold]Match Confidence:[/] {finding.get('match_confidence')}")
-            if finding.get("risk_status") == "unknown":
-                c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
-            elif finding.get("risk_status") == "partial":
                 c.print(
-                    "[bold yellow]Coverage: PARTIAL — attached policy unavailable[/]"
+                    f"[bold]Match Confidence:[/] "
+                    f"{finding.get('match_confidence')}"
                 )
-                for attachment in finding.get("unresolved_policy_attachments", []):
-                    c.print(f"[dim]    • {escape(str(attachment))}[/]")
+            if finding.get("risk_status") == "unknown":
+                c.print(
+                    "[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]"
+                )
             actions = finding.get("actions", [])
             if actions:
                 table = Table(box=box.SQUARE, show_header=True)

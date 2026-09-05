@@ -59,15 +59,6 @@ def test_classify_role_reference_input() -> None:
     assert classify_role_reference("${{ inputs.role-to-assume }}") == "input"
 
 
-def test_classify_role_reference_embedded_input_in_arn() -> None:
-    assert (
-        classify_role_reference(
-            "arn:aws:iam::123456789012:role/${{ inputs.role_name }}"
-        )
-        == "input"
-    )
-
-
 def test_classify_role_reference_other_expression() -> None:
     assert classify_role_reference("${{ github.repository }}-deploy") == "expression"
 

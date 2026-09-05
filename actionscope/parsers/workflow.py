@@ -28,7 +28,11 @@ class GitHubWorkflowLoader(yaml.SafeLoader):
 
 
 GitHubWorkflowLoader.yaml_implicit_resolvers = {
-    key: [(tag, regexp) for tag, regexp in resolvers if tag != "tag:yaml.org,2002:bool"]
+    key: [
+        (tag, regexp)
+        for tag, regexp in resolvers
+        if tag != "tag:yaml.org,2002:bool"
+    ]
     for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
 }
 
@@ -200,10 +204,10 @@ def classify_role_reference(role_reference: str | None) -> str:
         return "absent"
 
     value = role_reference.strip()
+    if IAM_ROLE_ARN_PATTERN.fullmatch(value):
+        return "literal_arn"
     if "${{" not in value:
-        return (
-            "literal_arn" if IAM_ROLE_ARN_PATTERN.fullmatch(value) else "literal_name"
-        )
+        return "literal_name"
 
     lowered = value.lower()
     for marker, kind in (
@@ -327,16 +331,22 @@ def scan_workflows(
             errors.append(f"Could not parse workflow file: {workflow_file}")
             continue
 
-        direct_sources = extract_aws_credential_sources(workflow_data, workflow_file)
+        direct_sources = extract_aws_credential_sources(
+            workflow_data, workflow_file
+        )
         delegated_sources, delegated_errors = extract_delegated_credential_sources(
             workflow_data,
             workflow_file,
             repo_path,
         )
         delegated_access_key_jobs = {
-            source.job_name for source in delegated_sources if source.uses_access_keys
+            source.job_name
+            for source in delegated_sources
+            if source.uses_access_keys
         }
-        delegated_access_key_callers = _local_action_access_key_locations(workflow_data)
+        delegated_access_key_callers = _local_action_access_key_locations(
+            workflow_data
+        )
         direct_sources = [
             source
             for source in direct_sources
@@ -436,7 +446,8 @@ def _credential_source_from_environment(
             role_arn=None,
             uses_access_keys=True,
             uses_oidc=False,
-            aws_region=env_vars.get("AWS_REGION") or env_vars.get("AWS_DEFAULT_REGION"),
+            aws_region=env_vars.get("AWS_REGION")
+            or env_vars.get("AWS_DEFAULT_REGION"),
             role_reference_kind="absent",
         )
     return None
@@ -600,7 +611,9 @@ def _parse_delegated_yaml(path: Path) -> dict | None:
 
 
 def _is_local_action_reference(uses_ref: str) -> bool:
-    return uses_ref.startswith("./") and not uses_ref.startswith("./.github/workflows/")
+    return uses_ref.startswith("./") and not uses_ref.startswith(
+        "./.github/workflows/"
+    )
 
 
 def _permissions_have_id_token_write(permissions: Any) -> bool:

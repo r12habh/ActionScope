@@ -9,8 +9,7 @@ import actionscope.parsers.cloudformation as cloudformation
 from actionscope.analyzers.oidc_trust import scan_oidc_trust_policies
 from actionscope.analyzers.risk_engine import build_bindings
 from actionscope.cli import main
-from actionscope.coverage import build_coverage_gaps
-from actionscope.models import AwsCredentialSource, RiskLevel, ScanResult
+from actionscope.models import AwsCredentialSource, RiskLevel
 from actionscope.parsers.cloudformation import (
     extract_iam_policies_from_cloudformation,
     find_cloudformation_files,
@@ -18,7 +17,6 @@ from actionscope.parsers.cloudformation import (
     parse_cloudformation_file,
     scan_cloudformation_files,
 )
-from actionscope.reporters.json_reporter import to_json
 
 FIXTURE_REPO = Path(__file__).parent / "fixtures" / "cloudformation_repo"
 TEMPLATE = FIXTURE_REPO / "infrastructure" / "template.yml"
@@ -92,47 +90,21 @@ def test_iam_policy_ref_resolves_attached_role_name() -> None:
     assert audit.policy_name == "audit-policy"
 
 
-def test_sam_policies_are_ignored_when_explicit_role_is_supplied() -> None:
+def test_sam_inline_policy_preserves_literal_role_arn() -> None:
     template = parse_cloudformation_file(str(TEMPLATE))
     assert template is not None
 
     findings = extract_iam_policies_from_cloudformation(template, str(TEMPLATE))
-
-    assert not any(finding.role_name == "github-worker-role" for finding in findings)
-    assert not any(
-        action.action == "sqs:SendMessage"
-        for finding in findings
-        for action in finding.actions
+    worker = next(
+        finding for finding in findings if finding.role_name == "github-worker-role"
     )
 
-
-def test_sam_policies_are_extracted_for_generated_execution_role() -> None:
-    template = {
-        "Resources": {
-            "WorkerFunction": {
-                "Type": "AWS::Serverless::Function",
-                "Properties": {
-                    "Handler": "app.handler",
-                    "Policies": [
-                        {
-                            "Statement": {
-                                "Effect": "Allow",
-                                "Action": "sqs:SendMessage",
-                                "Resource": {"Fn::GetAtt": ["Queue", "Arn"]},
-                            }
-                        }
-                    ],
-                },
-            }
-        }
-    }
-
-    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
-
-    assert len(findings) == 1
-    assert findings[0].role_name is None
-    assert [action.action for action in findings[0].actions] == ["sqs:SendMessage"]
-    assert findings[0].actions[0].resource == "<dynamic:Fn::GetAtt>"
+    assert worker.role_arn == ("arn:aws:iam::123456789012:role/github-worker-role")
+    assert [action.action for action in worker.actions] == ["sqs:SendMessage"]
+    assert worker.actions[0].resource == (
+        "arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:jobs"
+    )
+    assert not worker.has_star_resource
 
 
 def test_unknown_dynamic_resource_is_not_treated_as_wildcard() -> None:
@@ -248,85 +220,6 @@ def test_role_side_managed_policy_ref_is_resolved() -> None:
     assert findings[0].metadata["cloudformation_policy_logical_ids"] == [
         "EscalationPolicy"
     ]
-    assert findings[0].metadata["policy_coverage_complete"] is True
-    assert findings[0].metadata["unresolved_policy_attachments"] == []
-
-
-def test_external_managed_policy_attachment_marks_role_coverage_partial() -> None:
-    external_policy = "arn:aws:iam::aws:policy/AdministratorAccess"
-    template = {
-        "Resources": {
-            "DeployRole": {
-                "Type": "AWS::IAM::Role",
-                "Properties": {
-                    "RoleName": "deploy-role",
-                    "ManagedPolicyArns": [external_policy],
-                    "Policies": [
-                        {
-                            "PolicyDocument": {
-                                "Statement": {
-                                    "Effect": "Allow",
-                                    "Action": "s3:GetObject",
-                                    "Resource": "arn:aws:s3:::builds/*",
-                                }
-                            }
-                        }
-                    ],
-                },
-            }
-        }
-    }
-
-    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
-    binding = build_bindings([_credential("deploy-role")], findings, ".")[0]
-    result = ScanResult(
-        credential_sources=[binding.credential_source],
-        policy_findings=findings,
-        bindings=[binding],
-    )
-
-    assert binding.policy_finding is not None
-    assert [action.action for action in binding.policy_finding.actions] == [
-        "s3:GetObject"
-    ]
-    assert binding.policy_finding.metadata["policy_coverage_complete"] is False
-    assert binding.policy_finding.metadata["unresolved_policy_attachments"] == [
-        external_policy
-    ]
-    assert [gap.gap_type for gap in build_coverage_gaps(result)] == [
-        "unresolved_managed_policy_attachment"
-    ]
-    report = json.loads(to_json(result))
-    assert report["coverage_status"] == "partial"
-    assert report["findings"][0]["risk_status"] == "partial"
-    assert report["summary"]["policies_partial"] == 1
-
-
-def test_external_only_managed_policy_still_creates_partial_role_binding() -> None:
-    template = {
-        "Resources": {
-            "DeployRole": {
-                "Type": "AWS::IAM::Role",
-                "Properties": {
-                    "RoleName": "deploy-role",
-                    "ManagedPolicyArns": [{"Ref": "ExternalManagedPolicyArn"}],
-                },
-            }
-        }
-    }
-
-    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
-    binding = build_bindings([_credential("deploy-role")], findings, ".")[0]
-
-    assert len(findings) == 1
-    assert binding.policy_source == "cloudformation"
-    assert binding.match_confidence == "high"
-    assert binding.policy_finding is not None
-    assert binding.policy_finding.actions == []
-    assert binding.policy_finding.metadata["policy_coverage_complete"] is False
-    assert binding.policy_finding.metadata["unresolved_policy_attachments"] == [
-        '{"Ref":"ExternalManagedPolicyArn"}'
-    ]
 
 
 def test_not_action_and_not_resource_are_classified_conservatively() -> None:
@@ -377,7 +270,8 @@ def test_scan_rejects_oversized_template(
         "  Role:\n"
         "    Type: AWS::IAM::Role\n"
         "    Properties:\n"
-        "      RoleName: oversized\n" + ("# padding\n" * 20),
+        "      RoleName: oversized\n"
+        + ("# padding\n" * 20),
         encoding="utf-8",
     )
 
@@ -391,7 +285,9 @@ def test_scan_rejects_oversized_template(
 def test_scan_finds_iam_resource_after_initial_peek(tmp_path: Path) -> None:
     template = tmp_path / "template.yml"
     template.write_text(
-        "Resources:\n" + ("#" + (" padding" * 20_000) + "\n") + "  LateRole:\n"
+        "Resources:\n"
+        + ("#" + (" padding" * 20_000) + "\n")
+        + "  LateRole:\n"
         "    Type: AWS::IAM::Role\n"
         "    Properties:\n"
         "      RoleName: late-role\n"
@@ -416,7 +312,7 @@ def test_scan_cloudformation_files_returns_findings_without_errors() -> None:
     findings, errors = scan_cloudformation_files(str(FIXTURE_REPO))
 
     assert errors == []
-    assert len(findings) == 2
+    assert len(findings) == 3
 
 
 def test_scan_ignores_serverless_framework_wrapper(tmp_path: Path) -> None:

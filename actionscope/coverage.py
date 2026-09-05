@@ -11,26 +11,6 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
 
     for binding in result.bindings:
         source = binding.credential_source
-        policy = binding.policy_finding
-        if (
-            policy is not None
-            and policy.metadata.get("policy_coverage_complete") is False
-        ):
-            attachments = policy.metadata.get("unresolved_policy_attachments", [])
-            attachment_count = len(attachments) if isinstance(attachments, list) else 0
-            gaps.append(
-                CoverageGap(
-                    gap_type="unresolved_managed_policy_attachment",
-                    description=(
-                        "The workflow role has "
-                        f"{attachment_count or 'one or more'} attached managed "
-                        "policy source(s) whose contents are unavailable in the "
-                        "CloudFormation template; the reported IAM risk is partial."
-                    ),
-                    workflow_file=source.workflow_file,
-                    job_name=source.job_name,
-                )
-            )
         if binding.policy_source == "not_found":
             gaps.append(
                 CoverageGap(
