@@ -335,6 +335,48 @@ def test_external_only_managed_policy_still_creates_partial_role_binding() -> No
     ]
 
 
+def test_dynamic_policy_action_marks_binding_coverage_partial() -> None:
+    template = {
+        "Resources": {
+            "DeployRole": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "RoleName": "deploy-role",
+                    "Policies": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": {
+                                    "Effect": "Allow",
+                                    "Action": {"Fn::Sub": "${Service}:*"},
+                                    "Resource": "*",
+                                }
+                            }
+                        }
+                    ],
+                },
+            }
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+    binding = build_bindings([_credential("deploy-role")], findings, ".")[0]
+    result = ScanResult(bindings=[binding])
+
+    assert binding.policy_finding is not None
+    assert binding.policy_finding.metadata["policy_coverage_complete"] is False
+    assert binding.policy_finding.metadata["uninspectable_policy_elements"] == [
+        "document 1 statement 1 Action"
+    ]
+    assert [gap.gap_type for gap in build_coverage_gaps(result)] == [
+        "uninspectable_policy_content"
+    ]
+    report = json.loads(to_json(result))
+    assert report["findings"][0]["risk_status"] == "partial"
+    assert report["findings"][0]["uninspectable_policy_elements"] == [
+        "document 1 statement 1 Action"
+    ]
+
+
 def test_not_action_and_not_resource_are_classified_conservatively() -> None:
     template = {
         "Resources": {
@@ -419,6 +461,30 @@ def test_scan_finds_iam_resource_after_initial_peek(tmp_path: Path) -> None:
     assert errors == []
     assert len(findings) == 1
     assert findings[0].role_name == "late-role"
+
+
+def test_scan_finds_single_quoted_resources_key(tmp_path: Path) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        "'Resources':\n"
+        "  DeployRole:\n"
+        "    Type: AWS::IAM::Role\n"
+        "    Properties:\n"
+        "      RoleName: deploy-role\n"
+        "      Policies:\n"
+        "        - PolicyDocument:\n"
+        "            Statement:\n"
+        "              Effect: Allow\n"
+        "              Action: s3:GetObject\n"
+        "              Resource: '*'\n",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_cloudformation_files(str(tmp_path))
+
+    assert errors == []
+    assert len(findings) == 1
+    assert findings[0].role_name == "deploy-role"
 
 
 def test_scan_cloudformation_files_returns_findings_without_errors() -> None:

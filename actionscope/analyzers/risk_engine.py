@@ -548,10 +548,11 @@ def _aggregate_policy_findings(
         )
     )
     unresolved_policy_attachments = _unresolved_policy_attachments(findings)
+    uninspectable_policy_elements = _uninspectable_policy_elements(findings)
     policy_coverage_complete = all(
         finding.metadata.get("policy_coverage_complete") is not False
         for finding in findings
-    ) and not unresolved_policy_attachments
+    ) and not unresolved_policy_attachments and not uninspectable_policy_elements
     aggregate = PolicyFinding(
         source_file=source_files[0],
         source_type=findings[0].source_type,
@@ -575,6 +576,7 @@ def _aggregate_policy_findings(
             "aggregated_policy_names": policy_names,
             "policy_coverage_complete": policy_coverage_complete,
             "unresolved_policy_attachments": unresolved_policy_attachments,
+            "uninspectable_policy_elements": uninspectable_policy_elements,
         },
     )
 
@@ -606,6 +608,17 @@ def _unresolved_policy_attachments(
         if isinstance(values, list):
             attachments.extend(str(value) for value in values)
     return list(dict.fromkeys(attachments))
+
+
+def _uninspectable_policy_elements(
+    findings: list[PolicyFinding],
+) -> list[str]:
+    elements: list[str] = []
+    for finding in findings:
+        values = finding.metadata.get("uninspectable_policy_elements", [])
+        if isinstance(values, list):
+            elements.extend(str(value) for value in values)
+    return list(dict.fromkeys(elements))
 
 
 def _file_contains(filepath: str, needle: str) -> bool:

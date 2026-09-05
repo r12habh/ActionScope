@@ -211,6 +211,26 @@ def test_json_and_markdown_mark_unresolved_attachment_as_partial() -> None:
         assert "AdministratorAccess" in output
 
 
+def test_markdown_names_uninspectable_policy_content() -> None:
+    binding = _sample_binding()
+    assert binding.policy_finding is not None
+    binding.policy_finding.metadata = {
+        "policy_coverage_complete": False,
+        "uninspectable_policy_elements": [
+            "document 1 statement 1 Action"
+        ],
+    }
+    result = ScanResult(bindings=[binding])
+
+    data = json.loads(to_json(result))
+    markdown = to_markdown(result)
+    rendered = to_markdown_from_dict(data)
+
+    assert data["findings"][0]["risk_status"] == "partial"
+    for output in (markdown, rendered):
+        assert "document 1 statement 1 Action" in output
+
+
 def test_markdown_from_dict_inserts_intro_sections_before_one_rule() -> None:
     markdown = to_markdown_from_dict(
         {

@@ -184,6 +184,7 @@ def test_not_actions_statement_is_classified_conservatively() -> None:
 
     assert findings[0].overall_risk is RiskLevel.CRITICAL
     assert findings[0].has_star_action
+    assert findings[0].has_privilege_escalation
 
 
 def test_not_resources_statement_is_classified_conservatively() -> None:

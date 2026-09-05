@@ -341,14 +341,15 @@ def scan_workflows(
             workflow_file,
             repo_path,
         )
+        delegated_access_key_callers = _local_action_access_key_locations(
+            workflow_data,
+            delegated_sources,
+        )
         delegated_access_key_jobs = {
             source.job_name
             for source in delegated_sources
             if source.uses_access_keys
         }
-        delegated_access_key_callers = _local_action_access_key_locations(
-            workflow_data
-        )
         direct_sources = [
             source
             for source in direct_sources
@@ -516,8 +517,9 @@ def _inspect_local_composite_action(
 
 def _local_action_access_key_locations(
     workflow_data: dict,
+    delegated_sources: list[AwsCredentialSource],
 ) -> set[tuple[str, str]]:
-    """Return local-action caller steps that expose static AWS key variables."""
+    """Return key-bearing callers whose local action configures AWS."""
     jobs = workflow_data.get("jobs") or {}
     if not isinstance(jobs, dict):
         return set()
@@ -537,7 +539,17 @@ def _local_action_access_key_locations(
             ):
                 continue
             caller_env = {**inherited_env, **extract_env_var_references(step)}
-            if AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(caller_env):
+            delegated_prefix = f"Local action {uses.strip()} ->"
+            has_matching_delegated_source = any(
+                source.job_name == str(job_name)
+                and source.uses_access_keys
+                and source.step_name.startswith(delegated_prefix)
+                for source in delegated_sources
+            )
+            if (
+                AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(caller_env)
+                and has_matching_delegated_source
+            ):
                 locations.add(
                     (str(job_name), str(step.get("name") or "Shell step environment"))
                 )

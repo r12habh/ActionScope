@@ -450,6 +450,74 @@ runs:
     assert sources[0].step_name.startswith("Local action ./actions/configure")
 
 
+def test_scan_deduplicates_keys_only_for_matching_local_action_caller(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Expose keys only
+        uses: ./actions/noop
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.FIRST_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.FIRST_SECRET_ACCESS_KEY }}
+      - name: Configure through local action
+        uses: ./actions/configure
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SECOND_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SECOND_SECRET_ACCESS_KEY }}
+""",
+        encoding="utf-8",
+    )
+    noop_dir = tmp_path / "actions" / "noop"
+    noop_dir.mkdir(parents=True)
+    noop_dir.joinpath("action.yml").write_text(
+        """
+name: Noop
+runs:
+  using: composite
+  steps:
+    - run: echo ok
+      shell: bash
+""",
+        encoding="utf-8",
+    )
+    configure_dir = tmp_path / "actions" / "configure"
+    configure_dir.mkdir(parents=True)
+    configure_dir.joinpath("action.yml").write_text(
+        """
+name: Configure
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::123456789012:role/deploy
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 2
+    assert {source.step_name for source in sources} == {
+        "Expose keys only",
+        (
+            "Local action ./actions/configure -> "
+            "aws-actions/configure-aws-credentials@v4"
+        ),
+    }
+    assert all(source.uses_access_keys for source in sources)
+
+
 def test_step_without_with_block_returns_source_with_no_role() -> None:
     workflow_data = {
         "jobs": {

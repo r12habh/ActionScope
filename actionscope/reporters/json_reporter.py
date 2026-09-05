@@ -88,6 +88,14 @@ def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, An
             )
             else []
         ),
+        "uninspectable_policy_elements": (
+            list(pf.metadata.get("uninspectable_policy_elements", []))
+            if pf is not None
+            and isinstance(
+                pf.metadata.get("uninspectable_policy_elements", []), list
+            )
+            else []
+        ),
     }
 
     if pf is not None:

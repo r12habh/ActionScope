@@ -354,6 +354,18 @@ def _finding_from_documents(
     policy_name: str | None = None,
     metadata: dict[str, object] | None = None,
 ) -> PolicyFinding:
+    finding_metadata = dict(metadata or {})
+    uninspectable_elements = _uninspectable_policy_elements(documents)
+    if uninspectable_elements:
+        existing = finding_metadata.get("uninspectable_policy_elements", [])
+        preserved = list(existing) if isinstance(existing, list) else []
+        finding_metadata["uninspectable_policy_elements"] = list(
+            dict.fromkeys(preserved + uninspectable_elements)
+        )
+        finding_metadata["policy_coverage_complete"] = False
+    else:
+        finding_metadata.setdefault("policy_coverage_complete", True)
+
     statements: list[Any] = []
     for document in documents:
         raw = document.get("Statement")
@@ -377,8 +389,66 @@ def _finding_from_documents(
     finding.role_name = role_name
     finding.role_arn = role_arn
     finding.policy_name = policy_name
-    finding.metadata = metadata or {}
+    finding.metadata = finding_metadata
     return finding
+
+
+def _uninspectable_policy_elements(documents: list[dict]) -> list[str]:
+    """Describe permission elements that cannot be resolved statically."""
+    issues: list[str] = []
+    for document_index, document in enumerate(documents, start=1):
+        raw = document.get("Statement")
+        if isinstance(raw, list):
+            statements = raw
+        elif isinstance(raw, dict) and _looks_like_policy_statement(raw):
+            statements = [raw]
+        else:
+            issues.append(f"document {document_index} Statement")
+            continue
+
+        for statement_index, statement in enumerate(statements, start=1):
+            label = f"document {document_index} statement {statement_index}"
+            if not isinstance(statement, dict):
+                issues.append(label)
+                continue
+
+            effect = statement.get("Effect")
+            if not _fully_static_string_values(effect):
+                issues.append(f"{label} Effect")
+                continue
+            if str(effect).strip().lower() == "deny":
+                continue
+            if str(effect).strip().lower() != "allow":
+                issues.append(f"{label} Effect")
+                continue
+
+            action_key = "Action" if "Action" in statement else "NotAction"
+            resource_key = (
+                "Resource" if "Resource" in statement else "NotResource"
+            )
+            if action_key not in statement or not _fully_static_string_values(
+                statement.get(action_key)
+            ):
+                issues.append(f"{label} {action_key}")
+            if resource_key not in statement or not _fully_static_string_values(
+                statement.get(resource_key)
+            ):
+                issues.append(f"{label} {resource_key}")
+    return issues
+
+
+def _looks_like_policy_statement(value: dict) -> bool:
+    return bool(
+        {"Effect", "Action", "NotAction", "Resource", "NotResource"} & value.keys()
+    )
+
+
+def _fully_static_string_values(value: Any) -> bool:
+    values = value if isinstance(value, list) else [value]
+    return bool(values) and all(
+        isinstance(item, str) and bool(item.strip()) and "${" not in item
+        for item in values
+    )
 
 
 def _normalize_statement_for_analysis(value: Any) -> dict | None:
@@ -609,7 +679,7 @@ def _role_name_from_arn(role_arn: str | None) -> str | None:
 
 
 def _looks_like_cloudformation(path: Path) -> bool:
-    resource_markers = (b'"Resources"', b"Resources:")
+    resource_markers = (b'"Resources"', b"'Resources'", b"Resources:")
     type_markers = (b"AWS::IAM::", b"AWS::Serverless::")
     carry_size = max(len(marker) for marker in resource_markers + type_markers) - 1
     has_resources = False

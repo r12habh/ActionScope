@@ -148,10 +148,14 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
         attachments = binding.policy_finding.metadata.get(
             "unresolved_policy_attachments", []
         )
-        evidence = ", ".join(f"`{_md_cell(item)}`" for item in attachments)
+        elements = binding.policy_finding.metadata.get(
+            "uninspectable_policy_elements", []
+        )
+        evidence_items = list(attachments) + list(elements)
+        evidence = ", ".join(f"`{_md_cell(item)}`" for item in evidence_items)
         lines.append(
-            "| Coverage | **PARTIAL** — attached managed policy contents are "
-            f"unavailable: {evidence or 'unknown attachment'}. Run with "
+            "| Coverage | **PARTIAL** — some IAM policy evidence is unavailable "
+            f"or dynamic: {evidence or 'unknown policy element'}. Run with "
             "`--aws-verify` for complete effective permissions. |"
         )
 
@@ -991,14 +995,15 @@ def to_markdown_from_dict(data: dict) -> str:
                 )
             elif finding.get("risk_status") == "partial":
                 attachments = finding.get("unresolved_policy_attachments", [])
+                elements = finding.get("uninspectable_policy_elements", [])
                 evidence = ", ".join(
-                    f"`{_md_cell(item)}`" for item in attachments
+                    f"`{_md_cell(item)}`" for item in list(attachments) + list(elements)
                 )
                 lines.extend(
                     [
-                        "> **Coverage partial:** attached managed policy "
-                        "contents are unavailable: "
-                        f"{evidence or 'unknown attachment'}. Run with "
+                        "> **Coverage partial:** some IAM policy evidence is "
+                        "unavailable or dynamic: "
+                        f"{evidence or 'unknown policy element'}. Run with "
                         "`--aws-verify` for complete effective permissions.",
                         "",
                     ]

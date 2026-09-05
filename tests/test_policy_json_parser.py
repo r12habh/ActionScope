@@ -266,6 +266,7 @@ def test_not_action_and_not_resource_are_conservative() -> None:
 
     assert finding.has_star_action
     assert finding.has_star_resource
+    assert finding.has_privilege_escalation
     assert finding.overall_risk is RiskLevel.CRITICAL
 
 

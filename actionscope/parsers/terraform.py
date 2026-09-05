@@ -339,7 +339,8 @@ def _finding_from_statements(
             has_star_resource = True
 
         if statement_has_star_resource and (
-            "iam:passrole" in normalized_actions
+            "*" in normalized_actions
+            or "iam:passrole" in normalized_actions
             or bool(PRIVILEGE_ESCALATION_ACTIONS & normalized_actions)
         ):
             has_privilege_escalation = True

@@ -18,19 +18,35 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
         ):
             attachments = policy.metadata.get("unresolved_policy_attachments", [])
             attachment_count = len(attachments) if isinstance(attachments, list) else 0
-            gaps.append(
-                CoverageGap(
-                    gap_type="unresolved_managed_policy_attachment",
-                    description=(
-                        "The workflow role has "
-                        f"{attachment_count or 'one or more'} attached managed "
-                        "policy source(s) whose contents are unavailable in the "
-                        "CloudFormation template; the reported IAM risk is partial."
-                    ),
-                    workflow_file=source.workflow_file,
-                    job_name=source.job_name,
+            if attachment_count:
+                gaps.append(
+                    CoverageGap(
+                        gap_type="unresolved_managed_policy_attachment",
+                        description=(
+                            "The workflow role has "
+                            f"{attachment_count} attached managed policy source(s) "
+                            "whose contents are unavailable in the CloudFormation "
+                            "template; the reported IAM risk is partial."
+                        ),
+                        workflow_file=source.workflow_file,
+                        job_name=source.job_name,
+                    )
                 )
-            )
+            elements = policy.metadata.get("uninspectable_policy_elements", [])
+            element_count = len(elements) if isinstance(elements, list) else 0
+            if element_count:
+                gaps.append(
+                    CoverageGap(
+                        gap_type="uninspectable_policy_content",
+                        description=(
+                            "The workflow role policy contains "
+                            f"{element_count} dynamic or unsupported permission "
+                            "element(s); the reported IAM risk is partial."
+                        ),
+                        workflow_file=source.workflow_file,
+                        job_name=source.job_name,
+                    )
+                )
         if binding.policy_source == "not_found":
             gaps.append(
                 CoverageGap(

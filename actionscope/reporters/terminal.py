@@ -312,15 +312,22 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         attachments = binding.policy_finding.metadata.get(
             "unresolved_policy_attachments", []
         )
-        c.print()
-        c.print("[bold yellow]Coverage: PARTIAL — attached policy unavailable[/]")
-        c.print(
-            "[dim]ℹ️  The permissions shown above exclude these managed "
-            "policy attachments:[/]"
+        elements = binding.policy_finding.metadata.get(
+            "uninspectable_policy_elements", []
         )
-        if isinstance(attachments, list):
+        c.print()
+        c.print("[bold yellow]Coverage: PARTIAL — IAM evidence is incomplete[/]")
+        if isinstance(attachments, list) and attachments:
+            c.print(
+                "[dim]ℹ️  The permissions shown above exclude these managed "
+                "policy attachments:[/]"
+            )
             for attachment in attachments:
                 c.print(f"[dim]    • {escape(str(attachment))}[/]")
+        if isinstance(elements, list) and elements:
+            c.print("[dim]ℹ️  These policy elements could not be resolved:[/]")
+            for element in elements:
+                c.print(f"[dim]    • {escape(str(element))}[/]")
         c.print(
             "[dim]💡  Run with --aws-verify to inspect the role's complete "
             "effective permissions.[/]"
@@ -1165,12 +1172,14 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 )
             elif finding.get("risk_status") == "partial":
                 c.print(
-                    "[bold yellow]Coverage: PARTIAL — attached policy unavailable[/]"
+                    "[bold yellow]Coverage: PARTIAL — IAM evidence is incomplete[/]"
                 )
                 for attachment in finding.get(
                     "unresolved_policy_attachments", []
                 ):
                     c.print(f"[dim]    • {escape(str(attachment))}[/]")
+                for element in finding.get("uninspectable_policy_elements", []):
+                    c.print(f"[dim]    • {escape(str(element))}[/]")
             actions = finding.get("actions", [])
             if actions:
                 table = Table(box=box.SQUARE, show_header=True)
