@@ -100,11 +100,7 @@ def test_fingerprint_distinguishes_jobs() -> None:
 
 def test_fingerprint_ignores_cosmetic_step_name_changes() -> None:
     first = build_finding_records(
-        ScanResult(
-            compromised_action_findings=[
-                _compromised(step_name="Run helper")
-            ]
-        )
+        ScanResult(compromised_action_findings=[_compromised(step_name="Run helper")])
     )
     second = build_finding_records(
         ScanResult(
@@ -219,9 +215,7 @@ def test_iam_permissions_have_granular_fingerprints() -> None:
     )
 
     records = [
-        record
-        for record in build_finding_records(result)
-        if record.rule_id == "AS001"
+        record for record in build_finding_records(result) if record.rule_id == "AS001"
     ]
 
     assert len(records) == 2
@@ -240,6 +234,29 @@ def test_unresolved_policy_creates_coverage_gap_not_finding() -> None:
 
     assert [gap.gap_type for gap in gaps] == ["unresolved_role_policy"]
     assert records == []
+
+
+def test_unresolved_managed_policy_attachment_creates_coverage_gap() -> None:
+    policy = PolicyFinding(
+        source_file="infrastructure/template.yml",
+        source_type="cloudformation",
+        role_arn=None,
+        role_name="deploy",
+        overall_risk=RiskLevel.INFO,
+        metadata={
+            "policy_coverage_complete": False,
+            "unresolved_policy_attachments": [
+                "arn:aws:iam::aws:policy/AdministratorAccess"
+            ],
+        },
+    )
+    result = ScanResult(bindings=[_binding(policy=policy, source="cloudformation")])
+
+    gaps = build_coverage_gaps(result)
+
+    assert len(gaps) == 1
+    assert gaps[0].gap_type == "unresolved_managed_policy_attachment"
+    assert "reported IAM risk is partial" in gaps[0].description
 
 
 def test_analyzer_error_marks_coverage_partial() -> None:
@@ -331,8 +348,7 @@ def test_out_of_tree_paths_do_not_collide_or_leak_absolute_paths(
     assert len(records) == 2
     assert len({record.fingerprint for record in records}) == 2
     assert all(
-        record.workflow_file
-        and record.workflow_file.startswith("_external/")
+        record.workflow_file and record.workflow_file.startswith("_external/")
         for record in records
     )
     assert all(str(tmp_path) not in (record.workflow_file or "") for record in records)

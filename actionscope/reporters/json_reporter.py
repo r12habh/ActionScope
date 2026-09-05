@@ -57,6 +57,12 @@ def _auth_type_for_binding(binding: WorkflowCredentialBinding) -> str:
 def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, Any]:
     src = binding.credential_source
     pf = binding.policy_finding
+    policy_coverage_complete = (
+        pf is not None and pf.metadata.get("policy_coverage_complete") is not False
+    )
+    risk_status = (
+        "unknown" if pf is None else "known" if policy_coverage_complete else "partial"
+    )
 
     out: dict[str, Any] = {
         "workflow_file": src.workflow_file,
@@ -67,7 +73,14 @@ def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, An
         "policy_source": binding.policy_source,
         "match_confidence": binding.match_confidence,
         "match_reason": binding.match_reason,
-        "risk_status": "known" if pf is not None else "unknown",
+        "risk_status": risk_status,
+        "policy_coverage_complete": policy_coverage_complete,
+        "unresolved_policy_attachments": (
+            list(pf.metadata.get("unresolved_policy_attachments", []))
+            if pf is not None
+            and isinstance(pf.metadata.get("unresolved_policy_attachments", []), list)
+            else []
+        ),
     }
 
     if pf is not None:
@@ -96,21 +109,24 @@ def _summary_dict(
     *,
     coverage_gap_count: int | None = None,
 ) -> dict[str, Any]:
-    policies_found = sum(
-        1 for b in result.bindings if b.policy_finding is not None
-    )
+    policies_found = sum(1 for b in result.bindings if b.policy_finding is not None)
     policies_not_found = sum(
         1 for b in result.bindings if b.policy_source == "not_found"
     )
-    github_token_risks = sum(
+    policies_partial = sum(
         1
-        for p in result.github_token_permissions
-        if p.risk_level >= RiskLevel.MEDIUM
+        for binding in result.bindings
+        if binding.policy_finding is not None
+        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+    )
+    github_token_risks = sum(
+        1 for p in result.github_token_permissions if p.risk_level >= RiskLevel.MEDIUM
     )
     return {
         "credential_sources": len(result.credential_sources),
         "policies_found": policies_found,
         "policies_not_found": policies_not_found,
+        "policies_partial": policies_partial,
         "github_token_risks": github_token_risks,
         "unpinned_actions": len(result.unpinned_actions),
         "reusable_workflows": len(result.reusable_workflows),
@@ -152,14 +168,9 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
     coverage_status = "partial" if coverage_gaps else result.coverage_status
     finding_records = list(result.finding_records)
     normalization_failed = any(
-        gap.gap_type == "finding_normalization_error"
-        for gap in coverage_gaps
+        gap.gap_type == "finding_normalization_error" for gap in coverage_gaps
     )
-    if (
-        not finding_records
-        and not normalization_failed
-        and not result.config_applied
-    ):
+    if not finding_records and not normalization_failed and not result.config_applied:
         from actionscope.findings import build_finding_records
 
         finding_records = build_finding_records(result)
@@ -167,9 +178,7 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         "scan_path": result.scan_path,
         "overall_risk": _risk_level_str(result.overall_risk),
         "coverage_status": coverage_status,
-        "coverage_gaps": [
-            _serialize_for_json(asdict(gap)) for gap in coverage_gaps
-        ],
+        "coverage_gaps": [_serialize_for_json(asdict(gap)) for gap in coverage_gaps],
         "workflow_count": result.workflow_count,
         "summary": _summary_dict(
             result,
@@ -177,12 +186,10 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         ),
         "findings": [_binding_to_finding_dict(b) for b in result.bindings],
         "github_token_permissions": [
-            _serialize_for_json(asdict(p))
-            for p in result.github_token_permissions
+            _serialize_for_json(asdict(p)) for p in result.github_token_permissions
         ],
         "unpinned_actions": [
-            _serialize_for_json(asdict(finding))
-            for finding in result.unpinned_actions
+            _serialize_for_json(asdict(finding)) for finding in result.unpinned_actions
         ],
         "reusable_workflows": [
             _serialize_for_json(asdict(reference))
@@ -225,12 +232,10 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
             "warnings": list(result.config_warnings),
         },
         "applied_suppressions": [
-            _serialize_for_json(asdict(item))
-            for item in result.applied_suppressions
+            _serialize_for_json(asdict(item)) for item in result.applied_suppressions
         ],
         "hard_block_findings": [
-            _serialize_for_json(asdict(item))
-            for item in result.hard_block_findings
+            _serialize_for_json(asdict(item)) for item in result.hard_block_findings
         ],
         "pin_suggestions": [
             _serialize_for_json(asdict(finding) if is_dataclass(finding) else finding)
@@ -246,9 +251,7 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
             if is_dataclass(getattr(result, "gate", None))
             else getattr(result, "gate", None)
         ),
-        "unmatched_policies": [
-            _policy_finding_to_report_dict(p) for p in unmatched
-        ],
+        "unmatched_policies": [_policy_finding_to_report_dict(p) for p in unmatched],
         "errors": list(result.errors),
     }
     return json.dumps(payload, indent=indent)

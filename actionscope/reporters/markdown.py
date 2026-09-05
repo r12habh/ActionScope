@@ -73,24 +73,18 @@ def _critical_concern_lines(finding: PolicyFinding) -> list[str]:
                 f"- ⚠️ `{action.action}` on `{res}` — privilege escalation path exists"
             )
         elif action.action == "ec2:TerminateInstances":
-            lines.append(
-                f"- ⚠️ `{action.action}` — can terminate production instances"
-            )
+            lines.append(f"- ⚠️ `{action.action}` — can terminate production instances")
     if finding.has_privilege_escalation and not any(
         a.action == "iam:PassRole" for a in finding.actions
     ):
-        lines.append(
-            "- ⚠️ Policy enables IAM privilege escalation paths"
-        )
+        lines.append("- ⚠️ Policy enables IAM privilege escalation paths")
     return lines
 
 
 def _iam_action_row(action: IamAction) -> str:
     risk = RISK_DISPLAY.get(action.risk_level, action.risk_level.name)
     al = _md_cell(action.access_level)
-    return (
-        f"| `{_md_cell(action.action)}` | {al} | {risk} |"
-    )
+    return f"| `{_md_cell(action.action)}` | {al} | {risk} |"
 
 
 def _token_workflow_cell(permission: GitHubTokenPermission) -> str:
@@ -141,6 +135,19 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
             "| Coverage | **INCOMPLETE** — the AWS role or its permissions "
             "could not be resolved statically. |"
         )
+    elif (
+        binding.policy_finding is not None
+        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+    ):
+        attachments = binding.policy_finding.metadata.get(
+            "unresolved_policy_attachments", []
+        )
+        evidence = ", ".join(f"`{_md_cell(item)}`" for item in attachments)
+        lines.append(
+            "| Coverage | **PARTIAL** — attached managed policy contents are "
+            f"unavailable: {evidence or 'unknown attachment'}. Run with "
+            "`--aws-verify` for complete effective permissions. |"
+        )
 
     if binding.policy_finding is not None:
         pf = binding.policy_finding
@@ -158,9 +165,7 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
         if pf.privesc_paths:
             lines.append("**Privilege Escalation Paths:**")
             for path in pf.privesc_paths:
-                lines.append(
-                    f"- 🔴 **{path.path_name}** — {path.description}"
-                )
+                lines.append(f"- 🔴 **{path.path_name}** — {path.description}")
             lines.append("")
 
         lines.append("<details>")
@@ -238,8 +243,7 @@ def _unpinned_section(findings: list[UnpinnedActionFinding]) -> str:
     lines.extend(
         [
             "",
-            "> ⚠️ Version tags are mutable. Pin to SHA to prevent "
-            "supply-chain attacks.",
+            "> ⚠️ Version tags are mutable. Pin to SHA to prevent supply-chain attacks.",
             "> Reference: the March 2025 tj-actions/changed-files compromise.",
             "",
             "---",
@@ -258,16 +262,13 @@ def _reusable_workflows_section(
     lines = [
         "### Reusable Workflows",
         "",
-        "| Root | Caller | Job | Reusable workflow | Pin | Depth | "
-        "Inspection |",
+        "| Root | Caller | Job | Reusable workflow | Pin | Depth | Inspection |",
         "|------|--------|-----|-------------------|-----|-------|------------|",
     ]
     for reference in references:
         caller = _md_cell(_workflow_basename(reference.caller_workflow))
         root = _md_cell(
-            _workflow_basename(
-                reference.root_workflow or reference.caller_workflow
-            )
+            _workflow_basename(reference.root_workflow or reference.caller_workflow)
         )
         lines.append(
             f"| {root} | {caller} | {_md_cell(reference.caller_job)} | "
@@ -276,9 +277,7 @@ def _reusable_workflows_section(
             f"{_md_cell(reference.status.replace('_', ' '))} |"
         )
         if reference.error:
-            lines.append(
-                f"|  |  |  | _{_md_cell(reference.error)}_ |  |  |  |"
-            )
+            lines.append(f"|  |  |  | _{_md_cell(reference.error)}_ |  |  |  |")
     if any(reference.status == "no_token" for reference in references):
         lines.extend(
             [
@@ -622,8 +621,7 @@ def _configuration_section(result: ScanResult) -> str:
     ]
     if result.severity_overrides:
         overrides = ", ".join(
-            f"`{rule_id}={risk}`"
-            for rule_id, risk in result.severity_overrides.items()
+            f"`{rule_id}={risk}`" for rule_id, risk in result.severity_overrides.items()
         )
         lines.extend([f"Severity overrides: {overrides}", ""])
     if result.applied_suppressions:
@@ -683,9 +681,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
         "---\n\n"
     )
 
-    compromised_part = _compromised_actions_section(
-        result.compromised_action_findings
-    )
+    compromised_part = _compromised_actions_section(result.compromised_action_findings)
     configuration_part = _configuration_section(result)
     delta_part = _delta_section(delta)
     reusable_part = _reusable_workflows_section(result.reusable_workflows)
@@ -788,9 +784,7 @@ def to_markdown_from_dict(data: dict) -> str:
                 f"`{_md_cell(rule_id)}={_md_cell(risk)}`"
                 for rule_id, risk in sorted(overrides.items())
             )
-            config_lines.extend(
-                [f"Severity overrides: {rendered_overrides}", ""]
-            )
+            config_lines.extend([f"Severity overrides: {rendered_overrides}", ""])
         suppressions = data.get("applied_suppressions", [])
         if isinstance(suppressions, list) and suppressions:
             config_lines.extend(
@@ -859,11 +853,7 @@ def to_markdown_from_dict(data: dict) -> str:
             )
         prefix.append("")
         separator_index = lines.index("---")
-        lines = (
-            lines[:separator_index]
-            + prefix
-            + lines[separator_index:]
-        )
+        lines = lines[:separator_index] + prefix + lines[separator_index:]
 
     delta_data = data.get("delta")
     if isinstance(delta_data, dict):
@@ -910,11 +900,7 @@ def to_markdown_from_dict(data: dict) -> str:
             )
         delta_lines.append("")
         separator_index = lines.index("---")
-        lines = (
-            lines[:separator_index]
-            + delta_lines
-            + lines[separator_index:]
-        )
+        lines = lines[:separator_index] + delta_lines + lines[separator_index:]
 
     findings = data.get("findings", [])
     if findings:
@@ -940,6 +926,8 @@ def to_markdown_from_dict(data: dict) -> str:
             }.get(finding_risk, finding_risk.upper())
             if finding.get("risk_status") == "unknown":
                 finding_risk_display = "UNKNOWN (coverage incomplete)"
+            elif finding.get("risk_status") == "partial":
+                finding_risk_display += " (partial evidence)"
 
             lines.extend(
                 [
@@ -971,6 +959,18 @@ def to_markdown_from_dict(data: dict) -> str:
                     [
                         "> **Coverage incomplete:** the AWS role or its "
                         "permissions could not be resolved statically.",
+                        "",
+                    ]
+                )
+            elif finding.get("risk_status") == "partial":
+                attachments = finding.get("unresolved_policy_attachments", [])
+                evidence = ", ".join(f"`{_md_cell(item)}`" for item in attachments)
+                lines.extend(
+                    [
+                        "> **Coverage partial:** attached managed policy "
+                        "contents are unavailable: "
+                        f"{evidence or 'unknown attachment'}. "
+                        "Run with `--aws-verify` for complete effective permissions.",
                         "",
                     ]
                 )
@@ -1039,8 +1039,7 @@ def to_markdown_from_dict(data: dict) -> str:
             )
             if reference.get("error"):
                 lines.append(
-                    "|  |  |  | "
-                    f"_{_md_cell(reference.get('error', ''))}_ |  |  |  |"
+                    f"|  |  |  | _{_md_cell(reference.get('error', ''))}_ |  |  |  |"
                 )
         if any(reference.get("status") == "no_token" for reference in reusable):
             lines.extend(
@@ -1074,9 +1073,7 @@ def to_markdown_from_dict(data: dict) -> str:
                 "low": "🟢 LOW",
                 "info": "ℹ️ INFO",
             }.get(risk, risk.upper())
-            workflow = _md_cell(
-                _workflow_basename(str(path.get("workflow_file", "")))
-            )
+            workflow = _md_cell(_workflow_basename(str(path.get("workflow_file", ""))))
             role = _md_cell(
                 path.get("role_arn")
                 or f"{path.get('auth_type', 'unknown')} credentials"
@@ -1224,9 +1221,7 @@ def to_markdown_from_dict(data: dict) -> str:
                     or "finding"
                 )
                 location = (
-                    finding.get("workflow_file")
-                    or finding.get("source_file")
-                    or ""
+                    finding.get("workflow_file") or finding.get("source_file") or ""
                 )
                 lines.append(
                     f"| {_md_cell(title_text)} | `{_md_cell(location)}` | "

@@ -103,17 +103,12 @@ def _match_role_to_policy_with_confidence(
         )
 
     repository_findings = [
-        finding
-        for finding in policy_findings
-        if finding.source_type != "aws_verified"
+        finding for finding in policy_findings if finding.source_type != "aws_verified"
     ]
     relationship_matches = [
         finding
         for finding in repository_findings
-        if (
-            finding.role_name
-            and normalized_role_name == finding.role_name.lower()
-        )
+        if (finding.role_name and normalized_role_name == finding.role_name.lower())
         or (
             finding.role_arn
             and normalized_role_name
@@ -267,9 +262,7 @@ def build_scan_result(
 ) -> ScanResult:
     """Build the final correlated scan result."""
     if errors is None:
-        if unpinned_actions and all(
-            isinstance(item, str) for item in unpinned_actions
-        ):
+        if unpinned_actions and all(isinstance(item, str) for item in unpinned_actions):
             errors = list(unpinned_actions)
             unpinned_actions = []
         else:
@@ -320,23 +313,13 @@ def build_scan_result(
         credential_sources,
         oidc_trust_findings,
         deploy_job_patterns=(config.deploy_job_patterns if config else ()),
-        non_deploy_job_patterns=(
-            config.non_deploy_job_patterns if config else ()
-        ),
+        non_deploy_job_patterns=(config.non_deploy_job_patterns if config else ()),
     )
     if reusable_scan is not None:
-        script_injection_findings.extend(
-            reusable_scan.script_injection_findings
-        )
-        artifact_poisoning_findings.extend(
-            reusable_scan.artifact_poisoning_findings
-        )
-        ai_agent_injection_findings.extend(
-            reusable_scan.ai_agent_injection_findings
-        )
-        compromised_action_findings.extend(
-            reusable_scan.compromised_action_findings
-        )
+        script_injection_findings.extend(reusable_scan.script_injection_findings)
+        artifact_poisoning_findings.extend(reusable_scan.artifact_poisoning_findings)
+        ai_agent_injection_findings.extend(reusable_scan.ai_agent_injection_findings)
+        compromised_action_findings.extend(reusable_scan.compromised_action_findings)
         environment_findings.extend(reusable_scan.environment_findings)
     errors.extend(
         oidc_errors
@@ -483,9 +466,7 @@ def _aws_verified_findings(
     policy_findings: list[PolicyFinding],
 ) -> list[PolicyFinding]:
     return [
-        finding
-        for finding in policy_findings
-        if finding.source_type == "aws_verified"
+        finding for finding in policy_findings if finding.source_type == "aws_verified"
     ]
 
 
@@ -497,9 +478,9 @@ def _finding_matches_role_name(
         return True
     if not finding.role_arn:
         return False
-    return normalized_role_name == finding.role_arn.strip("/").rsplit("/", 1)[
-        -1
-    ].lower()
+    return (
+        normalized_role_name == finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
+    )
 
 
 def _policy_match(
@@ -547,6 +528,11 @@ def _aggregate_policy_findings(
             if finding.policy_name is not None
         )
     )
+    unresolved_policy_attachments = _unresolved_policy_attachments(findings)
+    policy_coverage_complete = all(
+        finding.metadata.get("policy_coverage_complete") is not False
+        for finding in findings
+    ) and not unresolved_policy_attachments
     aggregate = PolicyFinding(
         source_file=source_files[0],
         source_type=findings[0].source_type,
@@ -559,7 +545,8 @@ def _aggregate_policy_findings(
             (finding.overall_risk for finding in findings),
             default=RiskLevel.INFO,
         ),
-        role_name=role_name or next(
+        role_name=role_name
+        or next(
             (finding.role_name for finding in findings if finding.role_name),
             None,
         ),
@@ -568,14 +555,14 @@ def _aggregate_policy_findings(
             "aggregated_policy_count": len(findings),
             "aggregated_source_files": source_files,
             "aggregated_policy_names": policy_names,
+            "policy_coverage_complete": policy_coverage_complete,
+            "unresolved_policy_attachments": unresolved_policy_attachments,
         },
     )
 
     detected_paths = detect_privesc_paths(aggregate, aggregate.source_file)
     path_by_id = {
-        path.path_id: path
-        for finding in findings
-        for path in finding.privesc_paths
+        path.path_id: path for finding in findings for path in finding.privesc_paths
     }
     path_by_id.update({path.path_id: path for path in detected_paths})
     aggregate.privesc_paths = list(path_by_id.values())
@@ -588,6 +575,17 @@ def _aggregate_policy_findings(
         + [path.severity for path in aggregate.privesc_paths]
     )
     return aggregate
+
+
+def _unresolved_policy_attachments(
+    findings: list[PolicyFinding],
+) -> list[str]:
+    attachments: list[str] = []
+    for finding in findings:
+        values = finding.metadata.get("unresolved_policy_attachments", [])
+        if isinstance(values, list):
+            attachments.extend(str(value) for value in values)
+    return list(dict.fromkeys(attachments))
 
 
 def _file_contains(filepath: str, needle: str) -> bool:
