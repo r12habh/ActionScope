@@ -24,7 +24,7 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
                         gap_type="unresolved_managed_policy_attachment",
                         description=(
                             "The workflow role has "
-                            f"{attachment_count} attached managed policy source(s) "
+                            f"{attachment_count} attached policy source(s) "
                             "whose contents are unavailable in the CloudFormation "
                             "template; the reported IAM risk is partial."
                         ),
@@ -82,6 +82,17 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
                     ),
                     workflow_file=source.workflow_file,
                     job_name=source.job_name,
+                )
+            )
+
+    for policy in result.policy_findings:
+        gap_type = policy.metadata.get("coverage_gap_type")
+        description = policy.metadata.get("coverage_gap_description")
+        if isinstance(gap_type, str) and isinstance(description, str):
+            gaps.append(
+                CoverageGap(
+                    gap_type=gap_type,
+                    description=description,
                 )
             )
 

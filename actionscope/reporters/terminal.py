@@ -319,7 +319,7 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         c.print("[bold yellow]Coverage: PARTIAL — IAM evidence is incomplete[/]")
         if isinstance(attachments, list) and attachments:
             c.print(
-                "[dim]ℹ️  The permissions shown above exclude these managed "
+                "[dim]ℹ️  The permissions shown above exclude these "
                 "policy attachments:[/]"
             )
             for attachment in attachments:

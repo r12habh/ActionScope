@@ -127,6 +127,42 @@ def test_scan_oidc_trust_policies_returns_findings(tmp_path: Path) -> None:
     assert findings
 
 
+def test_cloudformation_oidc_provider_ref_is_resolved(tmp_path: Path) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "missing_sub")
+    ]
+
+
 def test_oidc_trust_finding_risk_level_is_critical_for_wildcard() -> None:
     findings = analyze_json_oidc_trust(_trust_policy("repo:acme-corp/*"), "iam.tf")
     wildcard = next(f for f in findings if f.issue_id == "wildcard_repo")

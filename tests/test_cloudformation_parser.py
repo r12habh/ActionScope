@@ -139,6 +139,35 @@ def test_sam_policies_are_extracted_for_generated_execution_role() -> None:
     assert findings[0].actions[0].resource == "<dynamic:Fn::GetAtt>"
 
 
+def test_sam_policy_templates_are_reported_as_partial_coverage() -> None:
+    template = {
+        "Resources": {
+            "WorkerFunction": {
+                "Type": "AWS::Serverless::Function",
+                "Properties": {
+                    "Handler": "app.handler",
+                    "Policies": [
+                        "AWSLambdaBasicExecutionRole",
+                        {"S3ReadPolicy": {"BucketName": {"Ref": "Bucket"}}},
+                    ],
+                },
+            }
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+    gaps = build_coverage_gaps(ScanResult(policy_findings=findings))
+
+    assert len(findings) == 1
+    assert findings[0].actions == []
+    assert findings[0].metadata["policy_coverage_complete"] is False
+    assert findings[0].metadata["unresolved_policy_attachments"] == [
+        "AWSLambdaBasicExecutionRole",
+        '{"S3ReadPolicy":{"BucketName":{"Ref":"Bucket"}}}',
+    ]
+    assert [gap.gap_type for gap in gaps] == ["unsupported_sam_policy"]
+
+
 def test_unknown_dynamic_resource_is_not_treated_as_wildcard() -> None:
     template = {
         "Resources": {
@@ -213,6 +242,55 @@ def test_role_aggregates_inline_and_attached_policy_documents() -> None:
     }
     assert findings[0].has_passrole
     assert findings[0].overall_risk is RiskLevel.CRITICAL
+
+
+def test_conditional_role_attachment_is_partial_not_granted_to_every_role() -> None:
+    template = {
+        "Resources": {
+            "RoleA": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {"RoleName": "role-a"},
+            },
+            "RoleB": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {"RoleName": "role-b"},
+            },
+            "ConditionalPolicy": {
+                "Type": "AWS::IAM::Policy",
+                "Properties": {
+                    "PolicyName": "conditional-admin",
+                    "Roles": {
+                        "Fn::If": [
+                            "AttachToA",
+                            {"Ref": "RoleA"},
+                            {"Ref": "RoleB"},
+                        ]
+                    },
+                    "PolicyDocument": {
+                        "Statement": {
+                            "Effect": "Allow",
+                            "Action": "iam:PassRole",
+                            "Resource": "*",
+                        }
+                    },
+                },
+            },
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+
+    assert {finding.role_name for finding in findings} == {"role-a", "role-b"}
+    assert all(finding.actions == [] for finding in findings)
+    assert all(
+        finding.metadata["policy_coverage_complete"] is False
+        for finding in findings
+    )
+    assert all(
+        "conditional-admin has a conditional role target"
+        in finding.metadata["unresolved_policy_attachments"][0]
+        for finding in findings
+    )
 
 
 def test_role_side_managed_policy_ref_is_resolved() -> None:

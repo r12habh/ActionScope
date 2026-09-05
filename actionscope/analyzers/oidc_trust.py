@@ -7,6 +7,7 @@ insufficient branch/environment scoping.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sys
@@ -239,9 +240,19 @@ def scan_oidc_trust_policies(
             template
         ):
             policy = properties.get("AssumeRolePolicyDocument")
-            if isinstance(policy, dict) and is_github_oidc_trust(policy):
+            if not isinstance(policy, dict):
+                continue
+            resolved_policy = _resolve_cloudformation_oidc_providers(
+                policy,
+                template,
+            )
+            if is_github_oidc_trust(resolved_policy):
                 findings.extend(
-                    analyze_json_oidc_trust(policy, template_file, role_name)
+                    analyze_json_oidc_trust(
+                        resolved_policy,
+                        template_file,
+                        role_name,
+                    )
                 )
 
     for json_file in sorted(repo.rglob("*.json")):
@@ -257,6 +268,70 @@ def scan_oidc_trust_policies(
             findings.extend(analyze_json_oidc_trust(data, str(json_file.resolve())))
 
     return findings, errors
+
+
+def _resolve_cloudformation_oidc_providers(policy: dict, template: dict) -> dict:
+    """Resolve direct references to local GitHub OIDC provider resources."""
+    resources = template.get("Resources") or {}
+    if not isinstance(resources, dict):
+        return policy
+
+    github_provider_ids = {
+        str(logical_id)
+        for logical_id, resource in resources.items()
+        if _is_cloudformation_github_provider(resource)
+    }
+    if not github_provider_ids:
+        return policy
+
+    resolved = copy.deepcopy(policy)
+    for statement in _statements(resolved):
+        principal = statement.get("Principal") or statement.get("principal")
+        if not isinstance(principal, dict):
+            continue
+        federated_key = "Federated" if "Federated" in principal else "federated"
+        if federated_key not in principal:
+            continue
+        principal[federated_key] = _resolve_provider_value(
+            principal[federated_key],
+            github_provider_ids,
+        )
+    return resolved
+
+
+def _is_cloudformation_github_provider(resource: Any) -> bool:
+    if not isinstance(resource, dict):
+        return False
+    if resource.get("Type") != "AWS::IAM::OIDCProvider":
+        return False
+    properties = resource.get("Properties") or {}
+    return isinstance(properties, dict) and GITHUB_OIDC_ISSUER in _compact(
+        properties.get("Url")
+    )
+
+
+def _resolve_provider_value(value: Any, provider_ids: set[str]) -> Any:
+    """Replace direct Ref/GetAtt values for known GitHub providers."""
+    if isinstance(value, list):
+        return [_resolve_provider_value(item, provider_ids) for item in value]
+    provider_id = _direct_cloudformation_reference(value)
+    if provider_id in provider_ids:
+        return GITHUB_OIDC_ISSUER
+    return value
+
+
+def _direct_cloudformation_reference(value: Any) -> str | None:
+    if not isinstance(value, dict) or len(value) != 1:
+        return None
+    ref = value.get("Ref")
+    if isinstance(ref, str):
+        return ref
+    get_att = value.get("Fn::GetAtt")
+    if isinstance(get_att, list) and get_att and isinstance(get_att[0], str):
+        return get_att[0]
+    if isinstance(get_att, str):
+        return get_att.split(".", 1)[0]
+    return None
 
 
 def _finding(

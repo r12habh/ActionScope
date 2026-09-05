@@ -224,7 +224,11 @@ def extract_iam_policies_from_cloudformation(
 
     standalone_policy_findings: list[PolicyFinding] = []
     for policy_id, (resource_type, properties, document) in policy_resources.items():
-        resolved_role_ids, unresolved_targets = _resolve_role_targets(
+        (
+            resolved_role_ids,
+            unresolved_targets,
+            conditional_role_ids,
+        ) = _resolve_role_targets(
             properties.get("Roles"),
             role_names,
         )
@@ -233,13 +237,24 @@ def extract_iam_policies_from_cloudformation(
             or _static_string(properties.get("ManagedPolicyName"))
             or policy_id
         )
+        if conditional_role_ids:
+            attachment = (
+                f"{policy_name} has a conditional role target: "
+                f"{_attachment_display(properties.get('Roles'))}"
+            )
+            for role_id in conditional_role_ids:
+                role_unresolved_attachments[role_id].append(attachment)
         resolved_role_ids.update(attached_policy_roles[policy_id])
         for role_id in resolved_role_ids:
             role_documents[role_id].append(document)
             role_policy_ids[role_id].append(policy_id)
             role_policy_names[role_id].append(policy_name)
 
-        if not resolved_role_ids and not unresolved_targets:
+        if (
+            not resolved_role_ids
+            and not unresolved_targets
+            and not conditional_role_ids
+        ):
             unresolved_targets = [(None, None)]
         for role_name, role_arn in unresolved_targets:
             standalone_policy_findings.append(
@@ -308,18 +323,35 @@ def extract_iam_policies_from_cloudformation(
             # SAM ignores Policies when an explicit execution Role is supplied.
             if properties.get("Role") is not None:
                 continue
-            documents = _collect_policy_documents(properties.get("Policies"))
-            if not documents:
+            policies = properties.get("Policies")
+            documents = _collect_policy_documents(policies)
+            unresolved_policies = _unsupported_sam_policy_entries(policies)
+            if not documents and not unresolved_policies:
                 continue
+            metadata: dict[str, object] = {
+                "cloudformation_logical_id": str(logical_id),
+                "cloudformation_resource_type": resource_type,
+            }
+            if unresolved_policies:
+                metadata.update(
+                    {
+                        "policy_coverage_complete": False,
+                        "unresolved_policy_attachments": unresolved_policies,
+                        "coverage_gap_type": "unsupported_sam_policy",
+                        "coverage_gap_description": (
+                            f"SAM resource {logical_id} uses "
+                            f"{len(unresolved_policies)} "
+                            "managed policy or policy template whose permissions "
+                            "cannot be resolved statically."
+                        ),
+                    }
+                )
             findings.append(
                 _finding_from_documents(
                     documents,
                     source_file,
                     policy_name=f"{logical_id}.Policies",
-                    metadata={
-                        "cloudformation_logical_id": str(logical_id),
-                        "cloudformation_resource_type": resource_type,
-                    },
+                    metadata=metadata,
                 )
             )
 
@@ -512,6 +544,21 @@ def _collect_policy_documents(value: Any) -> list[dict]:
     ]
 
 
+def _unsupported_sam_policy_entries(value: Any) -> list[str]:
+    """Return SAM managed-policy and policy-template entries we cannot inspect."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [
+            entry
+            for item in value
+            for entry in _unsupported_sam_policy_entries(item)
+        ]
+    if isinstance(value, dict) and "Statement" in value:
+        return []
+    return [_attachment_display(value)]
+
+
 def _role_targets(
     value: Any,
     role_names: dict[str, str | None],
@@ -535,16 +582,26 @@ def _role_targets(
 def _resolve_role_targets(
     value: Any,
     role_names: dict[str, str | None],
-) -> tuple[set[str], list[tuple[str | None, str | None]]]:
+) -> tuple[
+    set[str],
+    list[tuple[str | None, str | None]],
+    set[str],
+]:
     """Split policy role targets into known template roles and external roles."""
     values = value if isinstance(value, list) else [value]
     resolved: set[str] = set()
     unresolved: list[tuple[str | None, str | None]] = []
+    conditional: set[str] = set()
 
     for item in values:
+        direct_reference = _direct_logical_resource_reference(item)
+        if direct_reference in role_names:
+            resolved.add(direct_reference)
+            continue
+
         referenced_roles = _logical_resource_references(item) & role_names.keys()
         if referenced_roles:
-            resolved.update(referenced_roles)
+            conditional.update(referenced_roles)
             continue
 
         static = _static_string(item)
@@ -561,7 +618,22 @@ def _resolve_role_targets(
         role_arn = _literal_role_arn(static)
         unresolved.append((_role_name_from_arn(role_arn) or static, role_arn))
 
-    return resolved, unresolved
+    return resolved, unresolved, conditional
+
+
+def _direct_logical_resource_reference(value: Any) -> str | None:
+    """Return a logical ID only for a direct Ref or GetAtt expression."""
+    if not isinstance(value, dict) or len(value) != 1:
+        return None
+    ref = value.get("Ref")
+    if isinstance(ref, str):
+        return ref
+    get_att = value.get("Fn::GetAtt")
+    if isinstance(get_att, list) and get_att and isinstance(get_att[0], str):
+        return get_att[0]
+    if isinstance(get_att, str):
+        return get_att.split(".", 1)[0]
+    return None
 
 
 def _logical_resource_references(value: Any) -> set[str]:
