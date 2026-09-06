@@ -282,6 +282,21 @@ def scan_oidc_trust_policies(
                         role_name,
                     )
                 )
+            for statement in _conditional_github_oidc_statements(resolved_policy):
+                findings.append(
+                    _finding(
+                        template_file,
+                        role_name,
+                        "unresolved_trust_statement",
+                        "Conditional GitHub OIDC trust statement cannot be "
+                        "resolved statically",
+                        RiskLevel.HIGH,
+                        _compact(statement),
+                        "Resolve the Fn::If condition or express each active "
+                        "GitHub OIDC trust statement with literal repository, "
+                        "branch or environment, and audience constraints.",
+                    )
+                )
 
     for json_file in sorted(repo.rglob("*.json")):
         try:
@@ -313,18 +328,59 @@ def _resolve_cloudformation_oidc_providers(policy: dict, template: dict) -> dict
         return policy
 
     resolved = copy.deepcopy(policy)
-    for statement in _statements(resolved):
-        principal = statement.get("Principal") or statement.get("principal")
-        if not isinstance(principal, dict):
-            continue
-        federated_key = "Federated" if "Federated" in principal else "federated"
-        if federated_key not in principal:
-            continue
+    return _resolve_provider_principals(resolved, github_provider_ids)
+
+
+def _resolve_provider_principals(value: Any, provider_ids: set[str]) -> Any:
+    """Resolve GitHub provider references, including conditional branches."""
+    if isinstance(value, list):
+        return [_resolve_provider_principals(item, provider_ids) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    resolved = {
+        key: _resolve_provider_principals(item, provider_ids)
+        for key, item in value.items()
+    }
+    principal = resolved.get("Principal") or resolved.get("principal")
+    if not isinstance(principal, dict):
+        return resolved
+    federated_key = "Federated" if "Federated" in principal else "federated"
+    if federated_key in principal:
         principal[federated_key] = _resolve_provider_value(
             principal[federated_key],
-            github_provider_ids,
+            provider_ids,
         )
     return resolved
+
+
+def _conditional_github_oidc_statements(value: Any) -> list[dict]:
+    """Return GitHub OIDC trust statements nested under Fn::If branches."""
+    findings: list[dict] = []
+
+    def visit(item: Any, conditional: bool = False) -> None:
+        if isinstance(item, list):
+            for nested in item:
+                visit(nested, conditional)
+            return
+        if not isinstance(item, dict):
+            return
+
+        if (
+            conditional
+            and _principal_mentions_github(item)
+            and _allows_web_identity_assumption(item)
+        ):
+            findings.append(item)
+
+        for key, nested in item.items():
+            visit(nested, conditional or key == "Fn::If")
+
+    visit(value)
+    unique: dict[str, dict] = {}
+    for statement in findings:
+        unique.setdefault(_compact(statement), statement)
+    return list(unique.values())
 
 
 def _is_cloudformation_github_provider(resource: Any) -> bool:
@@ -451,7 +507,7 @@ def _condition_claim_values(
 def _condition_value_parts(value: Any) -> tuple[list[str], list[Any]]:
     if isinstance(value, str):
         if "${" in value:
-            return [], [value]
+            return [value], [value]
         return [value], []
     if isinstance(value, list):
         resolved: list[str] = []
@@ -463,7 +519,9 @@ def _condition_value_parts(value: Any) -> tuple[list[str], list[Any]]:
         return resolved, unresolved
     if isinstance(value, dict) and len(value) == 1:
         substitution = value.get("Fn::Sub")
-        if isinstance(substitution, str) and "${" not in substitution:
+        if isinstance(substitution, str):
+            if "${" in substitution:
+                return [substitution], [value]
             return [substitution], []
     return [], [value]
 

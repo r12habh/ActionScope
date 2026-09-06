@@ -168,6 +168,42 @@ def test_sam_policy_templates_are_reported_as_partial_coverage() -> None:
     assert [gap.gap_type for gap in gaps] == ["unsupported_sam_policy"]
 
 
+def test_conditional_sam_policy_is_not_flattened_into_active_permissions() -> None:
+    template = {
+        "Resources": {
+            "WorkerFunction": {
+                "Type": "AWS::Serverless::Function",
+                "Properties": {
+                    "Handler": "app.handler",
+                    "Policies": [
+                        {
+                            "Fn::If": [
+                                "UseAdminPolicy",
+                                {
+                                    "Statement": {
+                                        "Effect": "Allow",
+                                        "Action": "*",
+                                        "Resource": "*",
+                                    }
+                                },
+                                {"Ref": "AWS::NoValue"},
+                            ]
+                        }
+                    ],
+                },
+            }
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+
+    assert len(findings) == 1
+    assert findings[0].actions == []
+    assert findings[0].overall_risk is RiskLevel.INFO
+    assert findings[0].metadata["policy_coverage_complete"] is False
+    assert "Fn::If" in findings[0].metadata["unresolved_policy_attachments"][0]
+
+
 def test_unknown_dynamic_resource_is_not_treated_as_wildcard() -> None:
     template = {
         "Resources": {

@@ -129,6 +129,15 @@ def extract_actions_from_policy(
             )
             continue
 
+        if "NotAction" in statement and "*" in _string_list(
+            statement.get("NotAction")
+        ):
+            continue
+        if "NotResource" in statement and "*" in _string_list(
+            statement.get("NotResource")
+        ):
+            continue
+
         statement_actions = (
             _string_list(statement.get("Action"))
             if "Action" in statement

@@ -348,6 +348,14 @@ def build_scan_result(
     )
 
     bindings = build_bindings(credential_sources, policy_findings, repo_path)
+    if config is not None:
+        from actionscope.config import add_custom_privesc_paths, recompute_policy_risk
+
+        for binding in bindings:
+            if binding.policy_finding is None:
+                continue
+            add_custom_privesc_paths(binding.policy_finding, config)
+            recompute_policy_risk(binding.policy_finding)
     exposure_paths = build_exposure_paths(
         bindings,
         normalized_unpinned,

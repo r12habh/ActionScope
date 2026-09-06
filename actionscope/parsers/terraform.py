@@ -296,6 +296,23 @@ def _finding_from_statements(
         if effect is not None and _clean_string(effect).lower() != "allow":
             continue
 
+        not_actions = _statement_value(
+            statement,
+            "not_actions",
+            "NotAction",
+            "not_action",
+        )
+        if _has_not_actions(statement) and "*" in _string_list(not_actions):
+            continue
+        not_resources = _statement_value(
+            statement,
+            "not_resources",
+            "NotResource",
+            "not_resource",
+        )
+        if _has_not_resources(statement) and "*" in _string_list(not_resources):
+            continue
+
         raw_actions = (
             "*"
             if _has_not_actions(statement)

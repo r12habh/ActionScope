@@ -212,6 +212,39 @@ def test_not_resources_statement_is_classified_conservatively() -> None:
     assert findings[0].has_star_resource
 
 
+def test_not_action_or_not_resource_wildcard_allow_statement_is_noop() -> None:
+    tf_data = {
+        "data": [
+            {
+                "aws_iam_policy_document": {
+                    "noop": {
+                        "statement": [
+                            {
+                                "effect": "Allow",
+                                "not_actions": ["*"],
+                                "resources": ["*"],
+                            },
+                            {
+                                "effect": "Allow",
+                                "actions": ["iam:PassRole"],
+                                "not_resources": ["*"],
+                            },
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "noop.tf")
+
+    assert findings[0].actions == []
+    assert findings[0].overall_risk is RiskLevel.INFO
+    assert findings[0].has_star_action is False
+    assert findings[0].has_star_resource is False
+    assert findings[0].has_privilege_escalation is False
+
+
 def test_unresolvable_policy_reference_returns_info_finding() -> None:
     tf_data = {
         "resource": [

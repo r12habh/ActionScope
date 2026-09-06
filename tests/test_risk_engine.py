@@ -11,6 +11,7 @@ from actionscope.analyzers.risk_engine import (
     finalize_scan_metadata,
     match_role_to_policies,
 )
+from actionscope.config import ActionScopeConfig, CustomPrivescPath
 from actionscope.models import (
     AwsCredentialSource,
     GitHubTokenPermission,
@@ -211,6 +212,65 @@ def test_build_bindings_preserves_partial_policy_coverage_when_aggregating() -> 
     assert binding.policy_finding.metadata["unresolved_policy_attachments"] == [
         "arn:aws:iam::aws:policy/AdministratorAccess"
     ]
+
+
+def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> None:
+    read_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/read.tf",
+        role_name="github-deploy-role",
+    )
+    read_policy.actions = [
+        IamAction(
+            action="s3:GetObject",
+            access_level="Read",
+            risk_level=RiskLevel.LOW,
+            description="Read objects",
+            resource="*",
+        )
+    ]
+    decrypt_policy = policy_finding(
+        RiskLevel.MEDIUM,
+        source_file="/repo/terraform/decrypt.tf",
+        role_name="github-deploy-role",
+    )
+    decrypt_policy.actions = [
+        IamAction(
+            action="kms:Decrypt",
+            access_level="Permissions management",
+            risk_level=RiskLevel.MEDIUM,
+            description="Decrypt data",
+            resource="*",
+        )
+    ]
+    config = ActionScopeConfig(
+        source_path=".actionscope.yml",
+        custom_privesc_paths=(
+            CustomPrivescPath(
+                path_id="decrypt_s3",
+                name="Decrypt S3 data",
+                required_actions=("s3:getobject", "kms:decrypt"),
+                description="Can read and decrypt protected objects.",
+                severity=RiskLevel.CRITICAL,
+                example_attack="Read encrypted objects and decrypt them.",
+            ),
+        ),
+    )
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [read_policy, decrypt_policy],
+        [],
+        config=config,
+    )
+
+    aggregate = result.bindings[0].policy_finding
+    assert aggregate is not None
+    assert [path.path_id for path in aggregate.privesc_paths] == ["decrypt_s3"]
+    assert aggregate.overall_risk is RiskLevel.CRITICAL
+    assert result.overall_risk is RiskLevel.CRITICAL
 
 
 def test_build_bindings_creates_dynamic_reference_for_secret_refs() -> None:
