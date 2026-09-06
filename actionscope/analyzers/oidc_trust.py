@@ -264,7 +264,7 @@ def scan_oidc_trust_policies(
         template = parse_cloudformation_file(template_file)
         if template is None:
             continue
-        for _logical_id, role_name, properties in iter_cloudformation_iam_roles(
+        for logical_id, role_name, properties in iter_cloudformation_iam_roles(
             template
         ):
             policy = properties.get("AssumeRolePolicyDocument")
@@ -274,8 +274,36 @@ def scan_oidc_trust_policies(
                 policy,
                 template,
             )
-            direct_statements = extract_github_oidc_statements(resolved_policy)
-            for statement in direct_statements:
+            role_condition = _cloudformation_resource_condition(
+                template,
+                logical_id,
+            )
+            possible_statements = extract_github_oidc_statements(resolved_policy)
+            conditional_statements = _conditional_github_oidc_statements(
+                resolved_policy
+            )
+            if role_condition is not None and (
+                possible_statements or conditional_statements
+            ):
+                findings.append(
+                    _finding(
+                        template_file,
+                        role_name,
+                        "unresolved_trust_statement",
+                        "Conditional IAM role trust cannot be resolved statically",
+                        RiskLevel.HIGH,
+                        _compact(
+                            {
+                                "Condition": role_condition,
+                                "AssumeRolePolicyDocument": resolved_policy,
+                            }
+                        ),
+                        "Resolve the role's CloudFormation Condition before "
+                        "evaluating its GitHub OIDC trust scope.",
+                    )
+                )
+                continue
+            for statement in possible_statements:
                 if _contains_fn_if(statement):
                     continue
                 findings.extend(
@@ -285,7 +313,7 @@ def scan_oidc_trust_policies(
                         role_name,
                     )
                 )
-            for statement in _conditional_github_oidc_statements(resolved_policy):
+            for statement in conditional_statements:
                 findings.append(
                     _finding(
                         template_file,
@@ -372,7 +400,7 @@ def _conditional_github_oidc_statements(value: Any) -> list[dict]:
         if (
             (conditional or _contains_fn_if(item))
             and _principal_mentions_github(item)
-            and _allows_web_identity_assumption(item)
+            and _may_allow_web_identity_assumption(item)
         ):
             findings.append(item)
 
@@ -384,6 +412,52 @@ def _conditional_github_oidc_statements(value: Any) -> list[dict]:
     for statement in findings:
         unique.setdefault(_compact(statement), statement)
     return list(unique.values())
+
+
+def _may_allow_web_identity_assumption(statement: dict) -> bool:
+    if _allows_web_identity_assumption(statement):
+        return True
+    if not _contains_fn_if(statement):
+        return False
+
+    target = "sts:assumerolewithwebidentity"
+    action_values = _nested_string_values(
+        statement.get("Action", statement.get("action"))
+    )
+    effect = statement.get("Effect", statement.get("effect"))
+    effect_values = _nested_string_values(effect)
+    allows = effect is None or any(
+        value.strip().lower() == "allow" for value in effect_values
+    )
+    return allows and any(
+        fnmatchcase(target, value.strip().lower()) for value in action_values
+    )
+
+
+def _nested_string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [
+            item
+            for value_item in value
+            for item in _nested_string_values(value_item)
+        ]
+    if isinstance(value, dict):
+        return [
+            item
+            for value_item in value.values()
+            for item in _nested_string_values(value_item)
+        ]
+    return []
+
+
+def _cloudformation_resource_condition(template: dict, logical_id: str) -> Any:
+    resources = template.get("Resources") or {}
+    if not isinstance(resources, dict):
+        return None
+    resource = resources.get(logical_id)
+    return resource.get("Condition") if isinstance(resource, dict) else None
 
 
 def _contains_fn_if(value: Any) -> bool:

@@ -401,6 +401,47 @@ def test_conditional_policy_resource_is_partial_not_unconditionally_attached() -
     )
 
 
+def test_conditional_role_permissions_are_partial_not_unconditionally_active() -> None:
+    template = {
+        "Resources": {
+            "DeployRole": {
+                "Type": "AWS::IAM::Role",
+                "Condition": "CreateDeployRole",
+                "Properties": {
+                    "RoleName": "deploy-role",
+                    "Policies": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": {
+                                    "Effect": "Allow",
+                                    "Action": "iam:PassRole",
+                                    "Resource": "*",
+                                }
+                            }
+                        }
+                    ],
+                },
+            }
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+    binding = build_bindings([_credential("deploy-role")], findings, ".")[0]
+
+    assert binding.policy_finding is not None
+    assert binding.policy_finding.actions == []
+    assert binding.policy_finding.overall_risk is RiskLevel.INFO
+    assert binding.policy_finding.metadata["policy_coverage_complete"] is False
+    assert "CreateDeployRole" in binding.policy_finding.metadata[
+        "unresolved_policy_attachments"
+    ][0]
+    conditional = next(finding for finding in findings if finding.role_name is None)
+    assert [action.action for action in conditional.actions] == ["iam:PassRole"]
+    assert conditional.metadata["coverage_gap_type"] == (
+        "conditional_cloudformation_role_resource"
+    )
+
+
 def test_conditional_inline_role_policy_marks_coverage_partial() -> None:
     template = {
         "Resources": {

@@ -299,6 +299,71 @@ Resources:
     assert "token.actions.githubusercontent.com" in findings[0].evidence
 
 
+def test_conditional_cloudformation_trust_action_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: token.actions.githubusercontent.com
+            Action:
+              Fn::If:
+                - EnableGitHub
+                - sts:AssumeRoleWithWebIdentity
+                - sts:AssumeRole
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "unresolved_trust_statement")
+    ]
+
+
+def test_conditional_cloudformation_role_trust_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Condition: CreateDeployRole
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "unresolved_trust_statement")
+    ]
+    assert "CreateDeployRole" in findings[0].evidence
+    assert "missing_sub" not in {finding.issue_id for finding in findings}
+
+
 def test_literal_cloudformation_sub_condition_is_analyzed() -> None:
     policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
     policy["Statement"][0]["Condition"]["StringLike"] = {

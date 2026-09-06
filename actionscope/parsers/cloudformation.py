@@ -174,6 +174,21 @@ def extract_iam_policies_from_cloudformation(
         logical_id: _role_inline_policy_documents(properties)
         for logical_id, properties in roles.items()
     }
+    role_conditions = {
+        logical_id: (
+            resources.get(logical_id, {}).get("Condition")
+            if isinstance(resources.get(logical_id), dict)
+            else None
+        )
+        for logical_id in roles
+    }
+    conditional_role_documents = {
+        logical_id: list(role_documents[logical_id])
+        for logical_id, condition in role_conditions.items()
+        if condition is not None and role_documents[logical_id]
+    }
+    for logical_id in conditional_role_documents:
+        role_documents[logical_id] = []
     role_policy_ids = {
         logical_id: [str(logical_id)] if role_documents[logical_id] else []
         for logical_id in roles
@@ -191,6 +206,12 @@ def extract_iam_policies_from_cloudformation(
         if role_name_value is not None and role_names[logical_id] is None:
             role_unresolved_attachments[logical_id].append(
                 "unresolved RoleName: " + _attachment_display(role_name_value)
+            )
+        role_condition = role_conditions[logical_id]
+        if role_condition is not None:
+            role_unresolved_attachments[logical_id].append(
+                "role deployment is controlled by CloudFormation Condition "
+                + _attachment_display(role_condition)
             )
 
     policy_resources: dict[str, tuple[str, dict, dict, Any]] = {}
@@ -231,6 +252,29 @@ def extract_iam_policies_from_cloudformation(
                 )
 
     standalone_policy_findings: list[PolicyFinding] = []
+    for role_id, documents in conditional_role_documents.items():
+        role_condition = role_conditions[role_id]
+        standalone_policy_findings.append(
+            _finding_from_documents(
+                documents,
+                source_file,
+                policy_name=f"{role_id}.conditional-inline-policies",
+                metadata={
+                    "cloudformation_logical_id": role_id,
+                    "cloudformation_resource_type": "AWS::IAM::Role",
+                    "policy_coverage_complete": False,
+                    "unresolved_policy_attachments": [
+                        "role deployment is controlled by CloudFormation "
+                        f"Condition {_attachment_display(role_condition)}"
+                    ],
+                    "coverage_gap_type": "conditional_cloudformation_role_resource",
+                    "coverage_gap_description": (
+                        f"CloudFormation role {role_id} is conditional; its "
+                        "deployed permissions cannot be determined statically."
+                    ),
+                },
+            )
+        )
     for policy_id, (
         resource_type,
         properties,
@@ -295,6 +339,21 @@ def extract_iam_policies_from_cloudformation(
             )
             for role_id in roles:
                 role_unresolved_attachments[role_id].append(attachment)
+        conditional_resource_role_ids = {
+            role_id
+            for role_id in resolved_role_ids
+            if role_conditions.get(role_id) is not None
+        }
+        conditional_target_attachment: str | None = None
+        if conditional_resource_role_ids:
+            conditional_target_attachment = (
+                f"{policy_name} targets a conditionally deployed role"
+            )
+            for role_id in conditional_resource_role_ids:
+                role_unresolved_attachments[role_id].append(
+                    conditional_target_attachment
+                )
+            resolved_role_ids.difference_update(conditional_resource_role_ids)
         for role_id in resolved_role_ids:
             role_documents[role_id].append(document)
             role_policy_ids[role_id].append(policy_id)
@@ -324,6 +383,23 @@ def extract_iam_policies_from_cloudformation(
                         "coverage_gap_description": (
                             f"CloudFormation policy {policy_name} uses a dynamic "
                             "role target that cannot be correlated statically."
+                        ),
+                    }
+                )
+            if conditional_target_attachment is not None:
+                metadata.update(
+                    {
+                        "policy_coverage_complete": False,
+                        "unresolved_policy_attachments": [
+                            conditional_target_attachment
+                        ],
+                        "coverage_gap_type": (
+                            "conditional_cloudformation_role_resource"
+                        ),
+                        "coverage_gap_description": (
+                            f"CloudFormation policy {policy_name} targets a "
+                            "conditionally deployed role and cannot be "
+                            "correlated as active statically."
                         ),
                     }
                 )
@@ -365,6 +441,17 @@ def extract_iam_policies_from_cloudformation(
                         f"CloudFormation role {logical_id} has a dynamic RoleName "
                         "that cannot be correlated to workflow evidence "
                         "statically."
+                    ),
+                }
+            )
+        role_condition = role_conditions[logical_id]
+        if role_condition is not None:
+            metadata.update(
+                {
+                    "coverage_gap_type": "conditional_cloudformation_role_resource",
+                    "coverage_gap_description": (
+                        f"CloudFormation role {logical_id} is conditional; its "
+                        "deployed permissions cannot be determined statically."
                     ),
                 }
             )
