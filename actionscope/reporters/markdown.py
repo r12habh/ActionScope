@@ -684,6 +684,12 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     """
     Generate a Markdown report suitable for GitHub PR comments.
     """
+    coverage_gaps = list(result.coverage_gaps)
+    if not coverage_gaps:
+        from actionscope.coverage import build_coverage_gaps
+
+        coverage_gaps = build_coverage_gaps(result)
+    coverage_status = "partial" if coverage_gaps else result.coverage_status
     cred_count = len(result.credential_sources)
     overall = RISK_DISPLAY.get(result.overall_risk, result.overall_risk.name)
     gate_status = _gate_status(result.gate)
@@ -692,11 +698,11 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     header = (
         "## 🔍 ActionScope — Blast Radius Report\n\n"
         f"**{risk_label}:** {overall} | "
-        f"**Coverage:** {result.coverage_status.upper()} | "
+        f"**Coverage:** {coverage_status.upper()} | "
         f"**Gate:** {gate_status}\n\n"
         f"**Workflows:** {result.workflow_count} | "
         f"**Credential Sources:** {cred_count} | "
-        f"**Unresolved Coverage Items:** {len(result.coverage_gaps)}\n\n"
+        f"**Unresolved Coverage Items:** {len(coverage_gaps)}\n\n"
         "---\n\n"
     )
 

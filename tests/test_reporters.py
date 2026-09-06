@@ -205,6 +205,8 @@ def test_json_and_markdown_mark_unresolved_attachment_as_partial() -> None:
     assert data["findings"][0]["risk_status"] == "partial"
     assert data["findings"][0]["unresolved_policy_attachments"] == [attachment]
     assert data["summary"]["policies_partial"] == 1
+    assert "**Coverage:** PARTIAL" in markdown
+    assert "**Unresolved Coverage Items:** 1" in markdown
     for output in (markdown, rendered):
         assert "Coverage" in output
         assert "PARTIAL" in output
