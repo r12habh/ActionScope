@@ -274,10 +274,13 @@ def scan_oidc_trust_policies(
                 policy,
                 template,
             )
-            if is_github_oidc_trust(resolved_policy):
+            direct_statements = extract_github_oidc_statements(resolved_policy)
+            for statement in direct_statements:
+                if _contains_fn_if(statement):
+                    continue
                 findings.extend(
-                    analyze_json_oidc_trust(
-                        resolved_policy,
+                    analyze_oidc_trust_conditions(
+                        statement,
                         template_file,
                         role_name,
                     )
@@ -367,7 +370,7 @@ def _conditional_github_oidc_statements(value: Any) -> list[dict]:
             return
 
         if (
-            conditional
+            (conditional or _contains_fn_if(item))
             and _principal_mentions_github(item)
             and _allows_web_identity_assumption(item)
         ):
@@ -381,6 +384,14 @@ def _conditional_github_oidc_statements(value: Any) -> list[dict]:
     for statement in findings:
         unique.setdefault(_compact(statement), statement)
     return list(unique.values())
+
+
+def _contains_fn_if(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_contains_fn_if(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    return "Fn::If" in value or any(_contains_fn_if(item) for item in value.values())
 
 
 def _is_cloudformation_github_provider(resource: Any) -> bool:
@@ -401,6 +412,11 @@ def _resolve_provider_value(value: Any, provider_ids: set[str]) -> Any:
     provider_id = _direct_cloudformation_reference(value)
     if provider_id in provider_ids:
         return GITHUB_OIDC_ISSUER
+    if isinstance(value, dict):
+        return {
+            key: _resolve_provider_value(item, provider_ids)
+            for key, item in value.items()
+        }
     return value
 
 

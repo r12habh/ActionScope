@@ -273,6 +273,33 @@ def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> No
     assert result.overall_risk is RiskLevel.CRITICAL
 
 
+def test_ambiguous_content_fallback_does_not_create_effective_policy(
+    tmp_path: Path,
+) -> None:
+    policy_file = tmp_path / "policies.tf"
+    policy_file.write_text(
+        '# mentions role "github-deploy-role" but contains several policies\n',
+        encoding="utf-8",
+    )
+    low = policy_finding(RiskLevel.LOW, source_file=str(policy_file))
+    critical = policy_finding(RiskLevel.CRITICAL, source_file=str(policy_file))
+
+    result = build_scan_result(
+        str(tmp_path),
+        [credential_source()],
+        [],
+        [low, critical],
+        [],
+    )
+
+    binding = result.bindings[0]
+    assert binding.policy_finding is None
+    assert binding.policy_source == "not_found"
+    assert binding.match_confidence == "none"
+    assert "multiple policies" in binding.match_reason
+    assert result.overall_risk is RiskLevel.INFO
+
+
 def test_build_bindings_creates_dynamic_reference_for_secret_refs() -> None:
     bindings = build_bindings(
         [credential_source(role_arn="${{ secrets.ROLE_ARN }}")],

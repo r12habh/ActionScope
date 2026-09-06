@@ -257,6 +257,48 @@ Resources:
     assert findings[0].risk_level is RiskLevel.HIGH
 
 
+def test_conditional_cloudformation_principal_reference_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::If:
+                  - EnableGitHub
+                  - Ref: GitHubProvider
+                  - Ref: OtherProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "unresolved_trust_statement")
+    ]
+    assert "GitHubProvider" not in findings[0].evidence
+    assert "token.actions.githubusercontent.com" in findings[0].evidence
+
+
 def test_literal_cloudformation_sub_condition_is_analyzed() -> None:
     policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
     policy["Statement"][0]["Condition"]["StringLike"] = {

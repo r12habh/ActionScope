@@ -143,6 +143,12 @@ def _match_role_to_policy_with_confidence(
         if normalized_role_name in finding.source_file.lower()
     ]
     if path_matches:
+        if len(path_matches) > 1:
+            return _PolicyMatch(
+                None,
+                "none",
+                "multiple policies match the role name by path only",
+            )
         return _policy_match(
             path_matches,
             credential_source,
@@ -156,6 +162,12 @@ def _match_role_to_policy_with_confidence(
         if _file_contains(finding.source_file, role_name)
     ]
     if content_matches:
+        if len(content_matches) > 1:
+            return _PolicyMatch(
+                None,
+                "none",
+                "multiple policies match the role name by file content only",
+            )
         return _policy_match(
             content_matches,
             credential_source,
