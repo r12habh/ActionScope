@@ -662,11 +662,8 @@ def _resolve_policy_reference(policy_reference: str | None) -> str | None:
     if reference is None:
         return None
 
-    if reference.startswith("aws_iam_policy."):
-        parts = reference.split(".")
-        if len(parts) >= 2:
-            return ".".join(parts[:2])
-    return None
+    policy = parse_resource_reference(reference, "aws_iam_policy")
+    return policy.declaration_address if policy else None
 
 
 def _role_arn_if_literal(role_reference: str | None) -> str | None:

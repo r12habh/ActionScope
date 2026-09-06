@@ -339,6 +339,54 @@ def test_managed_policy_attached_to_multiple_roles_is_preserved_per_role() -> No
     }
 
 
+def test_indexed_managed_policy_reference_retains_role_relationship() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "deploy": {
+                        "name": "github-deploy-role",
+                        "assume_role_policy": "{}",
+                    }
+                }
+            },
+            {
+                "aws_iam_policy": {
+                    "deploy": {
+                        "name": "DeployPolicy",
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "iam:PassRole",
+                                    "Resource": "*",
+                                }
+                            ]
+                        },
+                    }
+                }
+            },
+            {
+                "aws_iam_role_policy_attachment": {
+                    "deploy": {
+                        "role": "${aws_iam_role.deploy[each.key].name}",
+                        "policy_arn": "${aws_iam_policy.deploy[each.key].arn}",
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "indexed.tf")
+
+    assert len(findings) == 1
+    assert findings[0].role_name == "github-deploy-role"
+    assert findings[0].has_passrole is True
+    assert findings[0].metadata["terraform_role_reference"] == (
+        "${aws_iam_role.deploy[each.key].name}"
+    )
+
+
 def test_indexed_role_references_resolve_to_the_role_declaration() -> None:
     tf_data = {
         "resource": [
