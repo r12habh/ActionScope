@@ -357,11 +357,18 @@ Resources:
     findings, errors = scan_oidc_trust_policies(str(tmp_path))
 
     assert errors == []
-    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
-        ("deploy-role", "unresolved_trust_statement")
-    ]
-    assert "CreateDeployRole" in findings[0].evidence
-    assert "missing_sub" not in {finding.issue_id for finding in findings}
+    issue_ids = {finding.issue_id for finding in findings}
+    assert issue_ids == {
+        "missing_aud",
+        "missing_sub",
+        "unresolved_trust_statement",
+    }
+    unresolved = next(
+        finding
+        for finding in findings
+        if finding.issue_id == "unresolved_trust_statement"
+    )
+    assert "CreateDeployRole" in unresolved.evidence
 
 
 def test_literal_cloudformation_sub_condition_is_analyzed() -> None:

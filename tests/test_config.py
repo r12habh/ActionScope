@@ -441,6 +441,10 @@ def test_as001_override_recomputes_aggregated_binding_risk() -> None:
             role_name="deploy-role",
             actions=[_action(action, RiskLevel.CRITICAL)],
             overall_risk=RiskLevel.CRITICAL,
+            metadata={
+                "terraform_address": f"aws_iam_role_policy.policy_{index}",
+                "terraform_role_reference": "aws_iam_role.deploy.name",
+            },
         )
         for index, action in enumerate(
             ("s3:DeleteBucket", "ec2:TerminateInstances"),

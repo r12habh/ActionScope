@@ -302,7 +302,6 @@ def scan_oidc_trust_policies(
                         "evaluating its GitHub OIDC trust scope.",
                     )
                 )
-                continue
             for statement in possible_statements:
                 if _contains_fn_if(statement):
                     continue

@@ -944,6 +944,35 @@ def test_json_cloudformation_template_is_parsed(tmp_path: Path) -> None:
     assert [action.action for action in findings[0].actions] == ["s3:PutObject"]
 
 
+def test_sam_policy_mapping_with_non_string_key_does_not_crash() -> None:
+    findings = extract_iam_policies_from_cloudformation(
+        {
+            "Resources": {
+                "Worker": {
+                    "Type": "AWS::Serverless::Function",
+                    "Properties": {
+                        "Policies": {
+                            1: {
+                                "Statement": [
+                                    {
+                                        "Effect": "Allow",
+                                        "Action": "s3:GetObject",
+                                        "Resource": "*",
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                }
+            }
+        },
+        "template.yml",
+    )
+
+    assert len(findings) == 1
+    assert [action.action for action in findings[0].actions] == ["s3:GetObject"]
+
+
 def test_cloudformation_role_matches_workflow_binding_with_high_confidence() -> None:
     findings, _errors = scan_cloudformation_files(str(FIXTURE_REPO))
 

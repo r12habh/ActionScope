@@ -550,9 +550,31 @@ def _repository_role_identity(
     source_path = Path(finding.source_file)
     if finding.source_type == "terraform":
         # Terraform files in one directory form a module and may split a role's
-        # inline and attached policies across files. Different directories are
-        # independent modules and cannot be joined by role name alone.
-        return ("terraform", str(source_path.parent), normalized_role_name)
+        # inline and attached policies across files. The parser records the
+        # referenced role resource when that relationship is explicit; retain
+        # it so same-named roles using different provider aliases are not
+        # merged. A literal role name does not prove shared identity, so keep
+        # that evidence scoped to its policy resource.
+        role_reference = finding.metadata.get("terraform_role_reference")
+        role_address = _terraform_role_address(role_reference)
+        if role_address:
+            return (
+                "terraform",
+                str(source_path.parent),
+                "role_resource",
+                role_address,
+            )
+
+        policy_address = str(
+            finding.metadata.get("terraform_address") or source_path
+        )
+        return (
+            "terraform",
+            str(source_path.parent),
+            "unproven_role",
+            policy_address,
+            normalized_role_name,
+        )
 
     if finding.source_type == "cloudformation":
         logical_id = finding.metadata.get("cloudformation_logical_id")
@@ -567,6 +589,23 @@ def _repository_role_identity(
     # deployed role. Keep each file as a separate identity unless an exact ARN
     # matched earlier in the correlation flow.
     return (finding.source_type, str(source_path), normalized_role_name)
+
+
+def _terraform_role_address(value: object) -> str | None:
+    """Extract an aws_iam_role resource address from a Terraform reference."""
+    if not isinstance(value, str):
+        return None
+
+    reference = value.strip()
+    if reference.startswith("${") and reference.endswith("}"):
+        reference = reference[2:-1].strip()
+    if not reference.startswith("aws_iam_role."):
+        return None
+
+    parts = reference.split(".")
+    if len(parts) < 2 or not parts[1]:
+        return None
+    return ".".join(parts[:2])
 
 
 def _policy_match(

@@ -719,7 +719,9 @@ def _collect_policy_documents(value: Any) -> list[dict]:
         ]
     if not isinstance(value, dict):
         return []
-    if any(key == "Ref" or key.startswith("Fn::") for key in value):
+    if any(
+        str(key) == "Ref" or str(key).startswith("Fn::") for key in value
+    ):
         return []
     if "Statement" in value:
         return [value]

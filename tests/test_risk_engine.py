@@ -158,6 +158,14 @@ def test_build_bindings_aggregates_every_policy_for_the_role() -> None:
         )
     ]
     critical_policy.has_passrole = True
+    read_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.read",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+    critical_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.admin",
+        "terraform_role_reference": "${aws_iam_role.deploy.name}",
+    }
 
     bindings = build_bindings(
         [credential_source()],
@@ -193,12 +201,18 @@ def test_build_bindings_preserves_partial_policy_coverage_when_aggregating() -> 
         "unresolved_policy_attachments": [
             "arn:aws:iam::aws:policy/AdministratorAccess"
         ],
+        "terraform_address": "aws_iam_role_policy.read",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
     }
     terraform_policy = policy_finding(
         RiskLevel.MEDIUM,
         source_file="/repo/terraform/write.tf",
         role_name="github-deploy-role",
     )
+    terraform_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.write",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
 
     binding = build_bindings(
         [credential_source()],
@@ -268,6 +282,37 @@ def test_same_role_name_in_different_terraform_modules_is_ambiguous() -> None:
     assert "ambiguous" in binding.match_reason
 
 
+def test_same_role_name_in_one_terraform_module_is_ambiguous_by_resource() -> None:
+    dev_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/dev.tf",
+        role_name="github-deploy-role",
+    )
+    dev_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.dev",
+        "terraform_role_reference": "aws_iam_role.dev.name",
+    }
+    prod_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/prod.tf",
+        role_name="github-deploy-role",
+    )
+    prod_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.prod",
+        "terraform_role_reference": "aws_iam_role.prod.name",
+    }
+
+    binding = build_bindings(
+        [credential_source()],
+        [dev_policy, prod_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is None
+    assert binding.matched_policy_findings == []
+    assert "ambiguous" in binding.match_reason
+
+
 def test_failed_aws_verification_does_not_replace_static_role_evidence() -> None:
     static_policy = policy_finding(
         RiskLevel.CRITICAL,
@@ -321,6 +366,10 @@ def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> No
             resource="*",
         )
     ]
+    read_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.read",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
     decrypt_policy = policy_finding(
         RiskLevel.MEDIUM,
         source_file="/repo/terraform/decrypt.tf",
@@ -335,6 +384,10 @@ def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> No
             resource="*",
         )
     ]
+    decrypt_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.decrypt",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
     config = ActionScopeConfig(
         source_path=".actionscope.yml",
         custom_privesc_paths=(
