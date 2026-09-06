@@ -356,7 +356,9 @@ def apply_result_configuration(
         )
         for suppression in configured_suppressions
     ]
-    effective_risks = [record.risk_level for record in active_records]
+    effective_risks = [
+        record.risk_level for record in active_records if record.gate_eligible
+    ]
     if result.hard_block_findings:
         effective_risks.append(RiskLevel.CRITICAL)
     result.overall_risk = max(effective_risks, default=RiskLevel.INFO)
@@ -372,8 +374,10 @@ def apply_severity_overrides_to_findings(
     if not overrides:
         return
 
+    policy_findings = _effective_policy_findings(result)
+
     if "AS001" in overrides:
-        for finding in result.policy_findings:
+        for finding in policy_findings:
             for action in finding.actions:
                 configured_risk = _configured_risk(action.action, config)
                 action.risk_level = (
@@ -382,7 +386,7 @@ def apply_severity_overrides_to_findings(
                     else overrides["AS001"]
                 )
     if "AS002" in overrides:
-        for finding in result.policy_findings:
+        for finding in policy_findings:
             for path in finding.privesc_paths:
                 path.severity = overrides["AS002"]
 
@@ -400,8 +404,26 @@ def apply_severity_overrides_to_findings(
     _set_risk(result.compromised_action_findings, overrides.get("AS013"))
     _set_risk(result.environment_findings, overrides.get("AS014"))
     _set_risk(result.exposure_paths, overrides.get("AS016"))
-    for finding in result.policy_findings:
+    for finding in policy_findings:
         recompute_policy_risk(finding)
+
+
+def _effective_policy_findings(result: ScanResult) -> list[PolicyFinding]:
+    """Return raw and binding-aggregated policy findings without duplicates."""
+    findings = list(result.policy_findings)
+    findings.extend(
+        binding.policy_finding
+        for binding in result.bindings
+        if binding.policy_finding is not None
+    )
+    unique: list[PolicyFinding] = []
+    seen_ids: set[int] = set()
+    for finding in findings:
+        if id(finding) in seen_ids:
+            continue
+        unique.append(finding)
+        seen_ids.add(id(finding))
+    return unique
 
 
 def suppressed_rule_ids(result: ScanResult) -> set[str]:

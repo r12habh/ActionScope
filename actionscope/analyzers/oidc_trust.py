@@ -7,6 +7,7 @@ insufficient branch/environment scoping.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sys
@@ -17,6 +18,11 @@ from typing import Any, Iterator
 import hcl2
 
 from actionscope.models import OidcTrustFinding, RiskLevel
+from actionscope.parsers.cloudformation import (
+    find_cloudformation_files,
+    iter_cloudformation_iam_roles,
+    parse_cloudformation_file,
+)
 
 GITHUB_OIDC_ISSUER = "token.actions.githubusercontent.com"
 GITHUB_OIDC_PROVIDER_URL = "https://token.actions.githubusercontent.com"
@@ -52,8 +58,8 @@ def analyze_oidc_trust_conditions(
     findings: list[OidcTrustFinding] = []
     condition = statement.get("Condition") or statement.get("condition")
     condition_display = _compact(condition) if condition else "no Condition block found"
-    sub_values = _condition_values(condition, ":sub")
-    aud_values = _condition_values(condition, ":aud")
+    sub_values, unresolved_sub_values = _condition_claim_values(condition, ":sub")
+    aud_values, unresolved_aud_values = _condition_claim_values(condition, ":aud")
 
     unsafe_forallvalues = _unsafe_forallvalues_claims(condition)
     if unsafe_forallvalues:
@@ -71,7 +77,21 @@ def analyze_oidc_trust_conditions(
             )
         )
 
-    if not sub_values:
+    if unresolved_sub_values:
+        findings.append(
+            _finding(
+                source_file,
+                role_name,
+                "unresolved_sub",
+                "GitHub OIDC subject condition cannot be resolved statically",
+                RiskLevel.HIGH,
+                _compact(unresolved_sub_values),
+                "Resolve the subject condition to a literal repository and "
+                "protected branch or environment so its scope can be verified.",
+            )
+        )
+
+    if not sub_values and not unresolved_sub_values:
         findings.append(
             _finding(
                 source_file,
@@ -142,7 +162,21 @@ def analyze_oidc_trust_conditions(
                     )
                 )
 
-    if not aud_values:
+    if unresolved_aud_values:
+        findings.append(
+            _finding(
+                source_file,
+                role_name,
+                "unresolved_aud",
+                "GitHub OIDC audience condition cannot be resolved statically",
+                RiskLevel.MEDIUM,
+                _compact(unresolved_aud_values),
+                "Resolve the audience condition to the literal "
+                "'sts.amazonaws.com' value so it can be verified.",
+            )
+        )
+
+    if not aud_values and not unresolved_aud_values:
         findings.append(
             _finding(
                 source_file,
@@ -204,7 +238,7 @@ def analyze_json_oidc_trust(
 def scan_oidc_trust_policies(
     repo_path: str,
 ) -> tuple[list[OidcTrustFinding], list[str]]:
-    """Scan Terraform and JSON files for GitHub OIDC trust policy issues."""
+    """Scan Terraform, CloudFormation, and JSON for GitHub OIDC trust issues."""
     repo = Path(repo_path).expanduser()
     findings: list[OidcTrustFinding] = []
     errors: list[str] = []
@@ -226,6 +260,74 @@ def scan_oidc_trust_policies(
         if isinstance(data, dict):
             findings.extend(analyze_terraform_oidc_trust(data, str(tf_file.resolve())))
 
+    for template_file in find_cloudformation_files(repo_path):
+        template = parse_cloudformation_file(template_file)
+        if template is None:
+            continue
+        for logical_id, role_name, properties in iter_cloudformation_iam_roles(
+            template
+        ):
+            policy = properties.get("AssumeRolePolicyDocument")
+            if not isinstance(policy, dict):
+                continue
+            resolved_policy = _resolve_cloudformation_oidc_providers(
+                policy,
+                template,
+            )
+            role_condition = _cloudformation_resource_condition(
+                template,
+                logical_id,
+            )
+            possible_statements = extract_github_oidc_statements(resolved_policy)
+            conditional_statements = _conditional_github_oidc_statements(
+                resolved_policy
+            )
+            if role_condition is not None and (
+                possible_statements or conditional_statements
+            ):
+                findings.append(
+                    _finding(
+                        template_file,
+                        role_name,
+                        "unresolved_trust_statement",
+                        "Conditional IAM role trust cannot be resolved statically",
+                        RiskLevel.HIGH,
+                        _compact(
+                            {
+                                "Condition": role_condition,
+                                "AssumeRolePolicyDocument": resolved_policy,
+                            }
+                        ),
+                        "Resolve the role's CloudFormation Condition before "
+                        "evaluating its GitHub OIDC trust scope.",
+                    )
+                )
+            for statement in possible_statements:
+                if _contains_fn_if(statement):
+                    continue
+                findings.extend(
+                    analyze_oidc_trust_conditions(
+                        statement,
+                        template_file,
+                        role_name,
+                    )
+                )
+            for statement in conditional_statements:
+                findings.append(
+                    _finding(
+                        template_file,
+                        role_name,
+                        "unresolved_trust_statement",
+                        "Conditional GitHub OIDC trust statement cannot be "
+                        "resolved statically",
+                        RiskLevel.HIGH,
+                        _compact(statement),
+                        "Resolve the Fn::If condition or express each active "
+                        "GitHub OIDC trust statement with literal repository, "
+                        "branch or environment, and audience constraints.",
+                    )
+                )
+
     for json_file in sorted(repo.rglob("*.json")):
         try:
             with json_file.open("r", encoding="utf-8") as handle:
@@ -239,6 +341,170 @@ def scan_oidc_trust_policies(
             findings.extend(analyze_json_oidc_trust(data, str(json_file.resolve())))
 
     return findings, errors
+
+
+def _resolve_cloudformation_oidc_providers(policy: dict, template: dict) -> dict:
+    """Resolve direct references to local GitHub OIDC provider resources."""
+    resources = template.get("Resources") or {}
+    if not isinstance(resources, dict):
+        return policy
+
+    github_provider_ids = {
+        str(logical_id)
+        for logical_id, resource in resources.items()
+        if _is_cloudformation_github_provider(resource)
+    }
+    if not github_provider_ids:
+        return policy
+
+    resolved = copy.deepcopy(policy)
+    return _resolve_provider_principals(resolved, github_provider_ids)
+
+
+def _resolve_provider_principals(value: Any, provider_ids: set[str]) -> Any:
+    """Resolve GitHub provider references, including conditional branches."""
+    if isinstance(value, list):
+        return [_resolve_provider_principals(item, provider_ids) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    resolved = {
+        key: _resolve_provider_principals(item, provider_ids)
+        for key, item in value.items()
+    }
+    principal = resolved.get("Principal") or resolved.get("principal")
+    if not isinstance(principal, dict):
+        return resolved
+    federated_key = "Federated" if "Federated" in principal else "federated"
+    if federated_key in principal:
+        principal[federated_key] = _resolve_provider_value(
+            principal[federated_key],
+            provider_ids,
+        )
+    return resolved
+
+
+def _conditional_github_oidc_statements(value: Any) -> list[dict]:
+    """Return GitHub OIDC trust statements nested under Fn::If branches."""
+    findings: list[dict] = []
+
+    def visit(item: Any, conditional: bool = False) -> None:
+        if isinstance(item, list):
+            for nested in item:
+                visit(nested, conditional)
+            return
+        if not isinstance(item, dict):
+            return
+
+        if (
+            (conditional or _contains_fn_if(item))
+            and _principal_mentions_github(item)
+            and _may_allow_web_identity_assumption(item)
+        ):
+            findings.append(item)
+
+        for key, nested in item.items():
+            visit(nested, conditional or key == "Fn::If")
+
+    visit(value)
+    unique: dict[str, dict] = {}
+    for statement in findings:
+        unique.setdefault(_compact(statement), statement)
+    return list(unique.values())
+
+
+def _may_allow_web_identity_assumption(statement: dict) -> bool:
+    if _allows_web_identity_assumption(statement):
+        return True
+    if not _contains_fn_if(statement):
+        return False
+
+    target = "sts:assumerolewithwebidentity"
+    action_values = _nested_string_values(
+        statement.get("Action", statement.get("action"))
+    )
+    effect = statement.get("Effect", statement.get("effect"))
+    effect_values = _nested_string_values(effect)
+    allows = effect is None or any(
+        value.strip().lower() == "allow" for value in effect_values
+    )
+    return allows and any(
+        fnmatchcase(target, value.strip().lower()) for value in action_values
+    )
+
+
+def _nested_string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [
+            item
+            for value_item in value
+            for item in _nested_string_values(value_item)
+        ]
+    if isinstance(value, dict):
+        return [
+            item
+            for value_item in value.values()
+            for item in _nested_string_values(value_item)
+        ]
+    return []
+
+
+def _cloudformation_resource_condition(template: dict, logical_id: str) -> Any:
+    resources = template.get("Resources") or {}
+    if not isinstance(resources, dict):
+        return None
+    resource = resources.get(logical_id)
+    return resource.get("Condition") if isinstance(resource, dict) else None
+
+
+def _contains_fn_if(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(_contains_fn_if(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    return "Fn::If" in value or any(_contains_fn_if(item) for item in value.values())
+
+
+def _is_cloudformation_github_provider(resource: Any) -> bool:
+    if not isinstance(resource, dict):
+        return False
+    if resource.get("Type") != "AWS::IAM::OIDCProvider":
+        return False
+    properties = resource.get("Properties") or {}
+    return isinstance(properties, dict) and GITHUB_OIDC_ISSUER in _compact(
+        properties.get("Url")
+    )
+
+
+def _resolve_provider_value(value: Any, provider_ids: set[str]) -> Any:
+    """Replace direct Ref/GetAtt values for known GitHub providers."""
+    if isinstance(value, list):
+        return [_resolve_provider_value(item, provider_ids) for item in value]
+    provider_id = _direct_cloudformation_reference(value)
+    if provider_id in provider_ids:
+        return GITHUB_OIDC_ISSUER
+    if isinstance(value, dict):
+        return {
+            key: _resolve_provider_value(item, provider_ids)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _direct_cloudformation_reference(value: Any) -> str | None:
+    if not isinstance(value, dict) or len(value) != 1:
+        return None
+    ref = value.get("Ref")
+    if isinstance(ref, str):
+        return ref
+    get_att = value.get("Fn::GetAtt")
+    if isinstance(get_att, list) and get_att and isinstance(get_att[0], str):
+        return get_att[0]
+    if isinstance(get_att, str):
+        return get_att.split(".", 1)[0]
+    return None
 
 
 def _finding(
@@ -304,16 +570,49 @@ def _allows_web_identity_assumption(statement: dict) -> bool:
 
 
 def _condition_values(condition: Any, suffix: str) -> list[str]:
+    values, _unresolved = _condition_claim_values(condition, suffix)
+    return values
+
+
+def _condition_claim_values(
+    condition: Any,
+    suffix: str,
+) -> tuple[list[str], list[Any]]:
     values: list[str] = []
+    unresolved: list[Any] = []
     if not isinstance(condition, dict):
-        return values
+        return values, unresolved
     for operator_value in condition.values():
         if not isinstance(operator_value, dict):
             continue
         for key, value in operator_value.items():
             if str(key).lower().endswith(suffix):
-                values.extend(_string_values(value))
-    return values
+                resolved_values, unresolved_values = _condition_value_parts(value)
+                values.extend(resolved_values)
+                unresolved.extend(unresolved_values)
+    return values, unresolved
+
+
+def _condition_value_parts(value: Any) -> tuple[list[str], list[Any]]:
+    if isinstance(value, str):
+        if "${" in value:
+            return [value], [value]
+        return [value], []
+    if isinstance(value, list):
+        resolved: list[str] = []
+        unresolved: list[Any] = []
+        for item in value:
+            item_resolved, item_unresolved = _condition_value_parts(item)
+            resolved.extend(item_resolved)
+            unresolved.extend(item_unresolved)
+        return resolved, unresolved
+    if isinstance(value, dict) and len(value) == 1:
+        substitution = value.get("Fn::Sub")
+        if isinstance(substitution, str):
+            if "${" in substitution:
+                return [substitution], [value]
+            return [substitution], []
+    return [], [value]
 
 
 def _unsafe_forallvalues_claims(condition: Any) -> dict[str, dict[str, Any]]:

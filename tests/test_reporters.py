@@ -187,6 +187,52 @@ def test_json_marks_unresolved_policy_as_unknown() -> None:
     assert data["summary"]["coverage_gaps"] == 1
 
 
+def test_json_and_markdown_mark_unresolved_attachment_as_partial() -> None:
+    binding = _sample_binding()
+    assert binding.policy_finding is not None
+    attachment = "arn:aws:iam::aws:policy/AdministratorAccess"
+    binding.policy_finding.metadata = {
+        "policy_coverage_complete": False,
+        "unresolved_policy_attachments": [attachment],
+    }
+    result = ScanResult(bindings=[binding])
+
+    data = json.loads(to_json(result))
+    markdown = to_markdown(result)
+    rendered = to_markdown_from_dict(data)
+
+    assert data["coverage_status"] == "partial"
+    assert data["findings"][0]["risk_status"] == "partial"
+    assert data["findings"][0]["unresolved_policy_attachments"] == [attachment]
+    assert data["summary"]["policies_partial"] == 1
+    assert "**Coverage:** PARTIAL" in markdown
+    assert "**Unresolved Coverage Items:** 1" in markdown
+    for output in (markdown, rendered):
+        assert "Coverage" in output
+        assert "PARTIAL" in output
+        assert "AdministratorAccess" in output
+
+
+def test_markdown_names_uninspectable_policy_content() -> None:
+    binding = _sample_binding()
+    assert binding.policy_finding is not None
+    binding.policy_finding.metadata = {
+        "policy_coverage_complete": False,
+        "uninspectable_policy_elements": [
+            "document 1 statement 1 Action"
+        ],
+    }
+    result = ScanResult(bindings=[binding])
+
+    data = json.loads(to_json(result))
+    markdown = to_markdown(result)
+    rendered = to_markdown_from_dict(data)
+
+    assert data["findings"][0]["risk_status"] == "partial"
+    for output in (markdown, rendered):
+        assert "document 1 statement 1 Action" in output
+
+
 def test_markdown_from_dict_inserts_intro_sections_before_one_rule() -> None:
     markdown = to_markdown_from_dict(
         {

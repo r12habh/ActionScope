@@ -11,9 +11,11 @@ from actionscope.analyzers.risk_engine import (
     finalize_scan_metadata,
     match_role_to_policies,
 )
+from actionscope.config import ActionScopeConfig, CustomPrivescPath
 from actionscope.models import (
     AwsCredentialSource,
     GitHubTokenPermission,
+    IamAction,
     PolicyFinding,
     RiskLevel,
     ScanResult,
@@ -126,6 +128,353 @@ def test_build_bindings_reports_high_confidence_for_role_relationship() -> None:
     assert "Terraform role relationship" in bindings[0].match_reason
 
 
+def test_build_bindings_aggregates_every_policy_for_the_role() -> None:
+    read_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/read.tf",
+        role_name="github-deploy-role",
+    )
+    read_policy.actions = [
+        IamAction(
+            action="s3:GetObject",
+            access_level="Read",
+            risk_level=RiskLevel.LOW,
+            description="Read objects",
+            resource="arn:aws:s3:::builds/*",
+        )
+    ]
+    critical_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/admin.tf",
+        role_name="github-deploy-role",
+    )
+    critical_policy.actions = [
+        IamAction(
+            action="iam:PassRole",
+            access_level="Permissions management",
+            risk_level=RiskLevel.CRITICAL,
+            description="Pass a role",
+            resource="*",
+        )
+    ]
+    critical_policy.has_passrole = True
+    read_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.read",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+    critical_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.admin",
+        "terraform_role_reference": "${aws_iam_role.deploy.name}",
+    }
+
+    bindings = build_bindings(
+        [credential_source()],
+        [read_policy, critical_policy],
+        "/repo",
+    )
+
+    binding = bindings[0]
+    assert binding.policy_finding is not None
+    assert {action.action for action in binding.policy_finding.actions} == {
+        "iam:PassRole",
+        "s3:GetObject",
+    }
+    assert binding.policy_finding.overall_risk is RiskLevel.CRITICAL
+    assert binding.matched_policy_findings == [read_policy, critical_policy]
+    assert get_unmatched_findings(bindings, [read_policy, critical_policy]) == []
+
+    result = ScanResult(
+        policy_findings=[read_policy, critical_policy],
+        bindings=bindings,
+    )
+    assert result.finding_count_by_risk(RiskLevel.CRITICAL) == 1
+
+
+def test_build_bindings_preserves_partial_policy_coverage_when_aggregating() -> None:
+    partial_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/read.tf",
+        role_name="github-deploy-role",
+    )
+    partial_policy.metadata = {
+        "policy_coverage_complete": False,
+        "unresolved_policy_attachments": [
+            "arn:aws:iam::aws:policy/AdministratorAccess"
+        ],
+        "terraform_address": "aws_iam_role_policy.read",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+    terraform_policy = policy_finding(
+        RiskLevel.MEDIUM,
+        source_file="/repo/terraform/write.tf",
+        role_name="github-deploy-role",
+    )
+    terraform_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.write",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+
+    binding = build_bindings(
+        [credential_source()],
+        [partial_policy, terraform_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is not None
+    assert binding.policy_finding.metadata["policy_coverage_complete"] is False
+    assert binding.policy_finding.metadata["unresolved_policy_attachments"] == [
+        "arn:aws:iam::aws:policy/AdministratorAccess"
+    ]
+
+
+def test_same_role_name_in_different_cloudformation_stacks_is_ambiguous() -> None:
+    dev_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/stacks/dev/template.yml",
+        source_type="cloudformation",
+        role_name="github-deploy-role",
+    )
+    dev_policy.metadata = {"cloudformation_logical_id": "DeployRole"}
+    prod_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/stacks/prod/template.yml",
+        source_type="cloudformation",
+        role_name="github-deploy-role",
+    )
+    prod_policy.metadata = {"cloudformation_logical_id": "DeployRole"}
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [dev_policy, prod_policy],
+        [],
+    )
+
+    binding = result.bindings[0]
+    assert binding.policy_finding is None
+    assert binding.policy_source == "not_found"
+    assert binding.match_confidence == "none"
+    assert "ambiguous" in binding.match_reason
+    assert result.overall_risk is RiskLevel.INFO
+
+
+def test_same_role_name_in_different_terraform_modules_is_ambiguous() -> None:
+    dev_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/modules/dev/iam.tf",
+        role_name="github-deploy-role",
+    )
+    prod_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/modules/prod/iam.tf",
+        role_name="github-deploy-role",
+    )
+
+    binding = build_bindings(
+        [credential_source()],
+        [dev_policy, prod_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is None
+    assert binding.matched_policy_findings == []
+    assert "ambiguous" in binding.match_reason
+
+
+def test_same_role_name_in_one_terraform_module_is_ambiguous_by_resource() -> None:
+    dev_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/dev.tf",
+        role_name="github-deploy-role",
+    )
+    dev_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.dev",
+        "terraform_role_reference": "aws_iam_role.dev.name",
+    }
+    prod_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/prod.tf",
+        role_name="github-deploy-role",
+    )
+    prod_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.prod",
+        "terraform_role_reference": "aws_iam_role.prod.name",
+    }
+
+    binding = build_bindings(
+        [credential_source()],
+        [dev_policy, prod_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is None
+    assert binding.matched_policy_findings == []
+    assert "ambiguous" in binding.match_reason
+
+
+def test_indexed_terraform_role_instances_do_not_collapse() -> None:
+    us_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/us.tf",
+        role_name="github-deploy-role",
+    )
+    us_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.us",
+        "terraform_role_reference": '${aws_iam_role.deploy["prod.us"].name}',
+    }
+    eu_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/eu.tf",
+        role_name="github-deploy-role",
+    )
+    eu_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.eu",
+        "terraform_role_reference": '${aws_iam_role.deploy["prod.eu"].name}',
+    }
+
+    binding = build_bindings(
+        [credential_source()],
+        [us_policy, eu_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is None
+    assert "ambiguous" in binding.match_reason
+
+
+def test_failed_aws_verification_does_not_replace_static_role_evidence() -> None:
+    static_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/template.yml",
+        source_type="cloudformation",
+        role_name="github-deploy-role",
+    )
+    failed_verification = PolicyFinding(
+        source_file="aws://iam/role/github-deploy-role",
+        source_type="aws_verified",
+        role_arn="arn:aws:iam::123456789012:role/github-deploy-role",
+        actions=[
+            IamAction(
+                action="aws:VerifyRolePolicies",
+                access_level="Info",
+                risk_level=RiskLevel.INFO,
+                description="AWS verification error: access_denied",
+                resource="arn:aws:iam::123456789012:role/github-deploy-role",
+            )
+        ],
+        overall_risk=RiskLevel.INFO,
+        metadata={"aws_verification_status": "error"},
+    )
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [static_policy, failed_verification],
+        [],
+    )
+
+    binding = result.bindings[0]
+    assert binding.policy_finding is static_policy
+    assert binding.policy_source == "cloudformation"
+    assert result.overall_risk is RiskLevel.CRITICAL
+
+
+def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> None:
+    read_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/read.tf",
+        role_name="github-deploy-role",
+    )
+    read_policy.actions = [
+        IamAction(
+            action="s3:GetObject",
+            access_level="Read",
+            risk_level=RiskLevel.LOW,
+            description="Read objects",
+            resource="*",
+        )
+    ]
+    read_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.read",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+    decrypt_policy = policy_finding(
+        RiskLevel.MEDIUM,
+        source_file="/repo/terraform/decrypt.tf",
+        role_name="github-deploy-role",
+    )
+    decrypt_policy.actions = [
+        IamAction(
+            action="kms:Decrypt",
+            access_level="Permissions management",
+            risk_level=RiskLevel.MEDIUM,
+            description="Decrypt data",
+            resource="*",
+        )
+    ]
+    decrypt_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.decrypt",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+    config = ActionScopeConfig(
+        source_path=".actionscope.yml",
+        custom_privesc_paths=(
+            CustomPrivescPath(
+                path_id="decrypt_s3",
+                name="Decrypt S3 data",
+                required_actions=("s3:getobject", "kms:decrypt"),
+                description="Can read and decrypt protected objects.",
+                severity=RiskLevel.CRITICAL,
+                example_attack="Read encrypted objects and decrypt them.",
+            ),
+        ),
+    )
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [read_policy, decrypt_policy],
+        [],
+        config=config,
+    )
+
+    aggregate = result.bindings[0].policy_finding
+    assert aggregate is not None
+    assert [path.path_id for path in aggregate.privesc_paths] == ["decrypt_s3"]
+    assert aggregate.overall_risk is RiskLevel.CRITICAL
+    assert result.overall_risk is RiskLevel.CRITICAL
+
+
+def test_ambiguous_content_fallback_does_not_create_effective_policy(
+    tmp_path: Path,
+) -> None:
+    policy_file = tmp_path / "policies.tf"
+    policy_file.write_text(
+        '# mentions role "github-deploy-role" but contains several policies\n',
+        encoding="utf-8",
+    )
+    low = policy_finding(RiskLevel.LOW, source_file=str(policy_file))
+    critical = policy_finding(RiskLevel.CRITICAL, source_file=str(policy_file))
+
+    result = build_scan_result(
+        str(tmp_path),
+        [credential_source()],
+        [],
+        [low, critical],
+        [],
+    )
+
+    binding = result.bindings[0]
+    assert binding.policy_finding is None
+    assert binding.policy_source == "not_found"
+    assert binding.match_confidence == "none"
+    assert "multiple policies" in binding.match_reason
+    assert result.overall_risk is RiskLevel.INFO
+
+
 def test_build_bindings_creates_dynamic_reference_for_secret_refs() -> None:
     bindings = build_bindings(
         [credential_source(role_arn="${{ secrets.ROLE_ARN }}")],
@@ -152,6 +501,16 @@ def test_compute_overall_risk_returns_info_when_no_bindings_have_findings() -> N
     assert risk is RiskLevel.INFO
 
 
+def test_compute_overall_risk_ignores_unmatched_policy_risk() -> None:
+    risk = compute_overall_risk(
+        [binding_for(None)],
+        [],
+        [policy_finding(RiskLevel.CRITICAL, source_file="/repo/unrelated.json")],
+    )
+
+    assert risk is RiskLevel.INFO
+
+
 def test_get_unmatched_findings_returns_policies_not_tied_to_workflow() -> None:
     matched = policy_finding(RiskLevel.HIGH, source_file="/repo/matched.tf")
     unmatched = policy_finding(RiskLevel.LOW, source_file="/repo/unmatched.tf")
@@ -173,10 +532,28 @@ def test_build_scan_result_produces_correct_workflow_count() -> None:
     assert result.workflow_count == 2
 
 
-def test_scan_result_has_critical_findings_for_critical_overall_risk() -> None:
+def test_unmatched_critical_policy_is_report_only() -> None:
     critical = policy_finding(RiskLevel.CRITICAL)
 
     result = build_scan_result("/repo", [], [], [critical], [])
+
+    assert result.overall_risk is RiskLevel.INFO
+    assert result.has_critical_findings() is False
+
+
+def test_matched_critical_policy_sets_critical_overall_risk() -> None:
+    critical = policy_finding(
+        RiskLevel.CRITICAL,
+        role_name="github-deploy-role",
+    )
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [critical],
+        [],
+    )
 
     assert result.overall_risk is RiskLevel.CRITICAL
     assert result.has_critical_findings() is True

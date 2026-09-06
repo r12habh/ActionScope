@@ -183,12 +183,12 @@ The rest of the output includes:
 If your `Policy Match` column shows `not_found`, ActionScope didn't find
 the IAM policy attached to your deploy role. Two ways to fix that:
 
-**Option A — same-repo Terraform / JSON:**
+**Option A — same-repo infrastructure or policy files:**
 
 If your IAM policies live as Terraform (`*.tf` with `aws_iam_role` /
-`aws_iam_role_policy` resources) or as JSON files under `iam/` or
-`policies/` in the same repo, ActionScope picks them up automatically.
-No flag needed.
+`aws_iam_role_policy` resources), CloudFormation/SAM templates, or JSON files
+under `iam/` or `policies/`, ActionScope picks up supported static role
+relationships automatically. No flag needed.
 
 **Option B — separate infrastructure repo:**
 

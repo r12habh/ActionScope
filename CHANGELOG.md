@@ -4,6 +4,24 @@ All notable changes to ActionScope are documented here.
 
 ## [Unreleased]
 
+### Added
+- CloudFormation and SAM template analysis now extracts inline IAM role
+  policies, `AWS::IAM::Policy` / `AWS::IAM::ManagedPolicy` role attachments,
+  literal-role SAM policies, and GitHub OIDC trust conditions from YAML or
+  JSON templates.
+- Workflow reports preserve the provenance of `role-to-assume` values,
+  distinguishing literal ARNs from secrets, repository variables,
+  environment variables, reusable-workflow inputs, and other expressions.
+
+### Fixed
+- AWS access keys inherited through workflow- or job-level `env` blocks, and
+  keys used directly by shell steps without `configure-aws-credentials`, are
+  now recorded as static credential sources.
+- IAM policy files that cannot be linked to a workflow remain visible as
+  low-confidence audit evidence but no longer raise aggregate workflow risk,
+  effective finding counts, or severity-threshold CI gates. Explicit
+  `.actionscope.yml` hard blocks remain unconditional by design.
+
 ## [0.5.0] - 2026-08-09
 
 ### Added

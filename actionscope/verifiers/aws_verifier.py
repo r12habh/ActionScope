@@ -191,6 +191,7 @@ def verify_credential_source(
     )
     finding.source_type = "aws_verified"
     finding.role_arn = role_arn
+    finding.metadata["aws_verification_status"] = "success"
     return finding
 
 
@@ -338,6 +339,10 @@ def _error_policy_finding(
             )
         ],
         overall_risk=RiskLevel.INFO,
+        metadata={
+            "aws_verification_status": "error",
+            "aws_verification_error": error,
+        },
     )
 
 

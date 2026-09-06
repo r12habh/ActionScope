@@ -251,7 +251,7 @@ def test_extract_env_var_references_returns_env_values() -> None:
     assert env_vars == {"AWS_ACCESS_KEY_ID": "${{ secrets.AWS_KEY }}"}
 
 
-def test_env_access_key_marks_uses_access_keys_true() -> None:
+def test_env_access_key_pair_marks_uses_access_keys_true() -> None:
     workflow_data = {
         "jobs": {
             "deploy": {
@@ -259,7 +259,10 @@ def test_env_access_key_marks_uses_access_keys_true() -> None:
                     {
                         "uses": "aws-actions/configure-aws-credentials@main",
                         "env": {
-                            "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}"
+                            "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+                            "AWS_SECRET_ACCESS_KEY": (
+                                "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+                            ),
                         },
                     }
                 ]
@@ -270,6 +273,440 @@ def test_env_access_key_marks_uses_access_keys_true() -> None:
     sources = extract_aws_credential_sources(workflow_data, "inline.yml")
 
     assert sources[0].uses_access_keys is True
+
+
+def test_job_environment_access_keys_are_inherited_by_configure_step() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "env": {
+                    "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+                    "AWS_SECRET_ACCESS_KEY": "${{ secrets.AWS_SECRET_ACCESS_KEY }}",
+                },
+                "steps": [
+                    {"uses": "aws-actions/configure-aws-credentials@v4"}
+                ],
+            }
+        }
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys is True
+
+
+def test_workflow_environment_access_keys_create_source_without_action() -> None:
+    workflow_data = {
+        "env": {
+            "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+            "AWS_SECRET_ACCESS_KEY": "${{ secrets.AWS_SECRET_ACCESS_KEY }}",
+            "AWS_REGION": "us-west-2",
+        },
+        "jobs": {
+            "deploy": {
+                "steps": [{"name": "Deploy", "run": "aws s3 ls"}],
+            }
+        },
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].step_name == "Workflow/job environment"
+    assert sources[0].uses_access_keys is True
+    assert sources[0].aws_region == "us-west-2"
+
+
+def test_shell_step_environment_access_keys_create_source() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {
+                        "name": "Deploy directly",
+                        "run": "aws s3 ls",
+                        "env": {
+                            "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+                            "AWS_SECRET_ACCESS_KEY": "${{ secrets.AWS_SECRET }}",
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].step_name == "Deploy directly"
+    assert sources[0].uses_access_keys is True
+
+
+def test_inherited_access_keys_do_not_duplicate_configure_source() -> None:
+    workflow_data = {
+        "env": {
+            "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+            "AWS_SECRET_ACCESS_KEY": "${{ secrets.AWS_SECRET_ACCESS_KEY }}",
+        },
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {"uses": "aws-actions/configure-aws-credentials@v4"},
+                    {"run": "aws s3 ls"},
+                ]
+            }
+        },
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys is True
+
+
+def test_empty_access_key_values_do_not_create_static_credential_source() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {
+                        "name": "Empty credentials",
+                        "run": "aws s3 ls",
+                        "env": {
+                            "AWS_ACCESS_KEY_ID": "",
+                            "AWS_SECRET_ACCESS_KEY": "  ",
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    assert extract_aws_credential_sources(workflow_data, "inline.yml") == []
+
+
+def test_incomplete_access_key_pair_does_not_create_static_source() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {
+                        "uses": "aws-actions/configure-aws-credentials@v5",
+                        "with": {
+                            "aws-access-key-id": "${{ secrets.AWS_ACCESS_KEY_ID }}"
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys is False
+
+
+def test_forwarded_role_outputs_are_not_classified_as_static_keys() -> None:
+    workflow_data = {
+        "permissions": {"id-token": "write"},
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {
+                        "id": "aws-creds",
+                        "uses": "aws-actions/configure-aws-credentials@v5",
+                        "with": {
+                            "role-to-assume": (
+                                "arn:aws:iam::123456789012:role/deploy"
+                            ),
+                            "output-credentials": True,
+                        },
+                    },
+                    {
+                        "name": "Use temporary credentials",
+                        "run": "aws s3 ls",
+                        "env": {
+                            "AWS_ACCESS_KEY_ID": (
+                                "${{ steps.aws-creds.outputs.aws-access-key-id }}"
+                            ),
+                            "AWS_SECRET_ACCESS_KEY": (
+                                "${{ steps.aws-creds.outputs.aws-secret-access-key }}"
+                            ),
+                        },
+                    },
+                ]
+            }
+        },
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/deploy"
+    assert sources[0].uses_access_keys is False
+
+
+def test_forwarded_role_outputs_through_composite_are_not_static_keys(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    action_dir = tmp_path / ".github" / "actions" / "deploy"
+    workflow_dir.mkdir(parents=True)
+    action_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+permissions:
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - id: aws-creds
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/deploy
+          output-credentials: true
+      - name: Deploy through composite
+        uses: ./.github/actions/deploy
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws-creds.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws-creds.outputs.aws-secret-access-key }}
+""",
+        encoding="utf-8",
+    )
+    action_dir.joinpath("action.yml").write_text(
+        """
+name: Deploy
+runs:
+  using: composite
+  steps:
+    - name: Call AWS
+      shell: bash
+      run: aws s3 ls
+""",
+        encoding="utf-8",
+    )
+
+    sources, _, _, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/deploy"
+    assert sources[0].uses_access_keys is False
+
+
+def test_scan_deduplicates_inherited_keys_used_by_local_action(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./actions/configure
+""",
+        encoding="utf-8",
+    )
+    action_dir = tmp_path / "actions" / "configure"
+    action_dir.mkdir(parents=True)
+    action_dir.joinpath("action.yml").write_text(
+        """
+name: Configure
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-region: us-east-1
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys
+    assert sources[0].step_name.startswith("Local action ./actions/configure")
+
+
+def test_scan_propagates_and_deduplicates_caller_step_keys_for_local_action(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+jobs:
+  deploy:
+    permissions:
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure through local action
+        uses: ./actions/configure
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+""",
+        encoding="utf-8",
+    )
+    action_dir = tmp_path / "actions" / "configure"
+    action_dir.mkdir(parents=True)
+    action_dir.joinpath("action.yml").write_text(
+        """
+name: Configure
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::123456789012:role/deploy
+        aws-region: us-east-1
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/deploy"
+    assert sources[0].uses_access_keys
+    assert sources[0].uses_oidc
+    assert sources[0].step_name.startswith("Local action ./actions/configure")
+
+
+def test_scan_deduplicates_keys_only_for_matching_local_action_caller(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Expose keys only
+        uses: ./actions/noop
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.FIRST_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.FIRST_SECRET_ACCESS_KEY }}
+      - name: Configure through local action
+        uses: ./actions/configure
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SECOND_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SECOND_SECRET_ACCESS_KEY }}
+""",
+        encoding="utf-8",
+    )
+    noop_dir = tmp_path / "actions" / "noop"
+    noop_dir.mkdir(parents=True)
+    noop_dir.joinpath("action.yml").write_text(
+        """
+name: Noop
+runs:
+  using: composite
+  steps:
+    - run: echo ok
+      shell: bash
+""",
+        encoding="utf-8",
+    )
+    configure_dir = tmp_path / "actions" / "configure"
+    configure_dir.mkdir(parents=True)
+    configure_dir.joinpath("action.yml").write_text(
+        """
+name: Configure
+runs:
+  using: composite
+  steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::123456789012:role/deploy
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 2
+    assert {source.step_name for source in sources} == {
+        "Local action ./actions/noop -> Shell step environment",
+        (
+            "Local action ./actions/configure -> "
+            "aws-actions/configure-aws-credentials@v4"
+        ),
+    }
+    assert all(source.uses_access_keys for source in sources)
+
+
+def test_scan_detects_keys_mapped_to_local_action_shell_environment(
+    tmp_path: Path,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_dir.joinpath("deploy.yml").write_text(
+        """
+name: Deploy
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy through local action
+        uses: ./actions/deploy
+        with:
+          access-key: ${{ secrets.DEPLOY_ACCESS_KEY }}
+          secret-key: ${{ secrets.DEPLOY_SECRET_KEY }}
+""",
+        encoding="utf-8",
+    )
+    action_dir = tmp_path / "actions" / "deploy"
+    action_dir.mkdir(parents=True)
+    action_dir.joinpath("action.yml").write_text(
+        """
+name: Deploy
+runs:
+  using: composite
+  steps:
+    - name: Upload release
+      run: aws s3 sync dist/ s3://releases/
+      shell: bash
+      env:
+        AWS_ACCESS_KEY_ID: ${{ inputs.access-key }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.secret-key }}
+""",
+        encoding="utf-8",
+    )
+
+    sources, _permissions, _unpinned, errors = scan_workflows(str(tmp_path))
+
+    assert errors == []
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys
+    assert sources[0].role_arn is None
+    assert sources[0].step_name == (
+        "Local action ./actions/deploy -> Upload release"
+    )
 
 
 def test_step_without_with_block_returns_source_with_no_role() -> None:

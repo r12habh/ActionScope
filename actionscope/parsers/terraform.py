@@ -12,6 +12,7 @@ import hcl2
 
 from actionscope.analyzers.iam_risk import classify_actions, get_overall_risk
 from actionscope.models import IamAction, PolicyFinding, RiskLevel
+from actionscope.parsers.terraform_refs import parse_resource_reference
 
 PRIVILEGE_ESCALATION_ACTIONS = {
     "iam:attachrolepolicy",
@@ -72,7 +73,7 @@ def _extract_iam_policies_from_parsed_files(
     data_documents: dict[str, PolicyFinding] = {}
     managed_policies: dict[str, PolicyFinding] = {}
     role_names: dict[str, str] = {}
-    attachments: list[tuple[str, str, dict]] = []
+    attachments: list[tuple[str, str, str | None, str | None]] = []
 
     for source_file, tf_data in parsed_files:
         for data_type, data_name, body in _iter_blocks(tf_data.get("data")):
@@ -97,6 +98,18 @@ def _extract_iam_policies_from_parsed_files(
                 role_name = _role_name_from_role_resource(resource_name, body)
                 if role_name:
                     role_names[address] = role_name
+                role_reference = f"${{{address}.name}}"
+                for index, policy_reference in enumerate(
+                    _string_list(body.get("managed_policy_arns"))
+                ):
+                    attachments.append(
+                        (
+                            source_file,
+                            f"{address}.managed_policy_arns[{index}]",
+                            role_reference,
+                            policy_reference,
+                        )
+                    )
                 continue
 
             if resource_type == "aws_iam_policy":
@@ -109,7 +122,6 @@ def _extract_iam_policies_from_parsed_files(
                     data_documents=data_documents,
                 )
                 managed_policies[address] = finding
-                findings.append(finding)
                 continue
 
             if resource_type == "aws_iam_role_policy":
@@ -132,24 +144,119 @@ def _extract_iam_policies_from_parsed_files(
                 continue
 
             if resource_type == "aws_iam_role_policy_attachment":
-                attachments.append((source_file, address, body))
+                attachments.append(
+                    (
+                        source_file,
+                        address,
+                        _clean_optional_string(body.get("role")),
+                        _clean_optional_string(body.get("policy_arn")),
+                    )
+                )
+                continue
 
-    for _source_file, attachment_address, body in attachments:
-        role_reference = _clean_optional_string(body.get("role"))
-        policy_reference = _clean_optional_string(body.get("policy_arn"))
+            if resource_type == "aws_iam_policy_attachment":
+                policy_reference = _clean_optional_string(body.get("policy_arn"))
+                for index, role_reference in enumerate(
+                    _string_list(body.get("roles"))
+                ):
+                    attachments.append(
+                        (
+                            source_file,
+                            f"{address}.roles[{index}]",
+                            role_reference,
+                            policy_reference,
+                        )
+                    )
+
+    attached_policy_addresses: set[str] = set()
+    for (
+        _source_file,
+        attachment_address,
+        role_reference,
+        policy_reference,
+    ) in attachments:
         role_name = _resolve_role_reference(role_reference, role_names)
         policy_address = _resolve_policy_reference(policy_reference)
-
-        if not role_name or not policy_address:
+        managed_finding = (
+            managed_policies.get(policy_address) if policy_address else None
+        )
+        if not role_name:
+            unresolved_role = role_reference or "unknown role reference"
+            metadata = {
+                "terraform_address": attachment_address,
+                "terraform_role_reference": role_reference or "",
+                "policy_coverage_complete": False,
+                "unresolved_policy_attachments": [
+                    f"unresolved role target: {unresolved_role}"
+                ],
+                "coverage_gap_type": "unresolved_terraform_role_target",
+                "coverage_gap_description": (
+                    "Terraform policy attachment has a role target that "
+                    f"ActionScope could not resolve: {unresolved_role}"
+                ),
+            }
+            if managed_finding is None:
+                findings.append(
+                    _empty_finding(
+                        _source_file,
+                        policy_name=attachment_address,
+                        metadata=metadata,
+                    )
+                )
+            else:
+                findings.append(
+                    _clone_policy_finding(
+                        managed_finding,
+                        managed_finding.source_file,
+                        metadata=metadata,
+                    )
+                )
+                if policy_address:
+                    attached_policy_addresses.add(policy_address)
             continue
 
-        finding = managed_policies.get(policy_address)
-        if finding is None:
+        if managed_finding is None:
+            unresolved_policy = policy_reference or "unknown policy reference"
+            findings.append(
+                _empty_finding(
+                    _source_file,
+                    role_name=role_name,
+                    policy_name=attachment_address,
+                    metadata={
+                        "terraform_address": attachment_address,
+                        "terraform_role_reference": role_reference or "",
+                        "policy_coverage_complete": False,
+                        "unresolved_policy_attachments": [unresolved_policy],
+                        "coverage_gap_type": (
+                            "unresolved_terraform_policy_attachment"
+                        ),
+                        "coverage_gap_description": (
+                            f"Terraform role {role_name} has an attached policy "
+                            f"that ActionScope could not resolve: {unresolved_policy}"
+                        ),
+                    },
+                )
+            )
             continue
 
-        finding.role_name = role_name
-        finding.metadata["terraform_attachment"] = attachment_address
-        finding.metadata["terraform_role_reference"] = role_reference or ""
+        findings.append(
+            _clone_policy_finding(
+                managed_finding,
+                managed_finding.source_file,
+                role_name=role_name,
+                metadata={
+                    "terraform_attachment": attachment_address,
+                    "terraform_role_reference": role_reference or "",
+                },
+            )
+        )
+        attached_policy_addresses.add(policy_address)
+
+    findings.extend(
+        finding
+        for address, finding in managed_policies.items()
+        if address not in attached_policy_addresses
+    )
 
     return findings
 
@@ -290,27 +397,48 @@ def _finding_from_statements(
         if not isinstance(statement, dict):
             continue
 
-        if _has_not_actions(statement):
-            _warn(f"Skipping not_actions statement in {source_file}")
-            continue
-
         effect = _statement_value(statement, "effect", "Effect")
         if _clean_string(effect or "").lower() == "deny":
             continue
         if effect is not None and _clean_string(effect).lower() != "allow":
             continue
 
-        raw_actions = _statement_value(
+        not_actions = _statement_value(
             statement,
-            "actions" if terraform_document else "Action",
-            "Action",
-            "actions",
+            "not_actions",
+            "NotAction",
+            "not_action",
         )
-        raw_resources = _statement_value(
+        if _has_not_actions(statement) and "*" in _string_list(not_actions):
+            continue
+        not_resources = _statement_value(
             statement,
-            "resources" if terraform_document else "Resource",
-            "Resource",
-            "resources",
+            "not_resources",
+            "NotResource",
+            "not_resource",
+        )
+        if _has_not_resources(statement) and "*" in _string_list(not_resources):
+            continue
+
+        raw_actions = (
+            "*"
+            if _has_not_actions(statement)
+            else _statement_value(
+                statement,
+                "actions" if terraform_document else "Action",
+                "Action",
+                "actions",
+            )
+        )
+        raw_resources = (
+            "*"
+            if _has_not_resources(statement)
+            else _statement_value(
+                statement,
+                "resources" if terraform_document else "Resource",
+                "Resource",
+                "resources",
+            )
         )
 
         statement_actions = _string_list(raw_actions)
@@ -335,7 +463,8 @@ def _finding_from_statements(
             has_star_resource = True
 
         if statement_has_star_resource and (
-            "iam:passrole" in normalized_actions
+            "*" in normalized_actions
+            or "iam:passrole" in normalized_actions
             or bool(PRIVILEGE_ESCALATION_ACTIONS & normalized_actions)
         ):
             has_privilege_escalation = True
@@ -542,6 +671,12 @@ def _has_not_actions(statement: dict) -> bool:
     )
 
 
+def _has_not_resources(statement: dict) -> bool:
+    return any(
+        key in statement for key in ("not_resources", "NotResource", "not_resource")
+    )
+
+
 def _string_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [_clean_string(value)]
@@ -593,9 +728,9 @@ def _resolve_role_reference(
 
     reference = _terraform_reference_body(role_reference)
     if reference:
-        if reference.startswith("aws_iam_role."):
-            address = ".".join(reference.split(".")[:2])
-            return role_names.get(address)
+        role = parse_resource_reference(reference, "aws_iam_role")
+        if role:
+            return role_names.get(role.declaration_address)
         return None
 
     if role_reference.startswith("arn:"):
@@ -618,11 +753,8 @@ def _resolve_policy_reference(policy_reference: str | None) -> str | None:
     if reference is None:
         return None
 
-    if reference.startswith("aws_iam_policy."):
-        parts = reference.split(".")
-        if len(parts) >= 2:
-            return ".".join(parts[:2])
-    return None
+    policy = parse_resource_reference(reference, "aws_iam_policy")
+    return policy.declaration_address if policy else None
 
 
 def _role_arn_if_literal(role_reference: str | None) -> str | None:

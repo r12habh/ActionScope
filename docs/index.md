@@ -11,9 +11,10 @@ description: >-
 > **If a GitHub Actions workflow in your repo is compromised, what can an
 > attacker actually do in your AWS account?**
 
-ActionScope reads your `.github/workflows/` files, Terraform and JSON IAM
-policies, and tells you — in plain English — what your CI/CD pipeline can
-actually do in AWS, and which workflow-layer attack surfaces it exposes.
+ActionScope reads your `.github/workflows/` files, Terraform resources,
+CloudFormation/SAM templates, and JSON IAM policies. It reports the AWS
+permissions recoverable from that evidence, marks missing context explicitly,
+and identifies workflow-layer attack surfaces.
 
 [Get started in 30 seconds :material-arrow-right:](getting-started.md){ .md-button .md-button--primary }
 [Install from PyPI :material-package:](https://pypi.org/project/actionscope/){ .md-button }
@@ -55,7 +56,8 @@ actually do in AWS, and which workflow-layer attack surfaces it exposes.
     ---
 
     Extracts every `aws-actions/configure-aws-credentials` role ARN,
-    correlates with Terraform or JSON IAM policies in your repo, and
+    correlates with Terraform, CloudFormation/SAM, or JSON IAM policies in
+    your repo, and
     classifies the resulting blast radius. Optionally verifies live via
     read-only IAM API calls.
 
