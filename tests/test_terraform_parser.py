@@ -9,6 +9,7 @@ from actionscope.parsers.terraform import (
     parse_terraform_file,
     scan_terraform_files,
 )
+from actionscope.parsers.terraform_refs import parse_resource_reference
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "terraform"
 
@@ -285,6 +286,63 @@ def test_role_policy_attachment_sets_role_name() -> None:
     assert attached.metadata["terraform_attachment"] == (
         "aws_iam_role_policy_attachment.deploy"
     )
+
+
+def test_indexed_role_references_resolve_to_the_role_declaration() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "deploy": {
+                        "name": "github-deploy-role",
+                        "assume_role_policy": "{}",
+                    }
+                }
+            },
+            {
+                "aws_iam_role_policy": {
+                    "inline": {
+                        "role": "${aws_iam_role.deploy[count.index].name}",
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": "*",
+                                }
+                            ]
+                        },
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "indexed.tf")
+
+    assert findings[0].role_name == "github-deploy-role"
+
+
+def test_resource_reference_parser_preserves_index_traversals() -> None:
+    cases = {
+        "aws_iam_role.deploy[count.index].name": (
+            "aws_iam_role.deploy",
+            "aws_iam_role.deploy[count.index]",
+        ),
+        "${aws_iam_role.deploy[each.key].arn}": (
+            "aws_iam_role.deploy",
+            "aws_iam_role.deploy[each.key]",
+        ),
+        '${aws_iam_role.deploy["prod.us"].name}': (
+            "aws_iam_role.deploy",
+            'aws_iam_role.deploy["prod.us"]',
+        ),
+    }
+
+    for value, expected in cases.items():
+        parsed = parse_resource_reference(value, "aws_iam_role")
+        assert parsed is not None
+        assert (parsed.declaration_address, parsed.instance_address) == expected
 
 
 def test_role_without_explicit_name_does_not_use_resource_label() -> None:

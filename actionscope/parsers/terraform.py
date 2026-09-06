@@ -12,6 +12,7 @@ import hcl2
 
 from actionscope.analyzers.iam_risk import classify_actions, get_overall_risk
 from actionscope.models import IamAction, PolicyFinding, RiskLevel
+from actionscope.parsers.terraform_refs import parse_resource_reference
 
 PRIVILEGE_ESCALATION_ACTIONS = {
     "iam:attachrolepolicy",
@@ -621,9 +622,9 @@ def _resolve_role_reference(
 
     reference = _terraform_reference_body(role_reference)
     if reference:
-        if reference.startswith("aws_iam_role."):
-            address = ".".join(reference.split(".")[:2])
-            return role_names.get(address)
+        role = parse_resource_reference(reference, "aws_iam_role")
+        if role:
+            return role_names.get(role.declaration_address)
         return None
 
     if role_reference.startswith("arn:"):

@@ -313,6 +313,36 @@ def test_same_role_name_in_one_terraform_module_is_ambiguous_by_resource() -> No
     assert "ambiguous" in binding.match_reason
 
 
+def test_indexed_terraform_role_instances_do_not_collapse() -> None:
+    us_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/terraform/us.tf",
+        role_name="github-deploy-role",
+    )
+    us_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.us",
+        "terraform_role_reference": '${aws_iam_role.deploy["prod.us"].name}',
+    }
+    eu_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/eu.tf",
+        role_name="github-deploy-role",
+    )
+    eu_policy.metadata = {
+        "terraform_address": "aws_iam_role_policy.eu",
+        "terraform_role_reference": '${aws_iam_role.deploy["prod.eu"].name}',
+    }
+
+    binding = build_bindings(
+        [credential_source()],
+        [us_policy, eu_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is None
+    assert "ambiguous" in binding.match_reason
+
+
 def test_failed_aws_verification_does_not_replace_static_role_evidence() -> None:
     static_policy = policy_finding(
         RiskLevel.CRITICAL,

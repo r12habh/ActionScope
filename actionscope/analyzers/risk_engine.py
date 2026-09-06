@@ -36,6 +36,7 @@ from actionscope.models import (
     WorkflowCredentialBinding,
     get_unmatched_findings,
 )
+from actionscope.parsers.terraform_refs import parse_resource_reference
 
 if TYPE_CHECKING:
     from actionscope.analyzers.reusable_workflows import ReusableWorkflowScan
@@ -593,19 +594,8 @@ def _repository_role_identity(
 
 def _terraform_role_address(value: object) -> str | None:
     """Extract an aws_iam_role resource address from a Terraform reference."""
-    if not isinstance(value, str):
-        return None
-
-    reference = value.strip()
-    if reference.startswith("${") and reference.endswith("}"):
-        reference = reference[2:-1].strip()
-    if not reference.startswith("aws_iam_role."):
-        return None
-
-    parts = reference.split(".")
-    if len(parts) < 2 or not parts[1]:
-        return None
-    return ".".join(parts[:2])
+    reference = parse_resource_reference(value, "aws_iam_role")
+    return reference.instance_address if reference else None
 
 
 def _policy_match(
