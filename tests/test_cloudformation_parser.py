@@ -204,6 +204,44 @@ def test_conditional_sam_policy_is_not_flattened_into_active_permissions() -> No
     assert "Fn::If" in findings[0].metadata["unresolved_policy_attachments"][0]
 
 
+def test_sam_policies_preserved_when_role_can_resolve_to_no_value() -> None:
+    template = {
+        "Resources": {
+            "WorkerFunction": {
+                "Type": "AWS::Serverless::Function",
+                "Properties": {
+                    "Role": {
+                        "Fn::If": [
+                            "UseExistingRole",
+                            "arn:aws:iam::123456789012:role/existing",
+                            {"Ref": "AWS::NoValue"},
+                        ]
+                    },
+                    "Policies": [
+                        {
+                            "Statement": {
+                                "Effect": "Allow",
+                                "Action": "*",
+                                "Resource": "*",
+                            }
+                        }
+                    ],
+                },
+            }
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+
+    assert len(findings) == 1
+    assert findings[0].has_star_action is True
+    assert findings[0].overall_risk is RiskLevel.CRITICAL
+    assert findings[0].metadata["policy_coverage_complete"] is False
+    assert "conditional execution Role" in findings[0].metadata[
+        "unresolved_policy_attachments"
+    ][0]
+
+
 def test_unknown_dynamic_resource_is_not_treated_as_wildcard() -> None:
     template = {
         "Resources": {

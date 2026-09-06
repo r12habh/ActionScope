@@ -73,7 +73,7 @@ def _extract_iam_policies_from_parsed_files(
     data_documents: dict[str, PolicyFinding] = {}
     managed_policies: dict[str, PolicyFinding] = {}
     role_names: dict[str, str] = {}
-    attachments: list[tuple[str, str, dict]] = []
+    attachments: list[tuple[str, str, str | None, str | None]] = []
 
     for source_file, tf_data in parsed_files:
         for data_type, data_name, body in _iter_blocks(tf_data.get("data")):
@@ -98,6 +98,18 @@ def _extract_iam_policies_from_parsed_files(
                 role_name = _role_name_from_role_resource(resource_name, body)
                 if role_name:
                     role_names[address] = role_name
+                role_reference = f"${{{address}.name}}"
+                for index, policy_reference in enumerate(
+                    _string_list(body.get("managed_policy_arns"))
+                ):
+                    attachments.append(
+                        (
+                            source_file,
+                            f"{address}.managed_policy_arns[{index}]",
+                            role_reference,
+                            policy_reference,
+                        )
+                    )
                 continue
 
             if resource_type == "aws_iam_policy":
@@ -132,12 +144,37 @@ def _extract_iam_policies_from_parsed_files(
                 continue
 
             if resource_type == "aws_iam_role_policy_attachment":
-                attachments.append((source_file, address, body))
+                attachments.append(
+                    (
+                        source_file,
+                        address,
+                        _clean_optional_string(body.get("role")),
+                        _clean_optional_string(body.get("policy_arn")),
+                    )
+                )
+                continue
+
+            if resource_type == "aws_iam_policy_attachment":
+                policy_reference = _clean_optional_string(body.get("policy_arn"))
+                for index, role_reference in enumerate(
+                    _string_list(body.get("roles"))
+                ):
+                    attachments.append(
+                        (
+                            source_file,
+                            f"{address}.roles[{index}]",
+                            role_reference,
+                            policy_reference,
+                        )
+                    )
 
     attached_policy_addresses: set[str] = set()
-    for _source_file, attachment_address, body in attachments:
-        role_reference = _clean_optional_string(body.get("role"))
-        policy_reference = _clean_optional_string(body.get("policy_arn"))
+    for (
+        _source_file,
+        attachment_address,
+        role_reference,
+        policy_reference,
+    ) in attachments:
         role_name = _resolve_role_reference(role_reference, role_names)
         policy_address = _resolve_policy_reference(policy_reference)
 

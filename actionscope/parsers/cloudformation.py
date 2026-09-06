@@ -488,7 +488,8 @@ def extract_iam_policies_from_cloudformation(
 
         if resource_type.startswith("AWS::Serverless::"):
             # SAM ignores Policies when an explicit execution Role is supplied.
-            if properties.get("Role") is not None:
+            execution_role = properties.get("Role")
+            if _sam_role_is_always_explicit(execution_role):
                 continue
             policies = properties.get("Policies")
             documents = _collect_policy_documents(policies)
@@ -499,6 +500,12 @@ def extract_iam_policies_from_cloudformation(
                 "cloudformation_logical_id": str(logical_id),
                 "cloudformation_resource_type": resource_type,
             }
+            if execution_role is not None:
+                unresolved_policies.insert(
+                    0,
+                    "conditional execution Role: "
+                    f"{_attachment_display(execution_role)}",
+                )
             if unresolved_policies:
                 metadata.update(
                     {
@@ -523,6 +530,23 @@ def extract_iam_policies_from_cloudformation(
             )
 
     return findings
+
+
+def _sam_role_is_always_explicit(value: Any) -> bool:
+    """Return whether a SAM Role property can never resolve to NoValue."""
+    if value is None or _is_cloudformation_no_value(value):
+        return False
+    if not isinstance(value, dict) or "Fn::If" not in value:
+        return True
+
+    branches = value.get("Fn::If")
+    if not isinstance(branches, list) or len(branches) != 3:
+        return False
+    return not any(_is_cloudformation_no_value(branch) for branch in branches[1:])
+
+
+def _is_cloudformation_no_value(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("Ref") == "AWS::NoValue"
 
 
 def scan_cloudformation_files(

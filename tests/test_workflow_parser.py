@@ -358,6 +358,46 @@ def test_inherited_access_keys_do_not_duplicate_configure_source() -> None:
     assert sources[0].uses_access_keys is True
 
 
+def test_forwarded_role_outputs_are_not_classified_as_static_keys() -> None:
+    workflow_data = {
+        "permissions": {"id-token": "write"},
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {
+                        "id": "aws-creds",
+                        "uses": "aws-actions/configure-aws-credentials@v5",
+                        "with": {
+                            "role-to-assume": (
+                                "arn:aws:iam::123456789012:role/deploy"
+                            ),
+                            "output-credentials": True,
+                        },
+                    },
+                    {
+                        "name": "Use temporary credentials",
+                        "run": "aws s3 ls",
+                        "env": {
+                            "AWS_ACCESS_KEY_ID": (
+                                "${{ steps.aws-creds.outputs.aws-access-key-id }}"
+                            ),
+                            "AWS_SECRET_ACCESS_KEY": (
+                                "${{ steps.aws-creds.outputs.aws-secret-access-key }}"
+                            ),
+                        },
+                    },
+                ]
+            }
+        },
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].role_arn == "arn:aws:iam::123456789012:role/deploy"
+    assert sources[0].uses_access_keys is False
+
+
 def test_scan_deduplicates_inherited_keys_used_by_local_action(
     tmp_path: Path,
 ) -> None:

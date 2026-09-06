@@ -21,6 +21,10 @@ IAM_ROLE_ARN_PATTERN = re.compile(r"^arn:[^:]+:iam::\d{12}:role/.+")
 AWS_STATIC_CREDENTIAL_ENV_KEYS = frozenset(
     {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
 )
+AWS_TEMPORARY_OUTPUT_NAMES = {
+    "AWS_ACCESS_KEY_ID": "aws-access-key-id",
+    "AWS_SECRET_ACCESS_KEY": "aws-secret-access-key",
+}
 
 
 class GitHubWorkflowLoader(yaml.SafeLoader):
@@ -110,6 +114,14 @@ def extract_aws_credential_sources(
         }
         job_has_oidc = _permissions_have_id_token_write(job_data.get("permissions"))
         job_sources: list[AwsCredentialSource] = []
+        temporary_credential_step_ids = {
+            str(step.get("id"))
+            for step in _job_steps(job_data)
+            if step.get("id")
+            and _is_configure_aws_credentials_action(step.get("uses"))
+            and isinstance(step.get("with"), dict)
+            and _optional_string(step["with"].get("role-to-assume"))
+        }
 
         for step in _job_steps(job_data):
             source = _credential_source_from_step(
@@ -128,6 +140,7 @@ def extract_aws_credential_sources(
                 workflow_file,
                 str(job_name),
                 inherited_env,
+                temporary_credential_step_ids,
             )
             if environment_source is not None:
                 job_sources.append(environment_source)
@@ -428,6 +441,7 @@ def _credential_source_from_environment(
     workflow_file: str,
     job_name: str,
     inherited_env: dict[str, str],
+    temporary_credential_step_ids: set[str] | None = None,
 ) -> AwsCredentialSource | None:
     """Return a source when a job exposes AWS SDK credential variables."""
     candidates = [("Workflow/job environment", inherited_env)]
@@ -442,6 +456,11 @@ def _credential_source_from_environment(
     for location, env_vars in candidates:
         if not AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(env_vars):
             continue
+        if _uses_temporary_credential_outputs(
+            env_vars,
+            temporary_credential_step_ids or set(),
+        ):
+            continue
         return AwsCredentialSource(
             workflow_file=workflow_file,
             job_name=job_name,
@@ -454,6 +473,31 @@ def _credential_source_from_environment(
             role_reference_kind="absent",
         )
     return None
+
+
+def _uses_temporary_credential_outputs(
+    env_vars: dict[str, str],
+    producer_step_ids: set[str],
+) -> bool:
+    """Return whether AWS key variables come from a known role-assumption step."""
+    present_keys = AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(env_vars)
+    if not present_keys or not producer_step_ids:
+        return False
+
+    for env_key in present_keys:
+        value = env_vars[env_key].strip()
+        output_name = AWS_TEMPORARY_OUTPUT_NAMES[env_key]
+        if not any(
+            re.fullmatch(
+                rf"\$\{{\{{\s*steps\.{re.escape(step_id)}\.outputs\."
+                rf"{re.escape(output_name)}\s*\}}\}}",
+                value,
+                re.IGNORECASE,
+            )
+            for step_id in producer_step_ids
+        ):
+            return False
+    return True
 
 
 def _inspect_local_composite_action(
