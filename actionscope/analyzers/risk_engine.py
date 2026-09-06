@@ -95,19 +95,6 @@ def _match_role_to_policy_with_confidence(
         return _PolicyMatch(None, "none", "role ARN is not a static IAM role ARN")
 
     normalized_role_name = role_name.lower()
-    verified_matches = [
-        finding
-        for finding in _aws_verified_findings(matchable_findings)
-        if _finding_matches_role_name(finding, normalized_role_name)
-    ]
-    if verified_matches:
-        return _policy_match(
-            verified_matches,
-            credential_source,
-            "high",
-            "AWS-verified role name match",
-        )
-
     repository_findings = [
         finding
         for finding in matchable_findings
@@ -528,19 +515,6 @@ def _is_failed_aws_verification(finding: PolicyFinding) -> bool:
         finding.source_type == "aws_verified"
         and finding.metadata.get("aws_verification_status") == "error"
     )
-
-
-def _finding_matches_role_name(
-    finding: PolicyFinding,
-    normalized_role_name: str,
-) -> bool:
-    if finding.role_name and normalized_role_name == finding.role_name.lower():
-        return True
-    if not finding.role_arn:
-        return False
-    return normalized_role_name == finding.role_arn.strip("/").rsplit("/", 1)[
-        -1
-    ].lower()
 
 
 def _repository_role_identity(

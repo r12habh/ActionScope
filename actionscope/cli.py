@@ -311,17 +311,24 @@ def scan(
                 for finding in aws_findings
                 if finding.metadata.get("aws_verification_status") != "error"
             ]
-            verified_role_names = {
-                role_name.lower()
-                for finding in successful_aws_findings
-                if finding.role_arn
-                for role_name in [extract_role_name_from_arn(finding.role_arn)]
-                if role_name
-            }
             verified_role_arns = {
                 finding.role_arn
                 for finding in successful_aws_findings
                 if finding.role_arn
+            }
+            workflow_role_arns_by_name: dict[str, set[str]] = {}
+            for source in credential_sources:
+                if not source.role_arn:
+                    continue
+                role_name = extract_role_name_from_arn(source.role_arn)
+                if role_name:
+                    workflow_role_arns_by_name.setdefault(
+                        role_name.lower(), set()
+                    ).add(source.role_arn)
+            verified_role_names = {
+                role_name
+                for role_name, role_arns in workflow_role_arns_by_name.items()
+                if role_arns and role_arns <= verified_role_arns
             }
             static_only = [
                 finding
@@ -719,10 +726,11 @@ def _finding_matches_verified_role(
     if finding.role_name and finding.role_name.lower() in verified_role_names:
         return True
 
+    # A role ARN carries account identity and must only be replaced by an
+    # exact successful verification. Name fallback is reserved for static
+    # repository evidence that has no account-scoped ARN.
     if finding.role_arn:
-        role_tail = finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
-        if role_tail in verified_role_names:
-            return True
+        return False
 
     source_file = finding.source_file.lower()
     if any(role_name in source_file for role_name in verified_role_names):

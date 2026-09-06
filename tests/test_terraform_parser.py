@@ -288,6 +288,57 @@ def test_role_policy_attachment_sets_role_name() -> None:
     )
 
 
+def test_managed_policy_attached_to_multiple_roles_is_preserved_per_role() -> None:
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": "iam:PassRole",
+                "Resource": "*",
+            }
+        ],
+    }
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "dev": {"name": "dev-role", "assume_role_policy": "{}"},
+                    "prod": {"name": "prod-role", "assume_role_policy": "{}"},
+                }
+            },
+            {
+                "aws_iam_policy": {
+                    "shared": {"name": "SharedPolicy", "policy": policy}
+                }
+            },
+            {
+                "aws_iam_role_policy_attachment": {
+                    "dev": {
+                        "role": "${aws_iam_role.dev.name}",
+                        "policy_arn": "${aws_iam_policy.shared.arn}",
+                    },
+                    "prod": {
+                        "role": "${aws_iam_role.prod.name}",
+                        "policy_arn": "${aws_iam_policy.shared.arn}",
+                    },
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "shared.tf")
+
+    assert {finding.role_name for finding in findings} == {"dev-role", "prod-role"}
+    assert all(finding.has_passrole for finding in findings)
+    assert {
+        finding.metadata["terraform_attachment"] for finding in findings
+    } == {
+        "aws_iam_role_policy_attachment.dev",
+        "aws_iam_role_policy_attachment.prod",
+    }
+
+
 def test_indexed_role_references_resolve_to_the_role_declaration() -> None:
     tf_data = {
         "resource": [

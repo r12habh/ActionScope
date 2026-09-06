@@ -110,7 +110,6 @@ def _extract_iam_policies_from_parsed_files(
                     data_documents=data_documents,
                 )
                 managed_policies[address] = finding
-                findings.append(finding)
                 continue
 
             if resource_type == "aws_iam_role_policy":
@@ -135,6 +134,7 @@ def _extract_iam_policies_from_parsed_files(
             if resource_type == "aws_iam_role_policy_attachment":
                 attachments.append((source_file, address, body))
 
+    attached_policy_addresses: set[str] = set()
     for _source_file, attachment_address, body in attachments:
         role_reference = _clean_optional_string(body.get("role"))
         policy_reference = _clean_optional_string(body.get("policy_arn"))
@@ -144,13 +144,28 @@ def _extract_iam_policies_from_parsed_files(
         if not role_name or not policy_address:
             continue
 
-        finding = managed_policies.get(policy_address)
-        if finding is None:
+        managed_finding = managed_policies.get(policy_address)
+        if managed_finding is None:
             continue
 
-        finding.role_name = role_name
-        finding.metadata["terraform_attachment"] = attachment_address
-        finding.metadata["terraform_role_reference"] = role_reference or ""
+        findings.append(
+            _clone_policy_finding(
+                managed_finding,
+                managed_finding.source_file,
+                role_name=role_name,
+                metadata={
+                    "terraform_attachment": attachment_address,
+                    "terraform_role_reference": role_reference or "",
+                },
+            )
+        )
+        attached_policy_addresses.add(policy_address)
+
+    findings.extend(
+        finding
+        for address, finding in managed_policies.items()
+        if address not in attached_policy_addresses
+    )
 
     return findings
 
