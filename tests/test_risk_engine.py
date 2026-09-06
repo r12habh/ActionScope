@@ -268,6 +268,44 @@ def test_same_role_name_in_different_terraform_modules_is_ambiguous() -> None:
     assert "ambiguous" in binding.match_reason
 
 
+def test_failed_aws_verification_does_not_replace_static_role_evidence() -> None:
+    static_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/template.yml",
+        source_type="cloudformation",
+        role_name="github-deploy-role",
+    )
+    failed_verification = PolicyFinding(
+        source_file="aws://iam/role/github-deploy-role",
+        source_type="aws_verified",
+        role_arn="arn:aws:iam::123456789012:role/github-deploy-role",
+        actions=[
+            IamAction(
+                action="aws:VerifyRolePolicies",
+                access_level="Info",
+                risk_level=RiskLevel.INFO,
+                description="AWS verification error: access_denied",
+                resource="arn:aws:iam::123456789012:role/github-deploy-role",
+            )
+        ],
+        overall_risk=RiskLevel.INFO,
+        metadata={"aws_verification_status": "error"},
+    )
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [static_policy, failed_verification],
+        [],
+    )
+
+    binding = result.bindings[0]
+    assert binding.policy_finding is static_policy
+    assert binding.policy_source == "cloudformation"
+    assert result.overall_risk is RiskLevel.CRITICAL
+
+
 def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> None:
     read_policy = policy_finding(
         RiskLevel.LOW,

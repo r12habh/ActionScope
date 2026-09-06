@@ -306,15 +306,22 @@ def scan(
             aws_findings, aws_errors = verify_all_credential_sources(
                 credential_sources
             )
+            successful_aws_findings = [
+                finding
+                for finding in aws_findings
+                if finding.metadata.get("aws_verification_status") != "error"
+            ]
             verified_role_names = {
                 role_name.lower()
-                for finding in aws_findings
+                for finding in successful_aws_findings
                 if finding.role_arn
                 for role_name in [extract_role_name_from_arn(finding.role_arn)]
                 if role_name
             }
             verified_role_arns = {
-                finding.role_arn for finding in aws_findings if finding.role_arn
+                finding.role_arn
+                for finding in successful_aws_findings
+                if finding.role_arn
             }
             static_only = [
                 finding

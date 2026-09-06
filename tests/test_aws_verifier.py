@@ -126,6 +126,7 @@ class TestFetchRolePolicies:
         assert finding is not None
         assert finding.source_type == "aws_verified"
         assert finding.role_arn == self.role_arn
+        assert finding.metadata["aws_verification_status"] == "success"
         assert finding.has_passrole is True
         assert finding.overall_risk is RiskLevel.CRITICAL
 
@@ -151,6 +152,8 @@ class TestFetchRolePolicies:
         assert finding is not None
         assert finding.source_type == "aws_verified"
         assert finding.overall_risk is RiskLevel.INFO
+        assert finding.metadata["aws_verification_status"] == "error"
+        assert finding.metadata["aws_verification_error"] == "role_not_found"
         assert "role_not_found" in finding.actions[0].description
 
     def test_is_dynamic_reference_true_for_expressions(self) -> None:

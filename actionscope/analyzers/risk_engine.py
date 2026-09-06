@@ -73,8 +73,13 @@ def _match_role_to_policy_with_confidence(
     if _is_dynamic_reference(role_arn):
         return _PolicyMatch(None, "none", "role ARN is a dynamic reference")
 
+    matchable_findings = [
+        finding
+        for finding in policy_findings
+        if not _is_failed_aws_verification(finding)
+    ]
     exact_arn_matches = [
-        finding for finding in policy_findings if finding.role_arn == role_arn
+        finding for finding in matchable_findings if finding.role_arn == role_arn
     ]
     if exact_arn_matches:
         return _policy_match(
@@ -91,7 +96,7 @@ def _match_role_to_policy_with_confidence(
     normalized_role_name = role_name.lower()
     verified_matches = [
         finding
-        for finding in _aws_verified_findings(policy_findings)
+        for finding in _aws_verified_findings(matchable_findings)
         if _finding_matches_role_name(finding, normalized_role_name)
     ]
     if verified_matches:
@@ -104,7 +109,7 @@ def _match_role_to_policy_with_confidence(
 
     repository_findings = [
         finding
-        for finding in policy_findings
+        for finding in matchable_findings
         if finding.source_type != "aws_verified"
     ]
     relationship_matches = [
@@ -513,7 +518,15 @@ def _aws_verified_findings(
         finding
         for finding in policy_findings
         if finding.source_type == "aws_verified"
+        and finding.metadata.get("aws_verification_status") != "error"
     ]
+
+
+def _is_failed_aws_verification(finding: PolicyFinding) -> bool:
+    return (
+        finding.source_type == "aws_verified"
+        and finding.metadata.get("aws_verification_status") == "error"
+    )
 
 
 def _finding_matches_role_name(

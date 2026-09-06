@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from actionscope import __version__
 from actionscope.cli import main
+from actionscope.models import IamAction, PolicyFinding, RiskLevel
 
 
 @pytest.fixture
@@ -67,6 +68,93 @@ def test_aws_verify_prints_running_message(
     )
     assert result.exit_code == 0
     assert "Running AWS verification" in result.output
+
+
+def test_failed_aws_verify_keeps_critical_cloudformation_evidence(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "deploy.yml").write_text(
+        """
+on: push
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/github-deploy-role
+          aws-region: us-east-1
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "template.yml").write_text(
+        """
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-deploy-role
+      AssumeRolePolicyDocument:
+        Statement: []
+      Policies:
+        - PolicyName: Admin
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: "*"
+""",
+        encoding="utf-8",
+    )
+    failed = PolicyFinding(
+        source_file="aws://iam/role/github-deploy-role",
+        source_type="aws_verified",
+        role_arn="arn:aws:iam::123456789012:role/github-deploy-role",
+        actions=[
+            IamAction(
+                action="aws:VerifyRolePolicies",
+                access_level="Info",
+                risk_level=RiskLevel.INFO,
+                description="AWS verification error: access_denied",
+                resource="arn:aws:iam::123456789012:role/github-deploy-role",
+            )
+        ],
+        metadata={"aws_verification_status": "error"},
+    )
+
+    monkeypatch.setattr(
+        "actionscope.verifiers.aws_verifier.check_boto3_available",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "actionscope.verifiers.aws_verifier.verify_all_credential_sources",
+        lambda _sources: ([failed], ["AWS verification access denied"]),
+    )
+
+    result = runner.invoke(
+        main,
+        [
+            "scan",
+            str(tmp_path),
+            "--aws-verify",
+            "--output-format",
+            "json",
+            "--fail-on",
+            "critical",
+        ],
+    )
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    assert data["overall_risk"] == "critical"
+    assert data["findings"][0]["policy_source"] == "cloudformation"
 
 
 def test_version_flag_prints_version(runner: CliRunner) -> None:
