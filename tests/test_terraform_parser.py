@@ -424,6 +424,36 @@ def test_role_managed_policy_arns_retains_role_relationship() -> None:
     assert findings[0].has_passrole is True
 
 
+def test_external_managed_policy_arn_marks_role_coverage_partial() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "deploy": {
+                        "name": "github-deploy-role",
+                        "assume_role_policy": "{}",
+                        "managed_policy_arns": [
+                            "arn:aws:iam::aws:policy/AdministratorAccess"
+                        ],
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "role.tf")
+
+    assert len(findings) == 1
+    assert findings[0].role_name == "github-deploy-role"
+    assert findings[0].metadata["policy_coverage_complete"] is False
+    assert findings[0].metadata["unresolved_policy_attachments"] == [
+        "arn:aws:iam::aws:policy/AdministratorAccess"
+    ]
+    assert findings[0].metadata["coverage_gap_type"] == (
+        "unresolved_terraform_policy_attachment"
+    )
+
+
 def test_generic_policy_attachment_retains_each_role_relationship() -> None:
     tf_data = {
         "resource": [
