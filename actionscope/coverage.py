@@ -25,8 +25,8 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
                         description=(
                             "The workflow role has "
                             f"{attachment_count} attached policy source(s) "
-                            "whose contents are unavailable in the CloudFormation "
-                            "template; the reported IAM risk is partial."
+                            "whose contents could not be resolved from the analyzed "
+                            "policy evidence; the reported IAM risk is partial."
                         ),
                         workflow_file=source.workflow_file,
                         job_name=source.job_name,

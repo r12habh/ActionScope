@@ -130,6 +130,7 @@ def extract_aws_credential_sources(
                 str(job_name),
                 workflow_has_oidc or job_has_oidc,
                 inherited_env=inherited_env,
+                temporary_credential_step_ids=temporary_credential_step_ids,
             )
             if source is not None:
                 job_sources.append(source)
@@ -178,6 +179,7 @@ def extract_delegated_credential_sources(
         }
         job_has_oidc = _permissions_have_id_token_write(job_data.get("permissions"))
         has_oidc = workflow_has_oidc or job_has_oidc
+        temporary_credential_step_ids = _temporary_credential_step_ids(job_data)
 
         for step in _job_steps(job_data):
             uses = step.get("uses")
@@ -195,6 +197,7 @@ def extract_delegated_credential_sources(
                 job_name_str,
                 has_oidc,
                 inherited_env,
+                temporary_credential_step_ids,
             )
             credential_sources.extend(sources)
             warnings.extend(local_warnings)
@@ -403,6 +406,7 @@ def _credential_source_from_step(
     has_oidc_permission: bool,
     step_name_prefix: str = "",
     inherited_env: dict[str, str] | None = None,
+    temporary_credential_step_ids: set[str] | None = None,
 ) -> AwsCredentialSource | None:
     uses = step.get("uses")
     if not _is_configure_aws_credentials_action(uses):
@@ -426,9 +430,10 @@ def _credential_source_from_step(
         job_name=job_name,
         step_name=step_name,
         role_arn=role_arn,
-        uses_access_keys=(
-            "aws-access-key-id" in with_block
-            or bool(AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(env_vars))
+        uses_access_keys=_has_usable_static_credentials(
+            with_block,
+            env_vars,
+            temporary_credential_step_ids or set(),
         ),
         uses_oidc=bool(role_arn and has_oidc_permission),
         aws_region=_optional_string(with_block.get("aws-region")),
@@ -454,7 +459,7 @@ def _credential_source_from_environment(
     )
 
     for location, env_vars in candidates:
-        if not AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(env_vars):
+        if not _has_usable_static_credential_pair(env_vars):
             continue
         if _uses_temporary_credential_outputs(
             env_vars,
@@ -480,11 +485,10 @@ def _uses_temporary_credential_outputs(
     producer_step_ids: set[str],
 ) -> bool:
     """Return whether AWS key variables come from a known role-assumption step."""
-    present_keys = AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(env_vars)
-    if not present_keys or not producer_step_ids:
+    if not _has_usable_static_credential_pair(env_vars) or not producer_step_ids:
         return False
 
-    for env_key in present_keys:
+    for env_key in AWS_STATIC_CREDENTIAL_ENV_KEYS:
         value = env_vars[env_key].strip()
         output_name = AWS_TEMPORARY_OUTPUT_NAMES[env_key]
         if not any(
@@ -500,6 +504,57 @@ def _uses_temporary_credential_outputs(
     return True
 
 
+def _has_usable_static_credentials(
+    with_block: dict,
+    env_vars: dict[str, str],
+    producer_step_ids: set[str],
+) -> bool:
+    """Return whether both long-lived AWS credential values are configured."""
+    credential_values = {
+        "AWS_ACCESS_KEY_ID": _first_nonempty_string(
+            with_block.get("aws-access-key-id"),
+            env_vars.get("AWS_ACCESS_KEY_ID"),
+        ),
+        "AWS_SECRET_ACCESS_KEY": _first_nonempty_string(
+            with_block.get("aws-secret-access-key"),
+            env_vars.get("AWS_SECRET_ACCESS_KEY"),
+        ),
+    }
+    if not _has_usable_static_credential_pair(credential_values):
+        return False
+    return not _uses_temporary_credential_outputs(
+        credential_values,
+        producer_step_ids,
+    )
+
+
+def _has_usable_static_credential_pair(env_vars: dict[str, str]) -> bool:
+    """Return whether both required AWS SDK credential values are non-empty."""
+    return all(
+        isinstance(env_vars.get(key), str) and bool(env_vars[key].strip())
+        for key in AWS_STATIC_CREDENTIAL_ENV_KEYS
+    )
+
+
+def _first_nonempty_string(*values: Any) -> str:
+    for value in values:
+        if value is not None and str(value).strip():
+            return str(value)
+    return ""
+
+
+def _temporary_credential_step_ids(job_data: dict) -> set[str]:
+    """Return role-assumption step IDs that can emit temporary credentials."""
+    return {
+        str(step.get("id"))
+        for step in _job_steps(job_data)
+        if step.get("id")
+        and _is_configure_aws_credentials_action(step.get("uses"))
+        and isinstance(step.get("with"), dict)
+        and _optional_string(step["with"].get("role-to-assume"))
+    }
+
+
 def _inspect_local_composite_action(
     uses_ref: str,
     caller_step: dict,
@@ -508,6 +563,7 @@ def _inspect_local_composite_action(
     job_name: str,
     has_oidc_permission: bool,
     inherited_env: dict[str, str] | None = None,
+    temporary_credential_step_ids: set[str] | None = None,
 ) -> tuple[list[AwsCredentialSource], list[str]]:
     action_file = _local_action_file(repo_path, uses_ref)
     if action_file is None:
@@ -553,6 +609,7 @@ def _inspect_local_composite_action(
             has_oidc_permission,
             step_name_prefix=f"Local action {uses_ref}",
             inherited_env=caller_env,
+            temporary_credential_step_ids=temporary_credential_step_ids,
         )
         if source is not None:
             sources.append(source)
@@ -563,7 +620,11 @@ def _inspect_local_composite_action(
         }
         if (
             isinstance(resolved_step.get("run"), str)
-            and AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(nested_env)
+            and _has_usable_static_credential_pair(nested_env)
+            and not _uses_temporary_credential_outputs(
+                nested_env,
+                temporary_credential_step_ids or set(),
+            )
         ):
             nested_name = str(
                 resolved_step.get("name") or "Shell step environment"
@@ -607,6 +668,7 @@ def _local_action_access_key_locations(
             **workflow_env,
             **_environment_mapping(job_data.get("env")),
         }
+        temporary_credential_step_ids = _temporary_credential_step_ids(job_data)
         for step in _job_steps(job_data):
             uses = step.get("uses")
             if not isinstance(uses, str) or not _is_local_action_reference(
@@ -622,7 +684,11 @@ def _local_action_access_key_locations(
                 for source in delegated_sources
             )
             if (
-                AWS_STATIC_CREDENTIAL_ENV_KEYS.intersection(caller_env)
+                _has_usable_static_credential_pair(caller_env)
+                and not _uses_temporary_credential_outputs(
+                    caller_env,
+                    temporary_credential_step_ids,
+                )
                 and has_matching_delegated_source
             ):
                 locations.add(

@@ -267,6 +267,29 @@ def test_unresolved_managed_policy_attachment_creates_coverage_gap() -> None:
     assert "reported IAM risk is partial" in gaps[0].description
 
 
+def test_unresolved_terraform_attachment_uses_source_neutral_wording() -> None:
+    policy = PolicyFinding(
+        source_file="infrastructure/iam.tf",
+        source_type="terraform",
+        role_arn=None,
+        role_name="deploy",
+        overall_risk=RiskLevel.INFO,
+        metadata={
+            "policy_coverage_complete": False,
+            "unresolved_policy_attachments": [
+                "arn:aws:iam::aws:policy/AdministratorAccess"
+            ],
+        },
+    )
+    result = ScanResult(bindings=[_binding(policy=policy, source="terraform")])
+
+    gaps = build_coverage_gaps(result)
+
+    assert len(gaps) == 1
+    assert "CloudFormation" not in gaps[0].description
+    assert "analyzed policy evidence" in gaps[0].description
+
+
 def test_analyzer_error_marks_coverage_partial() -> None:
     result = ScanResult(errors=["Scan incomplete: parser failed"])
 
