@@ -454,6 +454,49 @@ def test_external_managed_policy_arn_marks_role_coverage_partial() -> None:
     )
 
 
+def test_unresolved_attachment_role_retains_policy_as_partial_coverage() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_policy": {
+                    "admin": {
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "iam:PassRole",
+                                    "Resource": "*",
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "aws_iam_role_policy_attachment": {
+                    "admin": {
+                        "role": "${var.role_name}",
+                        "policy_arn": "${aws_iam_policy.admin.arn}",
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "attachment.tf")
+
+    assert len(findings) == 1
+    assert findings[0].role_name is None
+    assert findings[0].has_passrole is True
+    assert findings[0].metadata["policy_coverage_complete"] is False
+    assert findings[0].metadata["coverage_gap_type"] == (
+        "unresolved_terraform_role_target"
+    )
+    assert "var.role_name" in findings[0].metadata[
+        "unresolved_policy_attachments"
+    ][0]
+
+
 def test_generic_policy_attachment_retains_each_role_relationship() -> None:
     tf_data = {
         "resource": [

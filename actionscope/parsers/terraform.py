@@ -177,13 +177,44 @@ def _extract_iam_policies_from_parsed_files(
     ) in attachments:
         role_name = _resolve_role_reference(role_reference, role_names)
         policy_address = _resolve_policy_reference(policy_reference)
-
-        if not role_name:
-            continue
-
         managed_finding = (
             managed_policies.get(policy_address) if policy_address else None
         )
+        if not role_name:
+            unresolved_role = role_reference or "unknown role reference"
+            metadata = {
+                "terraform_address": attachment_address,
+                "terraform_role_reference": role_reference or "",
+                "policy_coverage_complete": False,
+                "unresolved_policy_attachments": [
+                    f"unresolved role target: {unresolved_role}"
+                ],
+                "coverage_gap_type": "unresolved_terraform_role_target",
+                "coverage_gap_description": (
+                    "Terraform policy attachment has a role target that "
+                    f"ActionScope could not resolve: {unresolved_role}"
+                ),
+            }
+            if managed_finding is None:
+                findings.append(
+                    _empty_finding(
+                        _source_file,
+                        policy_name=attachment_address,
+                        metadata=metadata,
+                    )
+                )
+            else:
+                findings.append(
+                    _clone_policy_finding(
+                        managed_finding,
+                        managed_finding.source_file,
+                        metadata=metadata,
+                    )
+                )
+                if policy_address:
+                    attached_policy_addresses.add(policy_address)
+            continue
+
         if managed_finding is None:
             unresolved_policy = policy_reference or "unknown policy reference"
             findings.append(
