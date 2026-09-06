@@ -186,8 +186,14 @@ def extract_iam_policies_from_cloudformation(
         logical_id: _role_unresolved_inline_policy_entries(properties)
         for logical_id, properties in roles.items()
     }
+    for logical_id, properties in roles.items():
+        role_name_value = properties.get("RoleName")
+        if role_name_value is not None and role_names[logical_id] is None:
+            role_unresolved_attachments[logical_id].append(
+                "unresolved RoleName: " + _attachment_display(role_name_value)
+            )
 
-    policy_resources: dict[str, tuple[str, dict, dict]] = {}
+    policy_resources: dict[str, tuple[str, dict, dict, Any]] = {}
     for logical_id, resource in resources.items():
         if not isinstance(resource, dict):
             continue
@@ -202,6 +208,7 @@ def extract_iam_policies_from_cloudformation(
                 resource_type,
                 properties,
                 properties["PolicyDocument"],
+                resource.get("Condition"),
             )
 
     attached_policy_roles: dict[str, set[str]] = {
@@ -224,7 +231,12 @@ def extract_iam_policies_from_cloudformation(
                 )
 
     standalone_policy_findings: list[PolicyFinding] = []
-    for policy_id, (resource_type, properties, document) in policy_resources.items():
+    for policy_id, (
+        resource_type,
+        properties,
+        document,
+        resource_condition,
+    ) in policy_resources.items():
         (
             resolved_role_ids,
             unresolved_targets,
@@ -239,6 +251,36 @@ def extract_iam_policies_from_cloudformation(
             or _static_string(properties.get("ManagedPolicyName"))
             or policy_id
         )
+        resolved_role_ids.update(attached_policy_roles[policy_id])
+        if resource_condition is not None:
+            attachment = (
+                f"{policy_name} is controlled by CloudFormation Condition "
+                f"{_attachment_display(resource_condition)}"
+            )
+            for role_id in resolved_role_ids | conditional_role_ids:
+                role_unresolved_attachments[role_id].append(attachment)
+            standalone_policy_findings.append(
+                _finding_from_documents(
+                    [document],
+                    source_file,
+                    policy_name=policy_name,
+                    metadata={
+                        "cloudformation_logical_id": policy_id,
+                        "cloudformation_resource_type": resource_type,
+                        "policy_coverage_complete": False,
+                        "unresolved_policy_attachments": [attachment],
+                        "coverage_gap_type": (
+                            "conditional_cloudformation_policy_resource"
+                        ),
+                        "coverage_gap_description": (
+                            f"CloudFormation policy {policy_name} is conditional; "
+                            "its deployed permissions cannot be determined "
+                            "statically."
+                        ),
+                    },
+                )
+            )
+            continue
         if conditional_role_ids:
             attachment = (
                 f"{policy_name} has a conditional role target: "
@@ -253,7 +295,6 @@ def extract_iam_policies_from_cloudformation(
             )
             for role_id in roles:
                 role_unresolved_attachments[role_id].append(attachment)
-        resolved_role_ids.update(attached_policy_roles[policy_id])
         for role_id in resolved_role_ids:
             role_documents[role_id].append(document)
             role_policy_ids[role_id].append(policy_id)
@@ -308,6 +349,25 @@ def extract_iam_policies_from_cloudformation(
             continue
         policy_ids = list(dict.fromkeys(role_policy_ids[logical_id]))
         policy_names = list(dict.fromkeys(role_policy_names[logical_id]))
+        metadata: dict[str, object] = {
+            "cloudformation_logical_id": logical_id,
+            "cloudformation_resource_type": "AWS::IAM::Role",
+            "cloudformation_policy_logical_ids": policy_ids,
+            "policy_coverage_complete": not unresolved_attachments,
+            "unresolved_policy_attachments": unresolved_attachments,
+        }
+        role_name_value = properties.get("RoleName")
+        if role_name_value is not None and role_names[logical_id] is None:
+            metadata.update(
+                {
+                    "coverage_gap_type": "unresolved_cloudformation_role_name",
+                    "coverage_gap_description": (
+                        f"CloudFormation role {logical_id} has a dynamic RoleName "
+                        "that cannot be correlated to workflow evidence "
+                        "statically."
+                    ),
+                }
+            )
         findings.append(
             _finding_from_documents(
                 documents,
@@ -318,13 +378,7 @@ def extract_iam_policies_from_cloudformation(
                     if len(policy_names) == 1
                     else f"{logical_id}.effective-policies"
                 ),
-                metadata={
-                    "cloudformation_logical_id": logical_id,
-                    "cloudformation_resource_type": "AWS::IAM::Role",
-                    "cloudformation_policy_logical_ids": policy_ids,
-                    "policy_coverage_complete": not unresolved_attachments,
-                    "unresolved_policy_attachments": unresolved_attachments,
-                },
+                metadata=metadata,
             )
         )
 
@@ -714,7 +768,7 @@ def _logical_resource_references(value: Any) -> set[str]:
 
 def _direct_local_policy_reference(
     value: Any,
-    policy_resources: dict[str, tuple[str, dict, dict]],
+    policy_resources: dict[str, tuple[str, dict, dict, Any]],
 ) -> str | None:
     """Resolve only an unambiguous managed-policy resource in this template."""
     if not isinstance(value, dict) or len(value) != 1:
@@ -777,7 +831,20 @@ def _static_string(value: Any) -> str | None:
         return None
     key, item = next(iter(value.items()))
     if key == "Fn::Sub" and isinstance(item, str):
+        if "${" in item:
+            return None
         return item.strip() or None
+    if (
+        key == "Fn::Join"
+        and isinstance(item, list)
+        and len(item) == 2
+        and isinstance(item[0], str)
+        and isinstance(item[1], list)
+    ):
+        parts = [_static_string(part) for part in item[1]]
+        if all(part is not None for part in parts):
+            joined = item[0].join(part for part in parts if part is not None)
+            return joined.strip() or None
     return None
 
 
