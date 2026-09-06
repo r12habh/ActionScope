@@ -183,7 +183,8 @@ def extract_iam_policies_from_cloudformation(
         for logical_id, properties in roles.items()
     }
     role_unresolved_attachments: dict[str, list[str]] = {
-        logical_id: [] for logical_id in roles
+        logical_id: _role_unresolved_inline_policy_entries(properties)
+        for logical_id, properties in roles.items()
     }
 
     policy_resources: dict[str, tuple[str, dict, dict]] = {}
@@ -228,6 +229,7 @@ def extract_iam_policies_from_cloudformation(
             resolved_role_ids,
             unresolved_targets,
             conditional_role_ids,
+            unresolved_target_expressions,
         ) = _resolve_role_targets(
             properties.get("Roles"),
             role_names,
@@ -244,6 +246,13 @@ def extract_iam_policies_from_cloudformation(
             )
             for role_id in conditional_role_ids:
                 role_unresolved_attachments[role_id].append(attachment)
+        if unresolved_target_expressions:
+            attachment = (
+                f"{policy_name} has an unresolved role target: "
+                + ", ".join(unresolved_target_expressions)
+            )
+            for role_id in roles:
+                role_unresolved_attachments[role_id].append(attachment)
         resolved_role_ids.update(attached_policy_roles[policy_id])
         for role_id in resolved_role_ids:
             role_documents[role_id].append(document)
@@ -257,6 +266,26 @@ def extract_iam_policies_from_cloudformation(
         ):
             unresolved_targets = [(None, None)]
         for role_name, role_arn in unresolved_targets:
+            metadata: dict[str, object] = {
+                "cloudformation_logical_id": policy_id,
+                "cloudformation_resource_type": resource_type,
+            }
+            if unresolved_target_expressions:
+                metadata.update(
+                    {
+                        "policy_coverage_complete": False,
+                        "unresolved_policy_attachments": (
+                            unresolved_target_expressions
+                        ),
+                        "coverage_gap_type": (
+                            "unresolved_cloudformation_role_target"
+                        ),
+                        "coverage_gap_description": (
+                            f"CloudFormation policy {policy_name} uses a dynamic "
+                            "role target that cannot be correlated statically."
+                        ),
+                    }
+                )
             standalone_policy_findings.append(
                 _finding_from_documents(
                     [document],
@@ -264,10 +293,7 @@ def extract_iam_policies_from_cloudformation(
                     role_name=role_name,
                     role_arn=role_arn,
                     policy_name=policy_name,
-                    metadata={
-                        "cloudformation_logical_id": policy_id,
-                        "cloudformation_resource_type": resource_type,
-                    },
+                    metadata=metadata,
                 )
             )
 
@@ -528,6 +554,23 @@ def _role_inline_policy_names(properties: dict) -> list[str]:
     ]
 
 
+def _role_unresolved_inline_policy_entries(properties: dict) -> list[str]:
+    """Return inline role-policy entries that cannot be resolved statically."""
+    policies = properties.get("Policies") or []
+    if isinstance(policies, dict):
+        policies = [policies]
+    if not isinstance(policies, list):
+        return [_attachment_display(policies)]
+    return [
+        _attachment_display(policy)
+        for policy in policies
+        if not (
+            isinstance(policy, dict)
+            and isinstance(policy.get("PolicyDocument"), dict)
+        )
+    ]
+
+
 def _collect_policy_documents(value: Any) -> list[dict]:
     if isinstance(value, list):
         return [
@@ -586,12 +629,14 @@ def _resolve_role_targets(
     set[str],
     list[tuple[str | None, str | None]],
     set[str],
+    list[str],
 ]:
     """Split policy role targets into known template roles and external roles."""
     values = value if isinstance(value, list) else [value]
     resolved: set[str] = set()
     unresolved: list[tuple[str | None, str | None]] = []
     conditional: set[str] = set()
+    unresolved_expressions: list[str] = []
 
     for item in values:
         direct_reference = _direct_logical_resource_reference(item)
@@ -606,6 +651,8 @@ def _resolve_role_targets(
 
         static = _static_string(item)
         if static is None:
+            if item is not None:
+                unresolved_expressions.append(_attachment_display(item))
             continue
         matching_role_ids = {
             role_id
@@ -618,7 +665,7 @@ def _resolve_role_targets(
         role_arn = _literal_role_arn(static)
         unresolved.append((_role_name_from_arn(role_arn) or static, role_arn))
 
-    return resolved, unresolved, conditional
+    return resolved, unresolved, conditional, unresolved_expressions
 
 
 def _direct_logical_resource_reference(value: Any) -> str | None:

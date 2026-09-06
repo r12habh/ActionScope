@@ -188,6 +188,35 @@ def test_missing_aud_condition_detected_as_medium() -> None:
     )
 
 
+def test_dynamic_cloudformation_conditions_are_unresolved_not_missing() -> None:
+    policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
+    condition = policy["Statement"][0]["Condition"]
+    condition["StringLike"]["token.actions.githubusercontent.com:sub"] = {
+        "Ref": "GitHubSubject"
+    }
+    condition["StringEquals"]["token.actions.githubusercontent.com:aud"] = {
+        "Fn::Sub": "${Audience}"
+    }
+
+    findings = analyze_json_oidc_trust(policy, "template.yml")
+    issue_ids = {finding.issue_id for finding in findings}
+
+    assert issue_ids == {"unresolved_sub", "unresolved_aud"}
+    assert "missing_sub" not in issue_ids
+    assert "missing_aud" not in issue_ids
+
+
+def test_literal_cloudformation_sub_condition_is_analyzed() -> None:
+    policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
+    policy["Statement"][0]["Condition"]["StringLike"] = {
+        "token.actions.githubusercontent.com:sub": {
+            "Fn::Sub": "repo:acme/app:ref:refs/heads/main"
+        }
+    }
+
+    assert analyze_json_oidc_trust(policy, "template.yml") == []
+
+
 def test_evidence_field_shows_actual_sub_value() -> None:
     findings = analyze_json_oidc_trust(_trust_policy("repo:acme-corp/*"), "iam.tf")
 

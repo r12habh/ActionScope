@@ -244,6 +244,54 @@ def test_role_aggregates_inline_and_attached_policy_documents() -> None:
     assert findings[0].overall_risk is RiskLevel.CRITICAL
 
 
+def test_conditional_inline_role_policy_marks_coverage_partial() -> None:
+    template = {
+        "Resources": {
+            "DeployRole": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "RoleName": "deploy-role",
+                    "Policies": [
+                        {
+                            "PolicyName": "read-builds",
+                            "PolicyDocument": {
+                                "Statement": {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": "arn:aws:s3:::builds/*",
+                                }
+                            },
+                        },
+                        {
+                            "Fn::If": [
+                                "EnableAdmin",
+                                {
+                                    "PolicyName": "admin",
+                                    "PolicyDocument": {
+                                        "Statement": {
+                                            "Effect": "Allow",
+                                            "Action": "*",
+                                            "Resource": "*",
+                                        }
+                                    },
+                                },
+                                {"Ref": "AWS::NoValue"},
+                            ]
+                        },
+                    ],
+                },
+            }
+        }
+    }
+
+    finding = extract_iam_policies_from_cloudformation(template, "template.yml")[0]
+
+    assert [action.action for action in finding.actions] == ["s3:GetObject"]
+    assert finding.overall_risk is RiskLevel.LOW
+    assert finding.metadata["policy_coverage_complete"] is False
+    assert "Fn::If" in finding.metadata["unresolved_policy_attachments"][0]
+
+
 def test_conditional_role_attachment_is_partial_not_granted_to_every_role() -> None:
     template = {
         "Resources": {
@@ -291,6 +339,56 @@ def test_conditional_role_attachment_is_partial_not_granted_to_every_role() -> N
         in finding.metadata["unresolved_policy_attachments"][0]
         for finding in findings
     )
+
+
+def test_unresolved_role_target_marks_local_roles_partial() -> None:
+    template = {
+        "Resources": {
+            "DeployRole": {
+                "Type": "AWS::IAM::Role",
+                "Properties": {
+                    "RoleName": "deploy-role",
+                    "Policies": [
+                        {
+                            "PolicyDocument": {
+                                "Statement": {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": "arn:aws:s3:::builds/*",
+                                }
+                            }
+                        }
+                    ],
+                },
+            },
+            "ParameterAttachedPolicy": {
+                "Type": "AWS::IAM::Policy",
+                "Properties": {
+                    "PolicyName": "parameter-admin",
+                    "Roles": [{"Ref": "RoleNameParameter"}],
+                    "PolicyDocument": {
+                        "Statement": {
+                            "Effect": "Allow",
+                            "Action": "iam:PassRole",
+                            "Resource": "*",
+                        }
+                    },
+                },
+            },
+        }
+    }
+
+    findings = extract_iam_policies_from_cloudformation(template, "template.yml")
+    binding = build_bindings([_credential("deploy-role")], findings, ".")[0]
+
+    assert binding.policy_finding is not None
+    assert [action.action for action in binding.policy_finding.actions] == [
+        "s3:GetObject"
+    ]
+    assert binding.policy_finding.metadata["policy_coverage_complete"] is False
+    assert "RoleNameParameter" in binding.policy_finding.metadata[
+        "unresolved_policy_attachments"
+    ][0]
 
 
 def test_role_side_managed_policy_ref_is_resolved() -> None:

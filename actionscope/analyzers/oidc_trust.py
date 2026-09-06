@@ -58,8 +58,8 @@ def analyze_oidc_trust_conditions(
     findings: list[OidcTrustFinding] = []
     condition = statement.get("Condition") or statement.get("condition")
     condition_display = _compact(condition) if condition else "no Condition block found"
-    sub_values = _condition_values(condition, ":sub")
-    aud_values = _condition_values(condition, ":aud")
+    sub_values, unresolved_sub_values = _condition_claim_values(condition, ":sub")
+    aud_values, unresolved_aud_values = _condition_claim_values(condition, ":aud")
 
     unsafe_forallvalues = _unsafe_forallvalues_claims(condition)
     if unsafe_forallvalues:
@@ -77,7 +77,21 @@ def analyze_oidc_trust_conditions(
             )
         )
 
-    if not sub_values:
+    if unresolved_sub_values:
+        findings.append(
+            _finding(
+                source_file,
+                role_name,
+                "unresolved_sub",
+                "GitHub OIDC subject condition cannot be resolved statically",
+                RiskLevel.HIGH,
+                _compact(unresolved_sub_values),
+                "Resolve the subject condition to a literal repository and "
+                "protected branch or environment so its scope can be verified.",
+            )
+        )
+
+    if not sub_values and not unresolved_sub_values:
         findings.append(
             _finding(
                 source_file,
@@ -148,7 +162,21 @@ def analyze_oidc_trust_conditions(
                     )
                 )
 
-    if not aud_values:
+    if unresolved_aud_values:
+        findings.append(
+            _finding(
+                source_file,
+                role_name,
+                "unresolved_aud",
+                "GitHub OIDC audience condition cannot be resolved statically",
+                RiskLevel.MEDIUM,
+                _compact(unresolved_aud_values),
+                "Resolve the audience condition to the literal "
+                "'sts.amazonaws.com' value so it can be verified.",
+            )
+        )
+
+    if not aud_values and not unresolved_aud_values:
         findings.append(
             _finding(
                 source_file,
@@ -397,16 +425,47 @@ def _allows_web_identity_assumption(statement: dict) -> bool:
 
 
 def _condition_values(condition: Any, suffix: str) -> list[str]:
+    values, _unresolved = _condition_claim_values(condition, suffix)
+    return values
+
+
+def _condition_claim_values(
+    condition: Any,
+    suffix: str,
+) -> tuple[list[str], list[Any]]:
     values: list[str] = []
+    unresolved: list[Any] = []
     if not isinstance(condition, dict):
-        return values
+        return values, unresolved
     for operator_value in condition.values():
         if not isinstance(operator_value, dict):
             continue
         for key, value in operator_value.items():
             if str(key).lower().endswith(suffix):
-                values.extend(_string_values(value))
-    return values
+                resolved_values, unresolved_values = _condition_value_parts(value)
+                values.extend(resolved_values)
+                unresolved.extend(unresolved_values)
+    return values, unresolved
+
+
+def _condition_value_parts(value: Any) -> tuple[list[str], list[Any]]:
+    if isinstance(value, str):
+        if "${" in value:
+            return [], [value]
+        return [value], []
+    if isinstance(value, list):
+        resolved: list[str] = []
+        unresolved: list[Any] = []
+        for item in value:
+            item_resolved, item_unresolved = _condition_value_parts(item)
+            resolved.extend(item_resolved)
+            unresolved.extend(item_unresolved)
+        return resolved, unresolved
+    if isinstance(value, dict) and len(value) == 1:
+        substitution = value.get("Fn::Sub")
+        if isinstance(substitution, str) and "${" not in substitution:
+            return [substitution], []
+    return [], [value]
 
 
 def _unsafe_forallvalues_claims(condition: Any) -> dict[str, dict[str, Any]]:
