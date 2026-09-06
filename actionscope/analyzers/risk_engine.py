@@ -110,17 +110,24 @@ def _match_role_to_policy_with_confidence(
     relationship_matches = [
         finding
         for finding in repository_findings
-        if (
-            finding.role_name
-            and normalized_role_name == finding.role_name.lower()
-        )
-        or (
-            finding.role_arn
-            and normalized_role_name
-            == finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
-        )
+        if finding.role_name
+        and normalized_role_name == finding.role_name.lower()
     ]
     if relationship_matches:
+        identity_groups: dict[tuple[str, ...], list[PolicyFinding]] = {}
+        for finding in relationship_matches:
+            identity = _repository_role_identity(finding, normalized_role_name)
+            identity_groups.setdefault(identity, []).append(finding)
+
+        if len(identity_groups) > 1:
+            return _PolicyMatch(
+                None,
+                "none",
+                "multiple infrastructure roles share the role name; "
+                "repository evidence is ambiguous",
+            )
+
+        proven_matches = next(iter(identity_groups.values()))
         source_types = {finding.source_type for finding in relationship_matches}
         relationship = (
             {
@@ -131,7 +138,7 @@ def _match_role_to_policy_with_confidence(
             else "Repository IAM"
         )
         return _policy_match(
-            relationship_matches,
+            proven_matches,
             credential_source,
             "high",
             f"{relationship} role relationship match",
@@ -520,6 +527,33 @@ def _finding_matches_role_name(
     return normalized_role_name == finding.role_arn.strip("/").rsplit("/", 1)[
         -1
     ].lower()
+
+
+def _repository_role_identity(
+    finding: PolicyFinding,
+    normalized_role_name: str,
+) -> tuple[str, ...]:
+    """Return the narrowest repository-scoped identity proven by parser data."""
+    source_path = Path(finding.source_file)
+    if finding.source_type == "terraform":
+        # Terraform files in one directory form a module and may split a role's
+        # inline and attached policies across files. Different directories are
+        # independent modules and cannot be joined by role name alone.
+        return ("terraform", str(source_path.parent), normalized_role_name)
+
+    if finding.source_type == "cloudformation":
+        logical_id = finding.metadata.get("cloudformation_logical_id")
+        return (
+            "cloudformation",
+            str(source_path),
+            str(logical_id or ""),
+            normalized_role_name,
+        )
+
+    # Standalone policy formats do not prove that two files describe the same
+    # deployed role. Keep each file as a separate identity unless an exact ARN
+    # matched earlier in the correlation flow.
+    return (finding.source_type, str(source_path), normalized_role_name)
 
 
 def _policy_match(

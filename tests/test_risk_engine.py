@@ -183,13 +183,12 @@ def test_build_bindings_aggregates_every_policy_for_the_role() -> None:
 
 
 def test_build_bindings_preserves_partial_policy_coverage_when_aggregating() -> None:
-    cloudformation_policy = policy_finding(
+    partial_policy = policy_finding(
         RiskLevel.LOW,
-        source_file="/repo/template.yml",
-        source_type="cloudformation",
+        source_file="/repo/terraform/read.tf",
         role_name="github-deploy-role",
     )
-    cloudformation_policy.metadata = {
+    partial_policy.metadata = {
         "policy_coverage_complete": False,
         "unresolved_policy_attachments": [
             "arn:aws:iam::aws:policy/AdministratorAccess"
@@ -197,13 +196,13 @@ def test_build_bindings_preserves_partial_policy_coverage_when_aggregating() -> 
     }
     terraform_policy = policy_finding(
         RiskLevel.MEDIUM,
-        source_file="/repo/terraform/iam.tf",
+        source_file="/repo/terraform/write.tf",
         role_name="github-deploy-role",
     )
 
     binding = build_bindings(
         [credential_source()],
-        [cloudformation_policy, terraform_policy],
+        [partial_policy, terraform_policy],
         "/repo",
     )[0]
 
@@ -212,6 +211,61 @@ def test_build_bindings_preserves_partial_policy_coverage_when_aggregating() -> 
     assert binding.policy_finding.metadata["unresolved_policy_attachments"] == [
         "arn:aws:iam::aws:policy/AdministratorAccess"
     ]
+
+
+def test_same_role_name_in_different_cloudformation_stacks_is_ambiguous() -> None:
+    dev_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/stacks/dev/template.yml",
+        source_type="cloudformation",
+        role_name="github-deploy-role",
+    )
+    dev_policy.metadata = {"cloudformation_logical_id": "DeployRole"}
+    prod_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/stacks/prod/template.yml",
+        source_type="cloudformation",
+        role_name="github-deploy-role",
+    )
+    prod_policy.metadata = {"cloudformation_logical_id": "DeployRole"}
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [dev_policy, prod_policy],
+        [],
+    )
+
+    binding = result.bindings[0]
+    assert binding.policy_finding is None
+    assert binding.policy_source == "not_found"
+    assert binding.match_confidence == "none"
+    assert "ambiguous" in binding.match_reason
+    assert result.overall_risk is RiskLevel.INFO
+
+
+def test_same_role_name_in_different_terraform_modules_is_ambiguous() -> None:
+    dev_policy = policy_finding(
+        RiskLevel.LOW,
+        source_file="/repo/modules/dev/iam.tf",
+        role_name="github-deploy-role",
+    )
+    prod_policy = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/modules/prod/iam.tf",
+        role_name="github-deploy-role",
+    )
+
+    binding = build_bindings(
+        [credential_source()],
+        [dev_policy, prod_policy],
+        "/repo",
+    )[0]
+
+    assert binding.policy_finding is None
+    assert binding.matched_policy_findings == []
+    assert "ambiguous" in binding.match_reason
 
 
 def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> None:
