@@ -12,6 +12,7 @@ from typing import Any
 import hcl2
 
 from actionscope.analyzers.iam_risk import classify_actions, get_overall_risk
+from actionscope.analyzers.privesc_detector import detect_privesc_paths
 from actionscope.models import IamAction, PolicyFinding, RiskLevel
 from actionscope.parsers.terraform_refs import parse_resource_reference
 
@@ -495,7 +496,7 @@ def _finding_from_statements(
         ):
             has_privilege_escalation = True
 
-    return PolicyFinding(
+    finding = PolicyFinding(
         source_file=source_file,
         source_type="terraform",
         role_arn=role_arn,
@@ -509,6 +510,9 @@ def _finding_from_statements(
         policy_name=policy_name,
         metadata=metadata or {},
     )
+    finding.privesc_paths = detect_privesc_paths(finding, source_file)
+    finding.has_privilege_escalation = bool(finding.privesc_paths)
+    return finding
 
 
 def _includes_privilege_escalation_action(excluded_actions: list[str]) -> bool:

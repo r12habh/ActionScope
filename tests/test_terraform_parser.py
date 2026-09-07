@@ -188,6 +188,41 @@ def test_not_actions_statement_is_classified_conservatively() -> None:
     assert findings[0].has_privilege_escalation
 
 
+def test_not_actions_summary_uses_all_supported_escalation_paths() -> None:
+    tf_data = {
+        "data": [
+            {
+                "aws_iam_policy_document": {
+                    "complex": {
+                        "statement": [
+                            {
+                                "effect": "Allow",
+                                "not_actions": [
+                                    "iam:PassRole",
+                                    "iam:AttachRolePolicy",
+                                    "iam:CreatePolicyVersion",
+                                    "iam:CreateLoginProfile",
+                                    "iam:AddUserToGroup",
+                                    "iam:UpdateLoginProfile",
+                                    "iam:SetDefaultPolicyVersion",
+                                ],
+                                "resources": ["*"],
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "complex.tf")
+
+    assert findings[0].has_privilege_escalation is True
+    assert "create_access_key" in {
+        path.path_id for path in findings[0].privesc_paths
+    }
+
+
 def test_not_resources_statement_is_classified_conservatively() -> None:
     tf_data = {
         "data": [

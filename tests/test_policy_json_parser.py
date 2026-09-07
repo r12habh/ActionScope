@@ -291,6 +291,32 @@ def test_not_action_exclusion_prevents_impossible_iam_escalation() -> None:
     assert detect_privesc_paths(finding, finding.source_file) == []
 
 
+def test_not_action_summary_uses_all_supported_escalation_paths() -> None:
+    finding = extract_actions_from_policy(
+        {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "NotAction": [
+                        "iam:PassRole",
+                        "iam:AttachRolePolicy",
+                        "iam:CreatePolicyVersion",
+                        "iam:CreateLoginProfile",
+                        "iam:AddUserToGroup",
+                        "iam:UpdateLoginProfile",
+                        "iam:SetDefaultPolicyVersion",
+                    ],
+                    "Resource": "*",
+                }
+            ]
+        },
+        "broad.json",
+    )
+
+    assert finding.has_privilege_escalation is True
+    assert "create_access_key" in {path.path_id for path in finding.privesc_paths}
+
+
 def test_not_action_or_not_resource_wildcard_allow_statement_is_noop() -> None:
     finding = extract_actions_from_policy(
         {
