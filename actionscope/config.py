@@ -236,8 +236,16 @@ def apply_action_overrides(
     """Apply IAM action severity policy and return hard-block matches."""
     hard_blocks: list[HardBlockFinding] = []
     for action in finding.actions:
-        hard_blocked = _grant_matches_any(action.action, config.hard_blocks)
-        configured_risk = _configured_risk(action.action, config)
+        hard_blocked = _grant_matches_any(
+            action.action,
+            config.hard_blocks,
+            action.excluded_actions,
+        )
+        configured_risk = _configured_risk(
+            action.action,
+            config,
+            action.excluded_actions,
+        )
         if configured_risk is not None:
             action.risk_level = configured_risk
         if hard_blocked:
@@ -261,16 +269,20 @@ def add_custom_privesc_paths(
     existing_ids = {
         str(getattr(path, "path_id", "")) for path in finding.privesc_paths
     }
-    actions = [action.action.lower() for action in finding.actions]
+    actions = finding.actions
     for path in config.custom_privesc_paths:
         if path.path_id in existing_ids:
             continue
         matched = [
             next(
                 (
-                    action
+                    action.action.lower()
                     for action in actions
-                    if _grant_matches_pattern(action, requirement)
+                    if _grant_matches_pattern(
+                        action.action,
+                        requirement,
+                        action.excluded_actions,
+                    )
                 ),
                 None,
             )
@@ -646,12 +658,13 @@ def _required_string(item: dict[str, Any], key: str, label: str) -> str:
 def _configured_risk(
     action: str,
     config: ActionScopeConfig,
+    excluded_actions: list[str] | None = None,
 ) -> RiskLevel | None:
     """Return the highest-precedence repository risk for an IAM grant."""
     normalized = action.lower()
-    if _grant_matches_any(normalized, config.hard_blocks):
+    if _grant_matches_any(normalized, config.hard_blocks, excluded_actions):
         return RiskLevel.CRITICAL
-    if _grant_matches_any(normalized, config.critical_actions):
+    if _grant_matches_any(normalized, config.critical_actions, excluded_actions):
         return RiskLevel.CRITICAL
     # An accepted-risk pattern may contain a wildcard, but a wildcard grant
     # must not be downgraded merely because it overlaps one accepted action.
@@ -660,15 +673,31 @@ def _configured_risk(
     return None
 
 
-def _grant_matches_any(grant: str, patterns: tuple[str, ...]) -> bool:
+def _grant_matches_any(
+    grant: str,
+    patterns: tuple[str, ...],
+    excluded_actions: list[str] | None = None,
+) -> bool:
     """Return True when an IAM grant can include a configured action pattern."""
-    return any(_grant_matches_pattern(grant, pattern) for pattern in patterns)
+    return any(
+        _grant_matches_pattern(grant, pattern, excluded_actions)
+        for pattern in patterns
+    )
 
 
-def _grant_matches_pattern(grant: str, pattern: str) -> bool:
+def _grant_matches_pattern(
+    grant: str,
+    pattern: str,
+    excluded_actions: list[str] | None = None,
+) -> bool:
     """Conservatively test whether two IAM action patterns can overlap."""
     normalized_grant = grant.lower()
     normalized_pattern = pattern.lower()
+    if any(
+        fnmatch.fnmatchcase(normalized_pattern, exclusion.lower())
+        for exclusion in excluded_actions or []
+    ):
+        return False
     if fnmatch.fnmatchcase(normalized_grant, normalized_pattern):
         return True
     if not any(marker in normalized_grant for marker in "*?"):

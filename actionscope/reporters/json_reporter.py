@@ -51,6 +51,8 @@ def _auth_type_for_binding(binding: WorkflowCredentialBinding) -> str:
         return "oidc"
     if src.uses_access_keys:
         return "access_keys"
+    if src.uses_session_token:
+        return "session_credentials"
     return "unknown"
 
 

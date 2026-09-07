@@ -408,6 +408,56 @@ def test_incomplete_access_key_pair_does_not_create_static_source() -> None:
     assert sources[0].uses_access_keys is False
 
 
+def test_session_token_input_is_not_classified_as_static_keys() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "steps": [
+                    {
+                        "uses": "aws-actions/configure-aws-credentials@v5",
+                        "with": {
+                            "aws-access-key-id": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+                            "aws-secret-access-key": (
+                                "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+                            ),
+                            "aws-session-token": "${{ secrets.AWS_SESSION_TOKEN }}",
+                        },
+                    }
+                ]
+            }
+        }
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys is False
+    assert sources[0].uses_session_token is True
+
+
+def test_session_token_environment_is_not_classified_as_static_keys() -> None:
+    workflow_data = {
+        "jobs": {
+            "deploy": {
+                "env": {
+                    "AWS_ACCESS_KEY_ID": "${{ secrets.AWS_ACCESS_KEY_ID }}",
+                    "AWS_SECRET_ACCESS_KEY": (
+                        "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+                    ),
+                    "AWS_SESSION_TOKEN": "${{ secrets.AWS_SESSION_TOKEN }}",
+                },
+                "steps": [{"run": "aws sts get-caller-identity"}],
+            }
+        }
+    }
+
+    sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys is False
+    assert sources[0].uses_session_token is True
+
+
 def test_forwarded_role_outputs_are_not_classified_as_static_keys() -> None:
     workflow_data = {
         "permissions": {"id-token": "write"},

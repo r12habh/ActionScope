@@ -116,6 +116,8 @@ def _append_path(
         if source.uses_oidc
         else "access_keys"
         if source.uses_access_keys
+        else "session_credentials"
+        if source.uses_session_token
         else "unknown"
     )
     paths.append(

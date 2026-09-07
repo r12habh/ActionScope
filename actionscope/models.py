@@ -107,6 +107,7 @@ class IamAction:
     risk_level: RiskLevel
     description: str
     resource: str
+    excluded_actions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -121,6 +122,7 @@ class AwsCredentialSource:
     uses_oidc: bool
     aws_region: Optional[str]
     role_reference_kind: str = "absent"
+    uses_session_token: bool = False
 
 
 @dataclass

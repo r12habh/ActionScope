@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -70,9 +71,9 @@ def _extract_iam_policies_from_parsed_files(
 ) -> list[PolicyFinding]:
     """Extract IAM findings and resolve simple Terraform IAM relationships."""
     findings: list[PolicyFinding] = []
-    data_documents: dict[str, PolicyFinding] = {}
-    managed_policies: dict[str, PolicyFinding] = {}
-    role_names: dict[str, str] = {}
+    data_documents: dict[tuple[str, str], PolicyFinding] = {}
+    managed_policies: dict[tuple[str, str], PolicyFinding] = {}
+    role_names: dict[tuple[str, str], str] = {}
     attachments: list[tuple[str, str, str | None, str | None]] = []
 
     for source_file, tf_data in parsed_files:
@@ -87,7 +88,7 @@ def _extract_iam_policies_from_parsed_files(
                 policy_name=data_name,
                 metadata={"terraform_address": address},
             )
-            data_documents[address] = finding
+            data_documents[_scoped_address(source_file, address)] = finding
             findings.append(finding)
 
     for source_file, tf_data in parsed_files:
@@ -97,7 +98,7 @@ def _extract_iam_policies_from_parsed_files(
             if resource_type == "aws_iam_role":
                 role_name = _role_name_from_role_resource(resource_name, body)
                 if role_name:
-                    role_names[address] = role_name
+                    role_names[_scoped_address(source_file, address)] = role_name
                 role_reference = f"${{{address}.name}}"
                 for index, policy_reference in enumerate(
                     _string_list(body.get("managed_policy_arns"))
@@ -121,12 +122,16 @@ def _extract_iam_policies_from_parsed_files(
                     metadata={"terraform_address": address},
                     data_documents=data_documents,
                 )
-                managed_policies[address] = finding
+                managed_policies[_scoped_address(source_file, address)] = finding
                 continue
 
             if resource_type == "aws_iam_role_policy":
                 role_reference = _clean_optional_string(body.get("role"))
-                role_name = _resolve_role_reference(role_reference, role_names)
+                role_name = _resolve_role_reference(
+                    role_reference,
+                    role_names,
+                    source_file,
+                )
                 finding = _finding_from_policy_value(
                     body.get("policy"),
                     source_file,
@@ -175,10 +180,18 @@ def _extract_iam_policies_from_parsed_files(
         role_reference,
         policy_reference,
     ) in attachments:
-        role_name = _resolve_role_reference(role_reference, role_names)
+        role_name = _resolve_role_reference(
+            role_reference,
+            role_names,
+            _source_file,
+        )
         policy_address = _resolve_policy_reference(policy_reference)
         managed_finding = (
-            managed_policies.get(policy_address) if policy_address else None
+            managed_policies.get(
+                _scoped_address(_source_file, policy_address)
+            )
+            if policy_address
+            else None
         )
         if not role_name:
             unresolved_role = role_reference or "unknown role reference"
@@ -212,7 +225,9 @@ def _extract_iam_policies_from_parsed_files(
                     )
                 )
                 if policy_address:
-                    attached_policy_addresses.add(policy_address)
+                    attached_policy_addresses.add(
+                        _scoped_address(_source_file, policy_address)
+                    )
             continue
 
         if managed_finding is None:
@@ -250,12 +265,14 @@ def _extract_iam_policies_from_parsed_files(
                 },
             )
         )
-        attached_policy_addresses.add(policy_address)
+        attached_policy_addresses.add(
+            _scoped_address(_source_file, policy_address)
+        )
 
     findings.extend(
         finding
-        for address, finding in managed_policies.items()
-        if address not in attached_policy_addresses
+        for scoped_address, finding in managed_policies.items()
+        if scoped_address not in attached_policy_addresses
     )
 
     return findings
@@ -319,11 +336,12 @@ def _finding_from_policy_value(
     role_name: str | None = None,
     policy_name: str | None = None,
     metadata: dict[str, object] | None = None,
-    data_documents: dict[str, PolicyFinding] | None = None,
+    data_documents: dict[tuple[str, str], PolicyFinding] | None = None,
 ) -> PolicyFinding:
     referenced_document = _referenced_policy_document(
         policy_value,
         data_documents or {},
+        source_file,
     )
     if referenced_document is not None:
         finding = _clone_policy_finding(
@@ -448,6 +466,11 @@ def _finding_from_statements(
 
         resource = _resource_for_analysis(resources)
         classified_actions = classify_actions(statement_actions, resource=resource)
+        excluded_actions = (
+            _string_list(not_actions) if _has_not_actions(statement) else []
+        )
+        for action in classified_actions:
+            action.excluded_actions = excluded_actions
         actions.extend(classified_actions)
 
         normalized_actions = {action.action.lower() for action in classified_actions}
@@ -463,7 +486,10 @@ def _finding_from_statements(
             has_star_resource = True
 
         if statement_has_star_resource and (
-            "*" in normalized_actions
+            (
+                "*" in normalized_actions
+                and _includes_privilege_escalation_action(excluded_actions)
+            )
             or "iam:passrole" in normalized_actions
             or bool(PRIVILEGE_ESCALATION_ACTIONS & normalized_actions)
         ):
@@ -482,6 +508,17 @@ def _finding_from_statements(
         role_name=role_name,
         policy_name=policy_name,
         metadata=metadata or {},
+    )
+
+
+def _includes_privilege_escalation_action(excluded_actions: list[str]) -> bool:
+    candidates = PRIVILEGE_ESCALATION_ACTIONS | {"iam:passrole"}
+    return any(
+        not any(
+            fnmatchcase(candidate, excluded.lower())
+            for excluded in excluded_actions
+        )
+        for candidate in candidates
     )
 
 
@@ -522,7 +559,8 @@ def _parse_policy_value(
 
 def _referenced_policy_document(
     policy_value: Any,
-    data_documents: dict[str, PolicyFinding],
+    data_documents: dict[tuple[str, str], PolicyFinding],
+    source_file: str,
 ) -> PolicyFinding | None:
     if not isinstance(policy_value, str):
         return None
@@ -532,7 +570,7 @@ def _referenced_policy_document(
         return None
 
     address = reference.removesuffix(".json")
-    return data_documents.get(address)
+    return data_documents.get(_scoped_address(source_file, address))
 
 
 def _clone_policy_finding(
@@ -721,7 +759,8 @@ def _role_name_from_role_resource(resource_name: str, body: dict) -> str | None:
 
 def _resolve_role_reference(
     role_reference: str | None,
-    role_names: dict[str, str],
+    role_names: dict[tuple[str, str], str],
+    source_file: str,
 ) -> str | None:
     if not role_reference:
         return None
@@ -730,7 +769,9 @@ def _resolve_role_reference(
     if reference:
         role = parse_resource_reference(reference, "aws_iam_role")
         if role:
-            return role_names.get(role.declaration_address)
+            return role_names.get(
+                _scoped_address(source_file, role.declaration_address)
+            )
         return None
 
     if role_reference.startswith("arn:"):
@@ -743,6 +784,12 @@ def _resolve_role_reference(
         return None
 
     return role_reference.strip("/").rsplit("/", 1)[-1]
+
+
+def _scoped_address(source_file: str, address: str) -> tuple[str, str]:
+    """Return a Terraform address scoped to its containing module directory."""
+    module_directory = str(Path(source_file).expanduser().resolve().parent)
+    return module_directory, address
 
 
 def _resolve_policy_reference(policy_reference: str | None) -> str | None:

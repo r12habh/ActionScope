@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -160,6 +161,13 @@ def extract_actions_from_policy(
             classify_action(action, resource=resource)
             for action in statement_actions
         ]
+        excluded_actions = (
+            _string_list(statement.get("NotAction"))
+            if "NotAction" in statement
+            else []
+        )
+        for action in classified_actions:
+            action.excluded_actions = excluded_actions
         actions.extend(classified_actions)
 
         normalized_actions = {action.action.lower() for action in classified_actions}
@@ -175,7 +183,10 @@ def extract_actions_from_policy(
             has_star_resource = True
 
         if statement_has_star_resource and (
-            ("*" in normalized_actions)
+            (
+                "*" in normalized_actions
+                and _includes_privilege_escalation_action(excluded_actions)
+            )
             or ("iam:passrole" in normalized_actions)
             or bool(PRIVILEGE_ESCALATION_ACTIONS & normalized_actions)
         ):
@@ -191,6 +202,17 @@ def extract_actions_from_policy(
         has_passrole=has_passrole,
         has_privilege_escalation=has_privilege_escalation,
         overall_risk=get_overall_risk(actions),
+    )
+
+
+def _includes_privilege_escalation_action(excluded_actions: list[str]) -> bool:
+    candidates = PRIVILEGE_ESCALATION_ACTIONS | {"iam:passrole"}
+    return any(
+        not any(
+            fnmatchcase(candidate, excluded.lower())
+            for excluded in excluded_actions
+        )
+        for candidate in candidates
     )
 
 
