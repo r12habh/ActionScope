@@ -345,6 +345,57 @@ def test_hard_block_does_not_match_not_action_exclusion() -> None:
     assert finding.actions[0].risk_level is RiskLevel.CRITICAL
 
 
+def test_partial_not_action_exclusions_keep_wildcard_hard_blocks() -> None:
+    broad = PolicyFinding(
+        source_file="iam.json",
+        source_type="json_policy",
+        role_arn=None,
+        actions=[
+            IamAction(
+                action="*",
+                access_level="All",
+                risk_level=RiskLevel.CRITICAL,
+                description="All actions except PassRole",
+                resource="*",
+                excluded_actions=["iam:PassRole"],
+            )
+        ],
+    )
+    create_actions = PolicyFinding(
+        source_file="iam.json",
+        source_type="json_policy",
+        role_arn=None,
+        actions=[
+            IamAction(
+                action="iam:Create*",
+                access_level="Permissions management",
+                risk_level=RiskLevel.CRITICAL,
+                description="Create actions except CreateUser",
+                resource="*",
+                excluded_actions=["iam:CreateUser"],
+            )
+        ],
+    )
+
+    broad_blocks = apply_action_overrides(
+        broad,
+        ActionScopeConfig(
+            source_path=".actionscope.yml",
+            hard_blocks=("iam:*",),
+        ),
+    )
+    create_blocks = apply_action_overrides(
+        create_actions,
+        ActionScopeConfig(
+            source_path=".actionscope.yml",
+            hard_blocks=("iam:Create*",),
+        ),
+    )
+
+    assert len(broad_blocks) == 1
+    assert len(create_blocks) == 1
+
+
 def test_custom_privesc_path_is_added_when_all_actions_match() -> None:
     finding = PolicyFinding(
         source_file="iam.json",

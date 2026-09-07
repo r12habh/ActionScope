@@ -215,7 +215,11 @@ def extract_env_var_references(step: dict) -> dict[str, str]:
     if not isinstance(env_block, dict):
         return {}
 
-    return {str(name): str(value) for name, value in env_block.items()}
+    return {
+        str(name): value
+        for name, value in env_block.items()
+        if isinstance(value, str)
+    }
 
 
 def classify_role_reference(role_reference: str | None) -> str:
@@ -576,8 +580,8 @@ def _has_usable_static_credential_pair(env_vars: dict[str, str]) -> bool:
 
 def _first_nonempty_string(*values: Any) -> str:
     for value in values:
-        if value is not None and str(value).strip():
-            return str(value)
+        if isinstance(value, str) and value.strip():
+            return value
     return ""
 
 
@@ -758,7 +762,11 @@ def _resolve_composite_inputs(step: dict, caller_with: dict) -> dict:
 def _environment_mapping(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
-    return {str(name): str(item) for name, item in value.items()}
+    return {
+        str(name): item
+        for name, item in value.items()
+        if isinstance(item, str)
+    }
 
 
 def _resolve_input_expression(value: Any, caller_with: dict) -> Any:

@@ -251,6 +251,21 @@ def test_extract_env_var_references_returns_env_values() -> None:
     assert env_vars == {"AWS_ACCESS_KEY_ID": "${{ secrets.AWS_KEY }}"}
 
 
+def test_extract_env_var_references_ignores_non_string_values() -> None:
+    env_vars = extract_env_var_references(
+        {
+            "env": {
+                "NULL_VALUE": None,
+                "BOOL_VALUE": True,
+                "NUMBER_VALUE": 123,
+                "STRING_VALUE": "configured",
+            }
+        }
+    )
+
+    assert env_vars == {"STRING_VALUE": "configured"}
+
+
 def test_env_access_key_pair_marks_uses_access_keys_true() -> None:
     workflow_data = {
         "jobs": {
@@ -456,6 +471,54 @@ def test_session_token_environment_is_not_classified_as_static_keys() -> None:
     assert len(sources) == 1
     assert sources[0].uses_access_keys is False
     assert sources[0].uses_session_token is True
+
+
+def test_non_string_session_token_environment_is_not_temporary() -> None:
+    for session_token in (None, True, 123):
+        workflow_data = {
+            "jobs": {
+                "deploy": {
+                    "env": {
+                        "AWS_ACCESS_KEY_ID": "key",
+                        "AWS_SECRET_ACCESS_KEY": "secret",
+                        "AWS_SESSION_TOKEN": session_token,
+                    },
+                    "steps": [{"run": "aws sts get-caller-identity"}],
+                }
+            }
+        }
+
+        sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+        assert len(sources) == 1
+        assert sources[0].uses_access_keys is True
+        assert sources[0].uses_session_token is False
+
+
+def test_non_string_session_token_input_is_not_temporary() -> None:
+    for session_token in (None, True, 123):
+        workflow_data = {
+            "jobs": {
+                "deploy": {
+                    "steps": [
+                        {
+                            "uses": "aws-actions/configure-aws-credentials@v5",
+                            "with": {
+                                "aws-access-key-id": "key",
+                                "aws-secret-access-key": "secret",
+                                "aws-session-token": session_token,
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+
+        sources = extract_aws_credential_sources(workflow_data, "inline.yml")
+
+        assert len(sources) == 1
+        assert sources[0].uses_access_keys is True
+        assert sources[0].uses_session_token is False
 
 
 def test_forwarded_role_outputs_are_not_classified_as_static_keys() -> None:
