@@ -25,6 +25,7 @@ AWS_TEMPORARY_OUTPUT_NAMES = {
     "AWS_ACCESS_KEY_ID": "aws-access-key-id",
     "AWS_SECRET_ACCESS_KEY": "aws-secret-access-key",
 }
+AWS_SESSION_TOKEN_ENV_KEY = "AWS_SESSION_TOKEN"
 
 
 class GitHubWorkflowLoader(yaml.SafeLoader):
@@ -135,7 +136,10 @@ def extract_aws_credential_sources(
             if source is not None:
                 job_sources.append(source)
 
-        if not any(source.uses_access_keys for source in job_sources):
+        if not any(
+            source.uses_access_keys or source.uses_session_token
+            for source in job_sources
+        ):
             environment_source = _credential_source_from_environment(
                 job_data,
                 workflow_file,
@@ -211,7 +215,11 @@ def extract_env_var_references(step: dict) -> dict[str, str]:
     if not isinstance(env_block, dict):
         return {}
 
-    return {str(name): str(value) for name, value in env_block.items()}
+    return {
+        str(name): value
+        for name, value in env_block.items()
+        if isinstance(value, str)
+    }
 
 
 def classify_role_reference(role_reference: str | None) -> str:
@@ -364,7 +372,7 @@ def scan_workflows(
         delegated_access_key_jobs = {
             source.job_name
             for source in delegated_sources
-            if source.uses_access_keys
+            if source.uses_access_keys or source.uses_session_token
         }
         direct_sources = [
             source
@@ -438,6 +446,10 @@ def _credential_source_from_step(
         uses_oidc=bool(role_arn and has_oidc_permission),
         aws_region=_optional_string(with_block.get("aws-region")),
         role_reference_kind=classify_role_reference(role_arn),
+        uses_session_token=_has_usable_session_credentials(
+            with_block,
+            env_vars,
+        ),
     )
 
 
@@ -466,16 +478,18 @@ def _credential_source_from_environment(
             temporary_credential_step_ids or set(),
         ):
             continue
+        uses_session_token = _has_usable_session_credentials({}, env_vars)
         return AwsCredentialSource(
             workflow_file=workflow_file,
             job_name=job_name,
             step_name=location,
             role_arn=None,
-            uses_access_keys=True,
+            uses_access_keys=not uses_session_token,
             uses_oidc=False,
             aws_region=env_vars.get("AWS_REGION")
             or env_vars.get("AWS_DEFAULT_REGION"),
             role_reference_kind="absent",
+            uses_session_token=uses_session_token,
         )
     return None
 
@@ -510,6 +524,8 @@ def _has_usable_static_credentials(
     producer_step_ids: set[str],
 ) -> bool:
     """Return whether both long-lived AWS credential values are configured."""
+    if _has_usable_session_credentials(with_block, env_vars):
+        return False
     credential_values = {
         "AWS_ACCESS_KEY_ID": _first_nonempty_string(
             with_block.get("aws-access-key-id"),
@@ -528,6 +544,32 @@ def _has_usable_static_credentials(
     )
 
 
+def _has_usable_session_credentials(
+    with_block: dict,
+    env_vars: dict[str, str],
+) -> bool:
+    """Return whether a complete temporary AWS credential triple is present."""
+    if not _has_usable_static_credential_pair(
+        {
+            "AWS_ACCESS_KEY_ID": _first_nonempty_string(
+                with_block.get("aws-access-key-id"),
+                env_vars.get("AWS_ACCESS_KEY_ID"),
+            ),
+            "AWS_SECRET_ACCESS_KEY": _first_nonempty_string(
+                with_block.get("aws-secret-access-key"),
+                env_vars.get("AWS_SECRET_ACCESS_KEY"),
+            ),
+        }
+    ):
+        return False
+    return bool(
+        _first_nonempty_string(
+            with_block.get("aws-session-token"),
+            env_vars.get(AWS_SESSION_TOKEN_ENV_KEY),
+        ).strip()
+    )
+
+
 def _has_usable_static_credential_pair(env_vars: dict[str, str]) -> bool:
     """Return whether both required AWS SDK credential values are non-empty."""
     return all(
@@ -538,8 +580,8 @@ def _has_usable_static_credential_pair(env_vars: dict[str, str]) -> bool:
 
 def _first_nonempty_string(*values: Any) -> str:
     for value in values:
-        if value is not None and str(value).strip():
-            return str(value)
+        if isinstance(value, str) and value.strip():
+            return value
     return ""
 
 
@@ -629,22 +671,25 @@ def _inspect_local_composite_action(
             nested_name = str(
                 resolved_step.get("name") or "Shell step environment"
             )
+            uses_session_token = _has_usable_session_credentials({}, nested_env)
             environment_sources.append(
                 AwsCredentialSource(
                     workflow_file=workflow_file,
                     job_name=job_name,
                     step_name=f"Local action {uses_ref} -> {nested_name}",
                     role_arn=None,
-                    uses_access_keys=True,
+                    uses_access_keys=not uses_session_token,
                     uses_oidc=False,
                     aws_region=nested_env.get("AWS_REGION")
                     or nested_env.get("AWS_DEFAULT_REGION"),
                     role_reference_kind="absent",
+                    uses_session_token=uses_session_token,
                 )
             )
 
     if environment_sources and not any(
-        source.uses_access_keys for source in sources
+        source.uses_access_keys or source.uses_session_token
+        for source in sources
     ):
         sources.append(environment_sources[0])
 
@@ -679,7 +724,7 @@ def _local_action_access_key_locations(
             delegated_prefix = f"Local action {uses.strip()} ->"
             has_matching_delegated_source = any(
                 source.job_name == str(job_name)
-                and source.uses_access_keys
+                and (source.uses_access_keys or source.uses_session_token)
                 and source.step_name.startswith(delegated_prefix)
                 for source in delegated_sources
             )
@@ -717,7 +762,11 @@ def _resolve_composite_inputs(step: dict, caller_with: dict) -> dict:
 def _environment_mapping(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
-    return {str(name): str(item) for name, item in value.items()}
+    return {
+        str(name): item
+        for name, item in value.items()
+        if isinstance(item, str)
+    }
 
 
 def _resolve_input_expression(value: Any, caller_with: dict) -> Any:

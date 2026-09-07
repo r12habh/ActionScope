@@ -339,6 +339,52 @@ def test_managed_policy_attached_to_multiple_roles_is_preserved_per_role() -> No
     }
 
 
+def test_attachment_addresses_are_scoped_to_module_directory(
+    tmp_path: Path,
+) -> None:
+    for module_name, role_name, action in (
+        ("module-a", "role-a", "s3:GetObject"),
+        ("module-b", "role-b", "iam:PassRole"),
+    ):
+        module_dir = tmp_path / module_name
+        module_dir.mkdir()
+        module_dir.joinpath("iam.tf").write_text(
+            f'''resource "aws_iam_role" "deploy" {{
+  name = "{role_name}"
+  assume_role_policy = "{{}}"
+}}
+
+resource "aws_iam_policy" "permissions" {{
+  policy = jsonencode({{
+    Statement = [{{
+      Effect = "Allow"
+      Action = "{action}"
+      Resource = "*"
+    }}]
+  }})
+}}
+
+resource "aws_iam_role_policy_attachment" "permissions" {{
+  role = aws_iam_role.deploy.name
+  policy_arn = aws_iam_policy.permissions.arn
+}}
+''',
+            encoding="utf-8",
+        )
+
+    findings, errors = scan_terraform_files(str(tmp_path))
+
+    assert errors == []
+    by_role = {finding.role_name: finding for finding in findings}
+    assert set(by_role) == {"role-a", "role-b"}
+    assert [action.action for action in by_role["role-a"].actions] == [
+        "s3:GetObject"
+    ]
+    assert [action.action for action in by_role["role-b"].actions] == [
+        "iam:PassRole"
+    ]
+
+
 def test_indexed_managed_policy_reference_retains_role_relationship() -> None:
     tf_data = {
         "resource": [

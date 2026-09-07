@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from actionscope.analyzers.privesc_detector import detect_privesc_paths
 from actionscope.models import RiskLevel
 from actionscope.parsers.policy_json import (
     extract_actions_from_policy,
@@ -268,6 +269,26 @@ def test_not_action_and_not_resource_are_conservative() -> None:
     assert finding.has_star_resource
     assert finding.has_privilege_escalation
     assert finding.overall_risk is RiskLevel.CRITICAL
+
+
+def test_not_action_exclusion_prevents_impossible_iam_escalation() -> None:
+    finding = extract_actions_from_policy(
+        {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "NotAction": "iam:*",
+                    "Resource": "*",
+                }
+            ]
+        },
+        "broad.json",
+    )
+
+    assert finding.actions[0].action == "*"
+    assert finding.actions[0].excluded_actions == ["iam:*"]
+    assert finding.has_privilege_escalation is False
+    assert detect_privesc_paths(finding, finding.source_file) == []
 
 
 def test_not_action_or_not_resource_wildcard_allow_statement_is_noop() -> None:

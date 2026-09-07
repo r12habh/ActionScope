@@ -61,6 +61,8 @@ def _auth_display(source: AwsCredentialSource) -> str:
         return "OIDC ✓"
     if source.uses_access_keys:
         return "Static Keys ⚠️"
+    if source.uses_session_token:
+        return "Temporary Session Credentials"
     return "unknown"
 
 

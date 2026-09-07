@@ -448,6 +448,77 @@ def test_custom_privesc_path_matches_actions_split_across_policy_sources() -> No
     assert result.overall_risk is RiskLevel.CRITICAL
 
 
+def test_aggregate_preserves_distinct_not_action_grants() -> None:
+    without_s3 = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/without-s3.tf",
+        role_name="github-deploy-role",
+    )
+    without_s3.actions = [
+        IamAction(
+            action="*",
+            access_level="Permissions management",
+            risk_level=RiskLevel.CRITICAL,
+            description="All actions except S3",
+            resource="*",
+            excluded_actions=["s3:*"],
+        )
+    ]
+    without_s3.metadata = {
+        "terraform_address": "aws_iam_role_policy.without_s3",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+    without_kms = policy_finding(
+        RiskLevel.CRITICAL,
+        source_file="/repo/terraform/without-kms.tf",
+        role_name="github-deploy-role",
+    )
+    without_kms.actions = [
+        IamAction(
+            action="*",
+            access_level="Permissions management",
+            risk_level=RiskLevel.CRITICAL,
+            description="All actions except KMS",
+            resource="*",
+            excluded_actions=["kms:*"],
+        )
+    ]
+    without_kms.metadata = {
+        "terraform_address": "aws_iam_role_policy.without_kms",
+        "terraform_role_reference": "aws_iam_role.deploy.name",
+    }
+    config = ActionScopeConfig(
+        source_path=".actionscope.yml",
+        custom_privesc_paths=(
+            CustomPrivescPath(
+                path_id="decrypt_s3",
+                name="Decrypt S3 data",
+                required_actions=("s3:getobject", "kms:decrypt"),
+                description="Can read and decrypt protected objects.",
+                severity=RiskLevel.CRITICAL,
+                example_attack="Read encrypted objects and decrypt them.",
+            ),
+        ),
+    )
+
+    result = build_scan_result(
+        "/repo",
+        [credential_source()],
+        [],
+        [without_s3, without_kms],
+        [],
+        config=config,
+    )
+
+    aggregate = result.bindings[0].policy_finding
+    assert aggregate is not None
+    assert [action.excluded_actions for action in aggregate.actions] == [
+        ["s3:*"],
+        ["kms:*"],
+    ]
+    assert "decrypt_s3" in {path.path_id for path in aggregate.privesc_paths}
+
+
 def test_ambiguous_content_fallback_does_not_create_effective_policy(
     tmp_path: Path,
 ) -> None:

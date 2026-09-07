@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from typing import Any
 
 from actionscope.models import IamAction, PolicyFinding, RiskLevel
@@ -271,7 +272,7 @@ def _matched_required_actions(
             (
                 action.action
                 for action in actions
-                if _action_matches(required_action, action.action)
+                if _action_matches(required_action, action)
             ),
             None,
         )
@@ -285,22 +286,27 @@ def _has_wildcard_match(
     actions: list[IamAction],
 ) -> bool:
     return any(
-        _action_matches(required_action, action.action)
+        _action_matches(required_action, action)
         and _resource_is_broad(action.resource)
         for required_action in required_actions
         for action in actions
     )
 
 
-def _action_matches(required_action: str, candidate_action: str) -> bool:
+def _action_matches(required_action: str, candidate: IamAction) -> bool:
     required = required_action.strip().lower()
-    candidate = candidate_action.strip().lower()
-    if candidate == "*":
+    if any(
+        fnmatchcase(required, excluded.lower())
+        for excluded in candidate.excluded_actions
+    ):
+        return False
+    candidate_action = candidate.action.strip().lower()
+    if candidate_action == "*":
         return True
-    if candidate == required:
+    if candidate_action == required:
         return True
-    if candidate.endswith(":*"):
-        candidate_service = candidate.split(":", 1)[0]
+    if candidate_action.endswith(":*"):
+        candidate_service = candidate_action.split(":", 1)[0]
         required_service = required.split(":", 1)[0]
         return candidate_service == required_service
     return False

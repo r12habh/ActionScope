@@ -77,6 +77,8 @@ def _format_auth_line(source: AwsCredentialSource) -> str:
         return "Auth: OIDC ✓"
     if source.uses_access_keys:
         return "Auth: Static Keys ⚠️"
+    if source.uses_session_token:
+        return "Auth: Temporary Session Credentials"
     return "Auth: (not detected)"
 
 

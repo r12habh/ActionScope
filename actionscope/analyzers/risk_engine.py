@@ -595,7 +595,7 @@ def _aggregate_policy_findings(
 ) -> PolicyFinding:
     """Combine every matched permission source into one effective role view."""
     actions = []
-    seen_actions: set[tuple[str, str, str, RiskLevel]] = set()
+    seen_actions: set[tuple[str, str, str, RiskLevel, tuple[str, ...]]] = set()
     for finding in findings:
         for action in finding.actions:
             key = (
@@ -603,6 +603,7 @@ def _aggregate_policy_findings(
                 action.resource,
                 action.access_level,
                 action.risk_level,
+                tuple(sorted(excluded.lower() for excluded in action.excluded_actions)),
             )
             if key not in seen_actions:
                 actions.append(action)
