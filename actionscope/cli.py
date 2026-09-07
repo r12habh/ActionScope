@@ -19,6 +19,7 @@ from actionscope.analyzers.risk_engine import (
     finalize_scan_metadata,
 )
 from actionscope.models import PolicyFinding, ScanResult
+from actionscope.parsers.cloudformation import scan_cloudformation_files
 from actionscope.parsers.policy_json import scan_policy_files
 from actionscope.parsers.terraform import scan_terraform_files
 from actionscope.parsers.workflow import (
@@ -275,8 +276,22 @@ def scan(
     except Exception as exc:
         tf_findings, tf_errors = [], [str(exc)]
 
-    all_policy_findings = json_findings + tf_findings
-    all_errors = workflow_errors + json_errors + tf_errors
+    try:
+        cloudformation_findings, cloudformation_errors = (
+            scan_cloudformation_files(repo_path)
+        )
+    except Exception as exc:
+        cloudformation_findings, cloudformation_errors = [], [str(exc)]
+
+    all_policy_findings = (
+        json_findings + tf_findings + cloudformation_findings
+    )
+    all_errors = (
+        workflow_errors
+        + json_errors
+        + tf_errors
+        + cloudformation_errors
+    )
 
     if aws_verify:
         try:
@@ -291,15 +306,29 @@ def scan(
             aws_findings, aws_errors = verify_all_credential_sources(
                 credential_sources
             )
-            verified_role_names = {
-                role_name.lower()
+            successful_aws_findings = [
+                finding
                 for finding in aws_findings
-                if finding.role_arn
-                for role_name in [extract_role_name_from_arn(finding.role_arn)]
-                if role_name
-            }
+                if finding.metadata.get("aws_verification_status") != "error"
+            ]
             verified_role_arns = {
-                finding.role_arn for finding in aws_findings if finding.role_arn
+                finding.role_arn
+                for finding in successful_aws_findings
+                if finding.role_arn
+            }
+            workflow_role_arns_by_name: dict[str, set[str]] = {}
+            for source in credential_sources:
+                if not source.role_arn:
+                    continue
+                role_name = extract_role_name_from_arn(source.role_arn)
+                if role_name:
+                    workflow_role_arns_by_name.setdefault(
+                        role_name.lower(), set()
+                    ).add(source.role_arn)
+            verified_role_names = {
+                role_name
+                for role_name, role_arns in workflow_role_arns_by_name.items()
+                if role_arns and role_arns <= verified_role_arns
             }
             static_only = [
                 finding
@@ -697,10 +726,11 @@ def _finding_matches_verified_role(
     if finding.role_name and finding.role_name.lower() in verified_role_names:
         return True
 
+    # A role ARN carries account identity and must only be replaced by an
+    # exact successful verification. Name fallback is reserved for static
+    # repository evidence that has no account-scoped ARN.
     if finding.role_arn:
-        role_tail = finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
-        if role_tail in verified_role_names:
-            return True
+        return False
 
     source_file = finding.source_file.lower()
     if any(role_name in source_file for role_name in verified_role_names):

@@ -1,7 +1,7 @@
 # Limitations and Finding Calibration
 
-> **Status:** This document ships with ActionScope v0.4.0.
-> **Last updated:** 2026-06-08
+> **Status:** This document describes the current development version.
+> **Last updated:** 2026-08-30
 
 ActionScope reports **security exposure** from static analysis. That is
 valuable, but users need clear calibration: some findings are confirmed
@@ -20,7 +20,7 @@ ActionScope has two analysis modes:
 
 | Mode | What it does | Confidence |
 |---|---|---|
-| **Static** (default) | Reads workflow files, Terraform, and JSON policies locally. Infers blast radius from IAM action names and resource patterns. | Exposure signal — may over-report |
+| **Static** (default) | Reads workflow files, Terraform, CloudFormation/SAM, and JSON policies locally. Infers blast radius from IAM action names and resource patterns. | Exposure signal — may over-report |
 | **`--aws-verify`** | Fetches live IAM policies from AWS (read-only) and cross-references with workflow usage. | Higher confidence — grounded in actual policy state |
 
 ### When to use static mode
@@ -51,6 +51,12 @@ When ActionScope reports `policy_source: not_found`, it means:
 1. The workflow references an IAM role (e.g., `role-to-assume: arn:aws:iam::123456789012:role/my-role`)
 2. ActionScope could not find a matching policy file in the repository
    (static mode), or the AWS API returned access denied (`--aws-verify` mode)
+
+IAM policy documents discovered elsewhere in the repository are shown as
+unmatched, low-confidence audit evidence. They do not raise the workflow's
+overall risk or fail a severity-threshold CI gate until ActionScope can link
+them to a workflow credential source. An explicit `.actionscope.yml`
+`hard_blocks` rule still applies to every parsed IAM grant by design.
 
 ### What to do next
 
@@ -120,6 +126,23 @@ the calling role. It cannot read:
 `iam:GetPolicyVersion`, `iam:ListRolePolicies`, and `iam:GetRolePolicy`.
 To evaluate permissions boundaries or SCP effects, use AWS's
 `iam:SimulatePrincipalPolicy` separately as a manual follow-up.
+
+### Infrastructure formats and dynamic values
+
+Static role-to-policy correlation supports Terraform, standalone IAM JSON,
+and CloudFormation/SAM templates. It does not evaluate CDK or Pulumi source
+directly; scan their synthesized CloudFormation output when available.
+
+CloudFormation support resolves literal role names, literal role ARNs, simple
+`Ref` attachments, inline IAM policies, and inline SAM policy documents. It
+does not evaluate arbitrary intrinsic-function chains, generated role names,
+AWS-managed policy contents, or SAM policy templates such as `S3ReadPolicy`.
+Those cases remain coverage gaps rather than inferred permissions.
+
+Workflow role expressions are classified by provenance (secret, repository
+variable, environment variable, reusable-workflow input, or other expression),
+but ActionScope does not resolve their runtime values. Provide a literal ARN,
+co-located policy evidence, or use `--aws-verify` for role-policy correlation.
 
 ### YAML expression edge cases
 

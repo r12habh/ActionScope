@@ -245,6 +245,57 @@ def test_malformed_allow_statement_is_skipped_with_warning(capsys) -> None:
     assert "missing Action or Resource" in capsys.readouterr().err
 
 
+def test_not_action_and_not_resource_are_conservative() -> None:
+    finding = extract_actions_from_policy(
+        {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "NotAction": "iam:DeleteUser",
+                    "Resource": "*",
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": "s3:PutObject",
+                    "NotResource": "arn:aws:s3:::audit/*",
+                },
+            ]
+        },
+        "broad.json",
+    )
+
+    assert finding.has_star_action
+    assert finding.has_star_resource
+    assert finding.has_privilege_escalation
+    assert finding.overall_risk is RiskLevel.CRITICAL
+
+
+def test_not_action_or_not_resource_wildcard_allow_statement_is_noop() -> None:
+    finding = extract_actions_from_policy(
+        {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "NotAction": "*",
+                    "Resource": "*",
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": "iam:PassRole",
+                    "NotResource": ["*"],
+                },
+            ]
+        },
+        "noop.json",
+    )
+
+    assert finding.actions == []
+    assert finding.overall_risk is RiskLevel.INFO
+    assert finding.has_star_action is False
+    assert finding.has_star_resource is False
+    assert finding.has_privilege_escalation is False
+
+
 def test_scan_policy_files_does_not_cap_common_dir_policies(tmp_path: Path) -> None:
     """A real IAM policy in a non-standard location must still be discovered
     even when the repo has more than `DEFAULT_MAX_OTHER_JSON_FILES` line-noise

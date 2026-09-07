@@ -9,6 +9,7 @@ from actionscope.parsers.terraform import (
     parse_terraform_file,
     scan_terraform_files,
 )
+from actionscope.parsers.terraform_refs import parse_resource_reference
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "terraform"
 
@@ -161,7 +162,7 @@ def test_aws_iam_role_policy_resource_extracts_all_actions() -> None:
     ]
 
 
-def test_not_actions_statement_is_skipped(capsys) -> None:
+def test_not_actions_statement_is_classified_conservatively() -> None:
     tf_data = {
         "data": [
             {
@@ -182,8 +183,67 @@ def test_not_actions_statement_is_skipped(capsys) -> None:
 
     findings = extract_iam_policies_from_terraform(tf_data, "complex.tf")
 
+    assert findings[0].overall_risk is RiskLevel.CRITICAL
+    assert findings[0].has_star_action
+    assert findings[0].has_privilege_escalation
+
+
+def test_not_resources_statement_is_classified_conservatively() -> None:
+    tf_data = {
+        "data": [
+            {
+                "aws_iam_policy_document": {
+                    "complex": {
+                        "statement": [
+                            {
+                                "effect": "Allow",
+                                "actions": ["s3:PutObject"],
+                                "not_resources": ["arn:aws:s3:::audit/*"],
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "complex.tf")
+
+    assert findings[0].overall_risk is RiskLevel.MEDIUM
+    assert findings[0].has_star_resource
+
+
+def test_not_action_or_not_resource_wildcard_allow_statement_is_noop() -> None:
+    tf_data = {
+        "data": [
+            {
+                "aws_iam_policy_document": {
+                    "noop": {
+                        "statement": [
+                            {
+                                "effect": "Allow",
+                                "not_actions": ["*"],
+                                "resources": ["*"],
+                            },
+                            {
+                                "effect": "Allow",
+                                "actions": ["iam:PassRole"],
+                                "not_resources": ["*"],
+                            },
+                        ]
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "noop.tf")
+
+    assert findings[0].actions == []
     assert findings[0].overall_risk is RiskLevel.INFO
-    assert "not_actions" in capsys.readouterr().err
+    assert findings[0].has_star_action is False
+    assert findings[0].has_star_resource is False
+    assert findings[0].has_privilege_escalation is False
 
 
 def test_unresolvable_policy_reference_returns_info_finding() -> None:
@@ -226,6 +286,316 @@ def test_role_policy_attachment_sets_role_name() -> None:
     assert attached.metadata["terraform_attachment"] == (
         "aws_iam_role_policy_attachment.deploy"
     )
+
+
+def test_managed_policy_attached_to_multiple_roles_is_preserved_per_role() -> None:
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": "iam:PassRole",
+                "Resource": "*",
+            }
+        ],
+    }
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "dev": {"name": "dev-role", "assume_role_policy": "{}"},
+                    "prod": {"name": "prod-role", "assume_role_policy": "{}"},
+                }
+            },
+            {
+                "aws_iam_policy": {
+                    "shared": {"name": "SharedPolicy", "policy": policy}
+                }
+            },
+            {
+                "aws_iam_role_policy_attachment": {
+                    "dev": {
+                        "role": "${aws_iam_role.dev.name}",
+                        "policy_arn": "${aws_iam_policy.shared.arn}",
+                    },
+                    "prod": {
+                        "role": "${aws_iam_role.prod.name}",
+                        "policy_arn": "${aws_iam_policy.shared.arn}",
+                    },
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "shared.tf")
+
+    assert {finding.role_name for finding in findings} == {"dev-role", "prod-role"}
+    assert all(finding.has_passrole for finding in findings)
+    assert {
+        finding.metadata["terraform_attachment"] for finding in findings
+    } == {
+        "aws_iam_role_policy_attachment.dev",
+        "aws_iam_role_policy_attachment.prod",
+    }
+
+
+def test_indexed_managed_policy_reference_retains_role_relationship() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "deploy": {
+                        "name": "github-deploy-role",
+                        "assume_role_policy": "{}",
+                    }
+                }
+            },
+            {
+                "aws_iam_policy": {
+                    "deploy": {
+                        "name": "DeployPolicy",
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "iam:PassRole",
+                                    "Resource": "*",
+                                }
+                            ]
+                        },
+                    }
+                }
+            },
+            {
+                "aws_iam_role_policy_attachment": {
+                    "deploy": {
+                        "role": "${aws_iam_role.deploy[each.key].name}",
+                        "policy_arn": "${aws_iam_policy.deploy[each.key].arn}",
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "indexed.tf")
+
+    assert len(findings) == 1
+    assert findings[0].role_name == "github-deploy-role"
+    assert findings[0].has_passrole is True
+    assert findings[0].metadata["terraform_role_reference"] == (
+        "${aws_iam_role.deploy[each.key].name}"
+    )
+
+
+def test_role_managed_policy_arns_retains_role_relationship() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "deploy": {
+                        "name": "github-deploy-role",
+                        "assume_role_policy": "{}",
+                        "managed_policy_arns": ["${aws_iam_policy.admin.arn}"],
+                    }
+                }
+            },
+            {
+                "aws_iam_policy": {
+                    "admin": {
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "iam:PassRole",
+                                    "Resource": "*",
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "role.tf")
+
+    assert len(findings) == 1
+    assert findings[0].role_name == "github-deploy-role"
+    assert findings[0].has_passrole is True
+
+
+def test_external_managed_policy_arn_marks_role_coverage_partial() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "deploy": {
+                        "name": "github-deploy-role",
+                        "assume_role_policy": "{}",
+                        "managed_policy_arns": [
+                            "arn:aws:iam::aws:policy/AdministratorAccess"
+                        ],
+                    }
+                }
+            }
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "role.tf")
+
+    assert len(findings) == 1
+    assert findings[0].role_name == "github-deploy-role"
+    assert findings[0].metadata["policy_coverage_complete"] is False
+    assert findings[0].metadata["unresolved_policy_attachments"] == [
+        "arn:aws:iam::aws:policy/AdministratorAccess"
+    ]
+    assert findings[0].metadata["coverage_gap_type"] == (
+        "unresolved_terraform_policy_attachment"
+    )
+
+
+def test_unresolved_attachment_role_retains_policy_as_partial_coverage() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_policy": {
+                    "admin": {
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "iam:PassRole",
+                                    "Resource": "*",
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "aws_iam_role_policy_attachment": {
+                    "admin": {
+                        "role": "${var.role_name}",
+                        "policy_arn": "${aws_iam_policy.admin.arn}",
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "attachment.tf")
+
+    assert len(findings) == 1
+    assert findings[0].role_name is None
+    assert findings[0].has_passrole is True
+    assert findings[0].metadata["policy_coverage_complete"] is False
+    assert findings[0].metadata["coverage_gap_type"] == (
+        "unresolved_terraform_role_target"
+    )
+    assert "var.role_name" in findings[0].metadata[
+        "unresolved_policy_attachments"
+    ][0]
+
+
+def test_generic_policy_attachment_retains_each_role_relationship() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "dev": {"name": "dev-role", "assume_role_policy": "{}"},
+                    "prod": {"name": "prod-role", "assume_role_policy": "{}"},
+                }
+            },
+            {
+                "aws_iam_policy": {
+                    "shared": {
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "iam:PassRole",
+                                    "Resource": "*",
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "aws_iam_policy_attachment": {
+                    "shared": {
+                        "roles": [
+                            "${aws_iam_role.dev.name}",
+                            "${aws_iam_role.prod.name}",
+                        ],
+                        "policy_arn": "${aws_iam_policy.shared.arn}",
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "attachments.tf")
+
+    assert {finding.role_name for finding in findings} == {"dev-role", "prod-role"}
+    assert all(finding.overall_risk is RiskLevel.CRITICAL for finding in findings)
+
+
+def test_indexed_role_references_resolve_to_the_role_declaration() -> None:
+    tf_data = {
+        "resource": [
+            {
+                "aws_iam_role": {
+                    "deploy": {
+                        "name": "github-deploy-role",
+                        "assume_role_policy": "{}",
+                    }
+                }
+            },
+            {
+                "aws_iam_role_policy": {
+                    "inline": {
+                        "role": "${aws_iam_role.deploy[count.index].name}",
+                        "policy": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": "*",
+                                }
+                            ]
+                        },
+                    }
+                }
+            },
+        ]
+    }
+
+    findings = extract_iam_policies_from_terraform(tf_data, "indexed.tf")
+
+    assert findings[0].role_name == "github-deploy-role"
+
+
+def test_resource_reference_parser_preserves_index_traversals() -> None:
+    cases = {
+        "aws_iam_role.deploy[count.index].name": (
+            "aws_iam_role.deploy",
+            "aws_iam_role.deploy[count.index]",
+        ),
+        "${aws_iam_role.deploy[each.key].arn}": (
+            "aws_iam_role.deploy",
+            "aws_iam_role.deploy[each.key]",
+        ),
+        '${aws_iam_role.deploy["prod.us"].name}': (
+            "aws_iam_role.deploy",
+            'aws_iam_role.deploy["prod.us"]',
+        ),
+    }
+
+    for value, expected in cases.items():
+        parsed = parse_resource_reference(value, "aws_iam_role")
+        assert parsed is not None
+        assert (parsed.declaration_address, parsed.instance_address) == expected
 
 
 def test_role_without_explicit_name_does_not_use_resource_label() -> None:

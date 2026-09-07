@@ -242,6 +242,54 @@ def test_unresolved_policy_creates_coverage_gap_not_finding() -> None:
     assert records == []
 
 
+def test_unresolved_managed_policy_attachment_creates_coverage_gap() -> None:
+    policy = PolicyFinding(
+        source_file="infrastructure/template.yml",
+        source_type="cloudformation",
+        role_arn=None,
+        role_name="deploy",
+        overall_risk=RiskLevel.INFO,
+        metadata={
+            "policy_coverage_complete": False,
+            "unresolved_policy_attachments": [
+                "arn:aws:iam::aws:policy/AdministratorAccess"
+            ],
+        },
+    )
+    result = ScanResult(
+        bindings=[_binding(policy=policy, source="cloudformation")]
+    )
+
+    gaps = build_coverage_gaps(result)
+
+    assert len(gaps) == 1
+    assert gaps[0].gap_type == "unresolved_managed_policy_attachment"
+    assert "reported IAM risk is partial" in gaps[0].description
+
+
+def test_unresolved_terraform_attachment_uses_source_neutral_wording() -> None:
+    policy = PolicyFinding(
+        source_file="infrastructure/iam.tf",
+        source_type="terraform",
+        role_arn=None,
+        role_name="deploy",
+        overall_risk=RiskLevel.INFO,
+        metadata={
+            "policy_coverage_complete": False,
+            "unresolved_policy_attachments": [
+                "arn:aws:iam::aws:policy/AdministratorAccess"
+            ],
+        },
+    )
+    result = ScanResult(bindings=[_binding(policy=policy, source="terraform")])
+
+    gaps = build_coverage_gaps(result)
+
+    assert len(gaps) == 1
+    assert "CloudFormation" not in gaps[0].description
+    assert "analyzed policy evidence" in gaps[0].description
+
+
 def test_analyzer_error_marks_coverage_partial() -> None:
     result = ScanResult(errors=["Scan incomplete: parser failed"])
 
@@ -280,6 +328,7 @@ def test_unmatched_policy_is_normalized_at_low_confidence() -> None:
     assert len(records) == 1
     assert records[0].rule_id == "AS001"
     assert records[0].confidence is FindingConfidence.LOW
+    assert records[0].gate_eligible is False
 
 
 def test_uninspected_reusable_workflow_is_not_gate_eligible() -> None:

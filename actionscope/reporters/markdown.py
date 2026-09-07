@@ -126,6 +126,7 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
         role_cell = "`(none)`"
 
     lines.append(f"| AWS Role | {role_cell} |")
+    lines.append(f"| Role Reference | {src.role_reference_kind} |")
     lines.append(f"| Auth Type | {_auth_display(src)} |")
     lines.append(f"| Policy Source | {binding.policy_source} |")
     lines.append(f"| Match Confidence | {binding.match_confidence} |")
@@ -139,6 +140,23 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
         lines.append(
             "| Coverage | **INCOMPLETE** — the AWS role or its permissions "
             "could not be resolved statically. |"
+        )
+    elif (
+        binding.policy_finding is not None
+        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+    ):
+        attachments = binding.policy_finding.metadata.get(
+            "unresolved_policy_attachments", []
+        )
+        elements = binding.policy_finding.metadata.get(
+            "uninspectable_policy_elements", []
+        )
+        evidence_items = list(attachments) + list(elements)
+        evidence = ", ".join(f"`{_md_cell(item)}`" for item in evidence_items)
+        lines.append(
+            "| Coverage | **PARTIAL** — some IAM policy evidence is unavailable "
+            f"or dynamic: {evidence or 'unknown policy element'}. Run with "
+            "`--aws-verify` for complete effective permissions. |"
         )
 
     if binding.policy_finding is not None:
@@ -666,6 +684,12 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     """
     Generate a Markdown report suitable for GitHub PR comments.
     """
+    coverage_gaps = list(result.coverage_gaps)
+    if not coverage_gaps:
+        from actionscope.coverage import build_coverage_gaps
+
+        coverage_gaps = build_coverage_gaps(result)
+    coverage_status = "partial" if coverage_gaps else result.coverage_status
     cred_count = len(result.credential_sources)
     overall = RISK_DISPLAY.get(result.overall_risk, result.overall_risk.name)
     gate_status = _gate_status(result.gate)
@@ -674,11 +698,11 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
     header = (
         "## 🔍 ActionScope — Blast Radius Report\n\n"
         f"**{risk_label}:** {overall} | "
-        f"**Coverage:** {result.coverage_status.upper()} | "
+        f"**Coverage:** {coverage_status.upper()} | "
         f"**Gate:** {gate_status}\n\n"
         f"**Workflows:** {result.workflow_count} | "
         f"**Credential Sources:** {cred_count} | "
-        f"**Unresolved Coverage Items:** {len(result.coverage_gaps)}\n\n"
+        f"**Unresolved Coverage Items:** {len(coverage_gaps)}\n\n"
         "---\n\n"
     )
 
@@ -923,6 +947,9 @@ def to_markdown_from_dict(data: dict) -> str:
             )
             job = _md_cell(str(finding.get("job_name") or "(default)"))
             role = _md_cell(finding.get("role_arn") or "(none)")
+            role_reference = _md_cell(
+                str(finding.get("role_reference_kind", "unknown"))
+            )
             auth_type = _md_cell(finding.get("auth_type", "unknown"))
             policy_source = _md_cell(finding.get("policy_source", "unknown"))
             match_confidence = _md_cell(finding.get("match_confidence", "none"))
@@ -936,6 +963,8 @@ def to_markdown_from_dict(data: dict) -> str:
             }.get(finding_risk, finding_risk.upper())
             if finding.get("risk_status") == "unknown":
                 finding_risk_display = "UNKNOWN (coverage incomplete)"
+            elif finding.get("risk_status") == "partial":
+                finding_risk_display += " (partial evidence)"
 
             lines.extend(
                 [
@@ -944,6 +973,7 @@ def to_markdown_from_dict(data: dict) -> str:
                     "| Field | Value |",
                     "|-------|-------|",
                     f"| AWS Role | `{role}` |",
+                    f"| Role Reference | {role_reference} |",
                     f"| Auth Type | {auth_type} |",
                     f"| Policy Source | {policy_source} |",
                     f"| Match Confidence | {match_confidence} |",
@@ -966,6 +996,21 @@ def to_markdown_from_dict(data: dict) -> str:
                     [
                         "> **Coverage incomplete:** the AWS role or its "
                         "permissions could not be resolved statically.",
+                        "",
+                    ]
+                )
+            elif finding.get("risk_status") == "partial":
+                attachments = finding.get("unresolved_policy_attachments", [])
+                elements = finding.get("uninspectable_policy_elements", [])
+                evidence = ", ".join(
+                    f"`{_md_cell(item)}`" for item in list(attachments) + list(elements)
+                )
+                lines.extend(
+                    [
+                        "> **Coverage partial:** some IAM policy evidence is "
+                        "unavailable or dynamic: "
+                        f"{evidence or 'unknown policy element'}. Run with "
+                        "`--aws-verify` for complete effective permissions.",
                         "",
                     ]
                 )

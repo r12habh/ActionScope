@@ -127,6 +127,42 @@ def test_scan_oidc_trust_policies_returns_findings(tmp_path: Path) -> None:
     assert findings
 
 
+def test_cloudformation_oidc_provider_ref_is_resolved(tmp_path: Path) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "missing_sub")
+    ]
+
+
 def test_oidc_trust_finding_risk_level_is_critical_for_wildcard() -> None:
     findings = analyze_json_oidc_trust(_trust_policy("repo:acme-corp/*"), "iam.tf")
     wildcard = next(f for f in findings if f.issue_id == "wildcard_repo")
@@ -150,6 +186,200 @@ def test_missing_aud_condition_detected_as_medium() -> None:
         f.issue_id == "missing_aud" and f.risk_level is RiskLevel.MEDIUM
         for f in findings
     )
+
+
+def test_dynamic_cloudformation_conditions_are_unresolved_not_missing() -> None:
+    policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
+    condition = policy["Statement"][0]["Condition"]
+    condition["StringLike"]["token.actions.githubusercontent.com:sub"] = {
+        "Ref": "GitHubSubject"
+    }
+    condition["StringEquals"]["token.actions.githubusercontent.com:aud"] = {
+        "Fn::Sub": "${Audience}"
+    }
+
+    findings = analyze_json_oidc_trust(policy, "template.yml")
+    issue_ids = {finding.issue_id for finding in findings}
+
+    assert issue_ids == {"unresolved_sub", "unresolved_aud"}
+    assert "missing_sub" not in issue_ids
+    assert "missing_aud" not in issue_ids
+
+
+def test_partly_dynamic_subject_is_checked_for_literal_wildcards() -> None:
+    findings = analyze_json_oidc_trust(
+        _trust_policy("repo:${var.github_org}/*:*"),
+        "iam.tf",
+    )
+    issue_ids = {finding.issue_id for finding in findings}
+
+    assert "unresolved_sub" in issue_ids
+    assert "wildcard_repo" in issue_ids
+
+
+def test_conditional_cloudformation_trust_statement_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          Fn::If:
+            - EnableGitHub
+            - Effect: Allow
+              Principal:
+                Federated: !Ref GitHubProvider
+              Action: sts:AssumeRoleWithWebIdentity
+              Condition:
+                StringLike:
+                  token.actions.githubusercontent.com:sub: repo:acme/*
+            - Ref: AWS::NoValue
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "unresolved_trust_statement")
+    ]
+    assert findings[0].risk_level is RiskLevel.HIGH
+
+
+def test_conditional_cloudformation_principal_reference_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated:
+                Fn::If:
+                  - EnableGitHub
+                  - Ref: GitHubProvider
+                  - Ref: OtherProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "unresolved_trust_statement")
+    ]
+    assert "GitHubProvider" not in findings[0].evidence
+    assert "token.actions.githubusercontent.com" in findings[0].evidence
+
+
+def test_conditional_cloudformation_trust_action_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: token.actions.githubusercontent.com
+            Action:
+              Fn::If:
+                - EnableGitHub
+                - sts:AssumeRoleWithWebIdentity
+                - sts:AssumeRole
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    assert [(finding.role_name, finding.issue_id) for finding in findings] == [
+        ("deploy-role", "unresolved_trust_statement")
+    ]
+
+
+def test_conditional_cloudformation_role_trust_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.yml"
+    template.write_text(
+        """
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Condition: CreateDeployRole
+    Properties:
+      RoleName: deploy-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+""".strip(),
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_oidc_trust_policies(str(tmp_path))
+
+    assert errors == []
+    issue_ids = {finding.issue_id for finding in findings}
+    assert issue_ids == {
+        "missing_aud",
+        "missing_sub",
+        "unresolved_trust_statement",
+    }
+    unresolved = next(
+        finding
+        for finding in findings
+        if finding.issue_id == "unresolved_trust_statement"
+    )
+    assert "CreateDeployRole" in unresolved.evidence
+
+
+def test_literal_cloudformation_sub_condition_is_analyzed() -> None:
+    policy = _trust_policy("repo:acme/app:ref:refs/heads/main")
+    policy["Statement"][0]["Condition"]["StringLike"] = {
+        "token.actions.githubusercontent.com:sub": {
+            "Fn::Sub": "repo:acme/app:ref:refs/heads/main"
+        }
+    }
+
+    assert analyze_json_oidc_trust(policy, "template.yml") == []
 
 
 def test_evidence_field_shows_actual_sub_value() -> None:

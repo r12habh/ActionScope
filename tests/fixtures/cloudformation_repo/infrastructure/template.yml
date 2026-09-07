@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-deploy-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Condition:
+              StringLike:
+                token.actions.githubusercontent.com:sub: repo:acme-corp/*
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+      Policies:
+        - PolicyName: deploy-inline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:TerminateInstances
+                  - s3:PutObject
+                Resource: "*"
+
+  AuditRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-audit-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: ec2.amazonaws.com
+
+  AuditPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: audit-policy
+      Roles:
+        - !Ref AuditRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: cloudtrail:LookupEvents
+            Resource: "*"
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      Runtime: python3.12
+      Role: arn:aws:iam::123456789012:role/github-worker-role
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !Sub arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:jobs

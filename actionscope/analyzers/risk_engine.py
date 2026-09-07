@@ -36,6 +36,7 @@ from actionscope.models import (
     WorkflowCredentialBinding,
     get_unmatched_findings,
 )
+from actionscope.parsers.terraform_refs import parse_resource_reference
 
 if TYPE_CHECKING:
     from actionscope.analyzers.reusable_workflows import ReusableWorkflowScan
@@ -47,6 +48,7 @@ class _PolicyMatch:
     finding: PolicyFinding | None
     confidence: str
     reason: str
+    matched_findings: tuple[PolicyFinding, ...] = ()
 
 
 def match_role_to_policies(
@@ -72,38 +74,106 @@ def _match_role_to_policy_with_confidence(
     if _is_dynamic_reference(role_arn):
         return _PolicyMatch(None, "none", "role ARN is a dynamic reference")
 
-    for finding in policy_findings:
-        if finding.role_arn == role_arn:
-            return _PolicyMatch(finding, "high", "exact role ARN match")
+    matchable_findings = [
+        finding
+        for finding in policy_findings
+        if not _is_failed_aws_verification(finding)
+    ]
+    exact_arn_matches = [
+        finding for finding in matchable_findings if finding.role_arn == role_arn
+    ]
+    if exact_arn_matches:
+        return _policy_match(
+            exact_arn_matches,
+            credential_source,
+            "high",
+            "exact role ARN match",
+        )
 
     role_name = _role_name_from_arn(role_arn)
     if role_name is None:
         return _PolicyMatch(None, "none", "role ARN is not a static IAM role ARN")
 
     normalized_role_name = role_name.lower()
-    for finding in _aws_verified_findings(policy_findings):
-        if _finding_matches_role_name(finding, normalized_role_name):
-            return _PolicyMatch(finding, "high", "AWS-verified role name match")
+    repository_findings = [
+        finding
+        for finding in matchable_findings
+        if finding.source_type != "aws_verified"
+    ]
+    relationship_matches = [
+        finding
+        for finding in repository_findings
+        if finding.role_name
+        and normalized_role_name == finding.role_name.lower()
+    ]
+    if relationship_matches:
+        identity_groups: dict[tuple[str, ...], list[PolicyFinding]] = {}
+        for finding in relationship_matches:
+            identity = _repository_role_identity(finding, normalized_role_name)
+            identity_groups.setdefault(identity, []).append(finding)
 
-    for finding in policy_findings:
-        if finding.source_type == "aws_verified":
-            continue
+        if len(identity_groups) > 1:
+            return _PolicyMatch(
+                None,
+                "none",
+                "multiple infrastructure roles share the role name; "
+                "repository evidence is ambiguous",
+            )
 
-        if finding.role_name and normalized_role_name == finding.role_name.lower():
-            return _PolicyMatch(finding, "high", "Terraform role relationship match")
+        proven_matches = next(iter(identity_groups.values()))
+        source_types = {finding.source_type for finding in relationship_matches}
+        relationship = (
+            {
+                "terraform": "Terraform",
+                "cloudformation": "CloudFormation/SAM",
+            }.get(next(iter(source_types)), "Repository IAM")
+            if len(source_types) == 1
+            else "Repository IAM"
+        )
+        return _policy_match(
+            proven_matches,
+            credential_source,
+            "high",
+            f"{relationship} role relationship match",
+        )
 
-        if (
-            finding.role_arn
-            and normalized_role_name
-            == finding.role_arn.strip("/").rsplit("/", 1)[-1].lower()
-        ):
-            return _PolicyMatch(finding, "high", "role name extracted from finding")
+    path_matches = [
+        finding
+        for finding in repository_findings
+        if normalized_role_name in finding.source_file.lower()
+    ]
+    if path_matches:
+        if len(path_matches) > 1:
+            return _PolicyMatch(
+                None,
+                "none",
+                "multiple policies match the role name by path only",
+            )
+        return _policy_match(
+            path_matches,
+            credential_source,
+            "medium",
+            "role name appears in policy path",
+        )
 
-        if normalized_role_name in finding.source_file.lower():
-            return _PolicyMatch(finding, "medium", "role name appears in policy path")
-
-        if _file_contains(finding.source_file, role_name):
-            return _PolicyMatch(finding, "low", "role name appears in policy file")
+    content_matches = [
+        finding
+        for finding in repository_findings
+        if _file_contains(finding.source_file, role_name)
+    ]
+    if content_matches:
+        if len(content_matches) > 1:
+            return _PolicyMatch(
+                None,
+                "none",
+                "multiple policies match the role name by file content only",
+            )
+        return _policy_match(
+            content_matches,
+            credential_source,
+            "low",
+            "role name appears in policy file",
+        )
 
     return _PolicyMatch(None, "none", "no matching policy found")
 
@@ -140,6 +210,7 @@ def build_bindings(
                 policy_source=policy_source,
                 match_confidence=match.confidence,
                 match_reason=match.reason,
+                matched_policy_findings=list(match.matched_findings),
             )
         )
 
@@ -158,7 +229,12 @@ def compute_overall_risk(
     environment_findings: list[EnvironmentFinding] | None = None,
     exposure_paths: list[ExposurePath] | None = None,
 ) -> RiskLevel:
-    """Compute the highest risk across bindings, token perms, and policies."""
+    """Compute risk from workflow-reachable findings and detector results.
+
+    Unmatched policy files remain visible as low-confidence audit context, but
+    they cannot establish a workflow blast radius and therefore do not raise the
+    repository's overall workflow risk.
+    """
     binding_risks = [
         binding.policy_finding.overall_risk
         for binding in bindings
@@ -169,9 +245,7 @@ def compute_overall_risk(
         for permission in github_token_perms
         if permission.risk_level >= RiskLevel.MEDIUM
     ]
-    unmatched_risks = [
-        finding.overall_risk for finding in unmatched_policy_findings
-    ]
+    _ = unmatched_policy_findings
     detector_risks = [
         finding.risk_level
         for findings in (
@@ -187,7 +261,7 @@ def compute_overall_risk(
     ]
 
     return max(
-        binding_risks + token_risks + unmatched_risks + detector_risks,
+        binding_risks + token_risks + detector_risks,
         default=RiskLevel.INFO,
     )
 
@@ -286,6 +360,14 @@ def build_scan_result(
     )
 
     bindings = build_bindings(credential_sources, policy_findings, repo_path)
+    if config is not None:
+        from actionscope.config import add_custom_privesc_paths, recompute_policy_risk
+
+        for binding in bindings:
+            if binding.policy_finding is None:
+                continue
+            add_custom_privesc_paths(binding.policy_finding, config)
+            recompute_policy_risk(binding.policy_finding)
     exposure_paths = build_exposure_paths(
         bindings,
         normalized_unpinned,
@@ -424,20 +506,189 @@ def _aws_verified_findings(
         finding
         for finding in policy_findings
         if finding.source_type == "aws_verified"
+        and finding.metadata.get("aws_verification_status") != "error"
     ]
 
 
-def _finding_matches_role_name(
+def _is_failed_aws_verification(finding: PolicyFinding) -> bool:
+    return (
+        finding.source_type == "aws_verified"
+        and finding.metadata.get("aws_verification_status") == "error"
+    )
+
+
+def _repository_role_identity(
     finding: PolicyFinding,
     normalized_role_name: str,
-) -> bool:
-    if finding.role_name and normalized_role_name == finding.role_name.lower():
-        return True
-    if not finding.role_arn:
-        return False
-    return normalized_role_name == finding.role_arn.strip("/").rsplit("/", 1)[
-        -1
-    ].lower()
+) -> tuple[str, ...]:
+    """Return the narrowest repository-scoped identity proven by parser data."""
+    source_path = Path(finding.source_file)
+    if finding.source_type == "terraform":
+        # Terraform files in one directory form a module and may split a role's
+        # inline and attached policies across files. The parser records the
+        # referenced role resource when that relationship is explicit; retain
+        # it so same-named roles using different provider aliases are not
+        # merged. A literal role name does not prove shared identity, so keep
+        # that evidence scoped to its policy resource.
+        role_reference = finding.metadata.get("terraform_role_reference")
+        role_address = _terraform_role_address(role_reference)
+        if role_address:
+            return (
+                "terraform",
+                str(source_path.parent),
+                "role_resource",
+                role_address,
+            )
+
+        policy_address = str(
+            finding.metadata.get("terraform_address") or source_path
+        )
+        return (
+            "terraform",
+            str(source_path.parent),
+            "unproven_role",
+            policy_address,
+            normalized_role_name,
+        )
+
+    if finding.source_type == "cloudformation":
+        logical_id = finding.metadata.get("cloudformation_logical_id")
+        return (
+            "cloudformation",
+            str(source_path),
+            str(logical_id or ""),
+            normalized_role_name,
+        )
+
+    # Standalone policy formats do not prove that two files describe the same
+    # deployed role. Keep each file as a separate identity unless an exact ARN
+    # matched earlier in the correlation flow.
+    return (finding.source_type, str(source_path), normalized_role_name)
+
+
+def _terraform_role_address(value: object) -> str | None:
+    """Extract an aws_iam_role resource address from a Terraform reference."""
+    reference = parse_resource_reference(value, "aws_iam_role")
+    return reference.instance_address if reference else None
+
+
+def _policy_match(
+    findings: list[PolicyFinding],
+    credential_source: AwsCredentialSource,
+    confidence: str,
+    reason: str,
+) -> _PolicyMatch:
+    matched = tuple(findings)
+    finding = (
+        findings[0]
+        if len(findings) == 1
+        else _aggregate_policy_findings(findings, credential_source)
+    )
+    if len(findings) > 1:
+        reason = f"{reason}; aggregated {len(findings)} policy sources"
+    return _PolicyMatch(finding, confidence, reason, matched)
+
+
+def _aggregate_policy_findings(
+    findings: list[PolicyFinding],
+    credential_source: AwsCredentialSource,
+) -> PolicyFinding:
+    """Combine every matched permission source into one effective role view."""
+    actions = []
+    seen_actions: set[tuple[str, str, str, RiskLevel]] = set()
+    for finding in findings:
+        for action in finding.actions:
+            key = (
+                action.action.lower(),
+                action.resource,
+                action.access_level,
+                action.risk_level,
+            )
+            if key not in seen_actions:
+                actions.append(action)
+                seen_actions.add(key)
+
+    role_name = _role_name_from_arn(credential_source.role_arn)
+    source_files = list(dict.fromkeys(finding.source_file for finding in findings))
+    policy_names = list(
+        dict.fromkeys(
+            finding.policy_name
+            for finding in findings
+            if finding.policy_name is not None
+        )
+    )
+    unresolved_policy_attachments = _unresolved_policy_attachments(findings)
+    uninspectable_policy_elements = _uninspectable_policy_elements(findings)
+    policy_coverage_complete = all(
+        finding.metadata.get("policy_coverage_complete") is not False
+        for finding in findings
+    ) and not unresolved_policy_attachments and not uninspectable_policy_elements
+    aggregate = PolicyFinding(
+        source_file=source_files[0],
+        source_type=findings[0].source_type,
+        role_arn=credential_source.role_arn,
+        actions=actions,
+        has_star_action=any(finding.has_star_action for finding in findings),
+        has_star_resource=any(finding.has_star_resource for finding in findings),
+        has_passrole=any(finding.has_passrole for finding in findings),
+        overall_risk=max(
+            (finding.overall_risk for finding in findings),
+            default=RiskLevel.INFO,
+        ),
+        role_name=role_name or next(
+            (finding.role_name for finding in findings if finding.role_name),
+            None,
+        ),
+        policy_name=f"effective-policy-set ({len(findings)} sources)",
+        metadata={
+            "aggregated_policy_count": len(findings),
+            "aggregated_source_files": source_files,
+            "aggregated_policy_names": policy_names,
+            "policy_coverage_complete": policy_coverage_complete,
+            "unresolved_policy_attachments": unresolved_policy_attachments,
+            "uninspectable_policy_elements": uninspectable_policy_elements,
+        },
+    )
+
+    detected_paths = detect_privesc_paths(aggregate, aggregate.source_file)
+    path_by_id = {
+        path.path_id: path
+        for finding in findings
+        for path in finding.privesc_paths
+    }
+    path_by_id.update({path.path_id: path for path in detected_paths})
+    aggregate.privesc_paths = list(path_by_id.values())
+    aggregate.has_privilege_escalation = bool(aggregate.privesc_paths) or any(
+        finding.has_privilege_escalation for finding in findings
+    )
+    aggregate.overall_risk = max(
+        [aggregate.overall_risk]
+        + [action.risk_level for action in aggregate.actions]
+        + [path.severity for path in aggregate.privesc_paths]
+    )
+    return aggregate
+
+
+def _unresolved_policy_attachments(
+    findings: list[PolicyFinding],
+) -> list[str]:
+    attachments: list[str] = []
+    for finding in findings:
+        values = finding.metadata.get("unresolved_policy_attachments", [])
+        if isinstance(values, list):
+            attachments.extend(str(value) for value in values)
+    return list(dict.fromkeys(attachments))
+
+
+def _uninspectable_policy_elements(
+    findings: list[PolicyFinding],
+) -> list[str]:
+    elements: list[str] = []
+    for finding in findings:
+        values = finding.metadata.get("uninspectable_policy_elements", [])
+        if isinstance(values, list):
+            elements.extend(str(value) for value in values)
+    return list(dict.fromkeys(elements))
 
 
 def _file_contains(filepath: str, needle: str) -> bool:

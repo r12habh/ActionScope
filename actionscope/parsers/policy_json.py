@@ -120,15 +120,34 @@ def extract_actions_from_policy(
         if str(statement.get("Effect", "")).lower() != "allow":
             continue
 
-        if "Action" not in statement or "Resource" not in statement:
+        has_action = "Action" in statement or "NotAction" in statement
+        has_resource = "Resource" in statement or "NotResource" in statement
+        if not has_action or not has_resource:
             _warn(
                 f"Skipping statement {index} in {source_file}: "
                 "missing Action or Resource"
             )
             continue
 
-        statement_actions = _string_list(statement.get("Action"))
-        resources = _string_list(statement.get("Resource"))
+        if "NotAction" in statement and "*" in _string_list(
+            statement.get("NotAction")
+        ):
+            continue
+        if "NotResource" in statement and "*" in _string_list(
+            statement.get("NotResource")
+        ):
+            continue
+
+        statement_actions = (
+            _string_list(statement.get("Action"))
+            if "Action" in statement
+            else ["*"]
+        )
+        resources = (
+            _string_list(statement.get("Resource"))
+            if "Resource" in statement
+            else ["*"]
+        )
         if not statement_actions or not resources:
             _warn(
                 f"Skipping statement {index} in {source_file}: "
@@ -156,7 +175,8 @@ def extract_actions_from_policy(
             has_star_resource = True
 
         if statement_has_star_resource and (
-            ("iam:passrole" in normalized_actions)
+            ("*" in normalized_actions)
+            or ("iam:passrole" in normalized_actions)
             or bool(PRIVILEGE_ESCALATION_ACTIONS & normalized_actions)
         ):
             has_privilege_escalation = True

@@ -133,6 +133,7 @@ def build_finding_records(result: ScanResult) -> list[FindingRecord]:
                     role,
                     action.action.lower(),
                     action.resource,
+                    gate_eligible=False,
                 )
             )
         if finding.overall_risk > RiskLevel.INFO and not reportable_actions:
@@ -147,6 +148,7 @@ def build_finding_records(result: ScanResult) -> list[FindingRecord]:
                     None,
                     "unmatched_policy",
                     role,
+                    gate_eligible=False,
                 )
             )
         for path in finding.privesc_paths:
@@ -162,6 +164,7 @@ def build_finding_records(result: ScanResult) -> list[FindingRecord]:
                     "unmatched_policy",
                     role,
                     path.path_id,
+                    gate_eligible=False,
                 )
             )
         if finding.has_passrole:
@@ -176,6 +179,7 @@ def build_finding_records(result: ScanResult) -> list[FindingRecord]:
                     None,
                     "unmatched_policy",
                     role,
+                    gate_eligible=False,
                 )
             )
 

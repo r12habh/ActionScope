@@ -305,6 +305,34 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
             for msg in concerns:
                 c.print(f"  [yellow]⚠️[/]  {msg}")
 
+    if (
+        binding.policy_finding is not None
+        and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+    ):
+        attachments = binding.policy_finding.metadata.get(
+            "unresolved_policy_attachments", []
+        )
+        elements = binding.policy_finding.metadata.get(
+            "uninspectable_policy_elements", []
+        )
+        c.print()
+        c.print("[bold yellow]Coverage: PARTIAL — IAM evidence is incomplete[/]")
+        if isinstance(attachments, list) and attachments:
+            c.print(
+                "[dim]ℹ️  The permissions shown above exclude these "
+                "policy attachments:[/]"
+            )
+            for attachment in attachments:
+                c.print(f"[dim]    • {escape(str(attachment))}[/]")
+        if isinstance(elements, list) and elements:
+            c.print("[dim]ℹ️  These policy elements could not be resolved:[/]")
+            for element in elements:
+                c.print(f"[dim]    • {escape(str(element))}[/]")
+        c.print(
+            "[dim]💡  Run with --aws-verify to inspect the role's complete "
+            "effective permissions.[/]"
+        )
+
     if binding.policy_source == "not_found" and src.role_arn:
         c.print()
         c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
@@ -314,6 +342,12 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         c.print()
         c.print(Text("    ActionScope looked for IAM policies in:", style="dim"))
         c.print(Text("    • *.tf files (Terraform)", style="dim"))
+        c.print(
+            Text(
+                "    • CloudFormation/SAM *.yaml, *.yml, and *.json templates",
+                style="dim",
+            )
+        )
         c.print(Text("    • **/iam/*.json (JSON policy files)", style="dim"))
         c.print(Text("    • **/policies/*.json", style="dim"))
         c.print()
@@ -339,10 +373,12 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         c.print()
         c.print("[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]")
         c.print(
-            f"[dim]ℹ️  Role ARN is a dynamic reference: {src.role_arn}[/]"
+            "[dim]ℹ️  Role ARN is a dynamic "
+            f"{src.role_reference_kind} reference: {src.role_arn}[/]"
         )
         c.print(
-            "[dim]💡  Provide Terraform or policy JSON in repo for static analysis[/]"
+            "[dim]💡  Resolve this value or provide supported IAM evidence "
+            "for static analysis[/]"
         )
 
     if binding.policy_source == "no_role":
@@ -1119,6 +1155,11 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 f"[dim]→[/] [bold]Job:[/] {finding.get('job_name', '')}"
             )
             c.print(f"[bold]AWS Role:[/] {finding.get('role_arn') or '(none)'}")
+            if finding.get("role_reference_kind"):
+                c.print(
+                    "[bold]Role Reference:[/] "
+                    f"{finding.get('role_reference_kind')}"
+                )
             c.print(f"[bold]Policy Source:[/] {finding.get('policy_source')}")
             if finding.get("match_confidence"):
                 c.print(
@@ -1129,6 +1170,16 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                 c.print(
                     "[bold yellow]Coverage: INCOMPLETE — AWS risk is unknown[/]"
                 )
+            elif finding.get("risk_status") == "partial":
+                c.print(
+                    "[bold yellow]Coverage: PARTIAL — IAM evidence is incomplete[/]"
+                )
+                for attachment in finding.get(
+                    "unresolved_policy_attachments", []
+                ):
+                    c.print(f"[dim]    • {escape(str(attachment))}[/]")
+                for element in finding.get("uninspectable_policy_elements", []):
+                    c.print(f"[dim]    • {escape(str(element))}[/]")
             actions = finding.get("actions", [])
             if actions:
                 table = Table(box=box.SQUARE, show_header=True)
