@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from actionscope import __version__
+from scripts.pre_release_check import validate_citation_metadata
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,3 +46,14 @@ def test_readme_links_community_files() -> None:
         "SUPPORT.md",
     ):
         assert f"]({filename})" in readme
+
+
+@pytest.mark.parametrize("content", ["", "not-a-mapping\n"])
+def test_release_check_rejects_non_mapping_citation(content: str, tmp_path) -> None:
+    citation_path = tmp_path / "CITATION.cff"
+    citation_path.write_text(content, encoding="utf-8")
+
+    valid, detail = validate_citation_metadata(citation_path, __version__)
+
+    assert valid is False
+    assert "YAML mapping" in detail
