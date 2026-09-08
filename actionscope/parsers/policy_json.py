@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from actionscope.analyzers.iam_risk import classify_action, get_overall_risk
+from actionscope.analyzers.privesc_detector import detect_privesc_paths
 from actionscope.models import IamAction, PolicyFinding, RiskLevel
 
 DEFAULT_MAX_OTHER_JSON_FILES = 800
@@ -192,7 +193,7 @@ def extract_actions_from_policy(
         ):
             has_privilege_escalation = True
 
-    return PolicyFinding(
+    finding = PolicyFinding(
         source_file=source_file,
         source_type="json_policy",
         role_arn=None,
@@ -203,6 +204,9 @@ def extract_actions_from_policy(
         has_privilege_escalation=has_privilege_escalation,
         overall_risk=get_overall_risk(actions),
     )
+    finding.privesc_paths = detect_privesc_paths(finding, source_file)
+    finding.has_privilege_escalation = bool(finding.privesc_paths)
+    return finding
 
 
 def _includes_privilege_escalation_action(excluded_actions: list[str]) -> bool:
