@@ -125,13 +125,13 @@ jobs:
               "SUPPORT.md",
           }
           with tarfile.open(archives[0], "r:gz") as archive:
-              members = {
-                  Path(name).name
-                  for name in archive.getnames()
-                  if Path(name).name in required
-              }
+              members = set(archive.getnames())
 
-          missing = required - members
+          roots = {Path(name).parts[0] for name in members if Path(name).parts}
+          if len(roots) != 1:
+              raise SystemExit(f"expected one archive root, found {sorted(roots)}")
+          root = roots.pop()
+          missing = {name for name in required if f"{root}/{name}" not in members}
           if missing:
               raise SystemExit(f"source archive missing: {sorted(missing)}")
           print(f"OK: source archive includes {sorted(required)}")
