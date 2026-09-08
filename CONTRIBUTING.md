@@ -1,5 +1,10 @@
 # Contributing to ActionScope
 
+Thank you for helping improve ActionScope. Participation in the project follows
+the [Code of Conduct](CODE_OF_CONDUCT.md). The project's decision process and
+maintainer responsibilities are described in [GOVERNANCE.md](GOVERNANCE.md),
+and support channels are listed in [SUPPORT.md](SUPPORT.md).
+
 ## Adding a New IAM Risk Rule
 
 The easiest contribution is adding IAM action risk classifications.

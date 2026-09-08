@@ -9,6 +9,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
+
+import yaml
+
+from actionscope import __version__
 
 checks = []
 
@@ -60,6 +65,35 @@ except Exception:
 readme = open("README.md").read()
 check("README has pip install", "pip install actionscope" in readme)
 check("README has GitHub Action example", "uses:" in readme)
+
+community_files = [
+    "CITATION.cff",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "GOVERNANCE.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+]
+missing_community_files = [path for path in community_files if not Path(path).is_file()]
+check(
+    "Community health files present",
+    not missing_community_files,
+    ", ".join(missing_community_files) if missing_community_files else "all present",
+)
+
+try:
+    citation = yaml.safe_load(Path("CITATION.cff").read_text(encoding="utf-8"))
+except (OSError, yaml.YAMLError) as exc:
+    check("Citation metadata valid", False, str(exc))
+else:
+    citation_version = str(citation.get("version", ""))
+    check(
+        "Citation metadata valid",
+        citation.get("cff-version") == "1.2.0"
+        and citation.get("repository-code") == "https://github.com/r12habh/ActionScope"
+        and citation_version == __version__,
+        f"software version: {citation_version or 'missing'}",
+    )
 
 print(f"\n{'Ready to release!' if all(checks) else 'Fix issues before releasing.'}")
 sys.exit(0 if all(checks) else 1)

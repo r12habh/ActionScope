@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: >-
+  If you use ActionScope in research, please cite the software using the
+  metadata in this file.
+title: "ActionScope: Coverage-aware analysis of GitHub Actions and AWS IAM evidence"
+type: software
+authors:
+  - family-names: Singh
+    given-names: Rishabh
+    alias: r12habh
+repository-code: "https://github.com/r12habh/ActionScope"
+url: "https://r12habh.github.io/ActionScope/"
+license: MIT
+version: 0.5.0
+date-released: 2026-08-10
+keywords:
+  - AWS IAM
+  - CI/CD security
+  - GitHub Actions
+  - OIDC
+  - static analysis
+  - supply-chain security
+abstract: >-
+  ActionScope is an open-source Python CLI and GitHub Action that connects
+  GitHub Actions credential paths with available AWS IAM evidence. It reports
+  recoverable cloud permissions, preserves evidence gaps, and detects
+  workflow-layer security exposures such as compromised or mutable actions,
+  unsafe token permissions, script injection, and OIDC trust-policy issues.

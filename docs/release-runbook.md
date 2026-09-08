@@ -40,6 +40,9 @@ GitHub Releases, and GitHub Marketplace.
    python scripts/bump_version.py OLD_VERSION NEW_VERSION
    ```
 
+   This updates `pyproject.toml`, `actionscope/__init__.py`, `action.yml`, and
+   the version and release date in `CITATION.cff`.
+
 2. Update `CHANGELOG.md` with the release date and the changes.
 3. Run the pre-release checks:
 
@@ -51,7 +54,7 @@ GitHub Releases, and GitHub Marketplace.
 4. Commit the version bump:
 
    ```bash
-   git add pyproject.toml actionscope/__init__.py action.yml CHANGELOG.md
+   git add pyproject.toml actionscope/__init__.py action.yml CITATION.cff CHANGELOG.md
    git commit -m "Release vNEW_VERSION"
    git push origin main
    ```
