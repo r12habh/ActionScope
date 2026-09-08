@@ -5,6 +5,9 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- Machine-readable citation metadata, a contributor code of conduct, public
+  governance and support policies, and CI checks that keep this project
+  metadata synchronized with releases and source distributions.
 - CloudFormation and SAM template analysis now extracts inline IAM role
   policies, `AWS::IAM::Policy` / `AWS::IAM::ManagedPolicy` role attachments,
   literal-role SAM policies, and GitHub OIDC trust conditions from YAML or

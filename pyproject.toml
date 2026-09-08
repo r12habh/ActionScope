@@ -73,9 +73,10 @@ research = ["requests>=2.31", "tqdm>=4.66"]
 
 [project.urls]
 Homepage = "https://github.com/r12habh/ActionScope"
-Documentation = "https://github.com/r12habh/ActionScope#readme"
+Documentation = "https://r12habh.github.io/ActionScope/"
 Repository = "https://github.com/r12habh/ActionScope"
 Issues = "https://github.com/r12habh/ActionScope/issues"
+Changelog = "https://github.com/r12habh/ActionScope/blob/main/CHANGELOG.md"
 
 [project.scripts]
 actionscope = "actionscope.cli:main"
@@ -91,8 +92,11 @@ include = [
   "/actionscope",
   "/action.yml",
   "/CHANGELOG.md",
+  "/CITATION.cff",
+  "/CODE_OF_CONDUCT.md",
   "/CONTRIBUTING.md",
   "/docs",
+  "/GOVERNANCE.md",
   "/LICENSE",
   "/pyproject.toml",
   "/README.md",
@@ -103,6 +107,8 @@ include = [
   "/research/methodology.md",
   "/research/scan_public_repos.py",
   "/scripts",
+  "/SECURITY.md",
+  "/SUPPORT.md",
 ]
 
 [tool.ruff]

@@ -108,6 +108,37 @@ jobs:
       - name: Twine metadata check
         run: twine check dist/*
 
+      - name: Verify source archive community metadata
+        run: |
+          python3 - <<'PY'
+          import tarfile
+          from pathlib import Path
+
+          archives = list(Path("dist").glob("*.tar.gz"))
+          if len(archives) != 1:
+              raise SystemExit(f"expected one source archive, found {len(archives)}")
+
+          required = {
+              "CITATION.cff",
+              "CODE_OF_CONDUCT.md",
+              "CONTRIBUTING.md",
+              "GOVERNANCE.md",
+              "SECURITY.md",
+              "SUPPORT.md",
+          }
+          with tarfile.open(archives[0], "r:gz") as archive:
+              members = set(archive.getnames())
+
+          roots = {Path(name).parts[0] for name in members if Path(name).parts}
+          if len(roots) != 1:
+              raise SystemExit(f"expected one archive root, found {sorted(roots)}")
+          root = roots.pop()
+          missing = {name for name in required if f"{root}/{name}" not in members}
+          if missing:
+              raise SystemExit(f"source archive missing: {sorted(missing)}")
+          print(f"OK: source archive includes {sorted(required)}")
+          PY
+
       - name: Install the wheel into a fresh venv
         # Catches the most common packaging regressions: missing data files
         # (the compromised_actions.json database), broken entrypoints,

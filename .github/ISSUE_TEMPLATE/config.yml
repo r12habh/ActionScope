@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Usage questions and design discussions
+    url: https://github.com/r12habh/ActionScope/discussions
+    about: Ask for help or discuss ideas before opening an implementation issue.
+  - name: Private security report
+    url: https://github.com/r12habh/ActionScope/security/advisories/new
+    about: Report vulnerabilities privately without publishing exploit details.

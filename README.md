@@ -406,6 +406,17 @@ The most impactful contributions right now:
 3. **Add test fixtures** from real-world workflows, anonymized
 4. **Improve error messages** when policies are missing
 
+## Citation and Community
+
+Research users can cite ActionScope using the machine-readable metadata in
+[`CITATION.cff`](CITATION.cff). GitHub also exposes this through the
+repository's **Cite this repository** menu.
+
+Project decisions and maintainer responsibilities are documented in
+[`GOVERNANCE.md`](GOVERNANCE.md). For usage questions, bug reports, and support
+expectations, see [`SUPPORT.md`](SUPPORT.md). Participation in project spaces
+is governed by the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
 ## Built By
 
 Rishabh Singh.
