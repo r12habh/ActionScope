@@ -107,6 +107,7 @@ include = [
   "/research/methodology.md",
   "/research/scan_public_repos.py",
   "/scripts",
+  "/SECURITY.md",
   "/SUPPORT.md",
 ]
 
