@@ -28,7 +28,10 @@ def bump_version(old: str, new: str, release_date: str) -> None:
         path = Path(filepath)
         content = path.read_text(encoding="utf-8")
         updated = content.replace(old, new)
-        if filepath == "CITATION.cff" and content != updated:
+        citation_has_target_version = filepath == "CITATION.cff" and re.search(
+            rf"(?m)^version:\s*['\"]?{re.escape(new)}['\"]?\s*$", updated
+        )
+        if citation_has_target_version:
             updated = re.sub(
                 r"(?m)^date-released: .+$",
                 f"date-released: {release_date}",
