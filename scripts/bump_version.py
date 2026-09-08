@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bump ActionScope version across all files.
-Usage: python scripts/bump_version.py 0.1.0 0.2.0
+Usage: python scripts/bump_version.py 0.5.0 0.6.0 2026-12-01
 """
 
 from __future__ import annotations
@@ -12,8 +12,11 @@ from datetime import date
 from pathlib import Path
 
 
-def bump_version(old: str, new: str, release_date: str | None = None) -> None:
-    release_date = release_date or date.today().isoformat()
+def bump_version(old: str, new: str, release_date: str) -> None:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", release_date):
+        raise ValueError("release date must use YYYY-MM-DD format")
+    date.fromisoformat(release_date)
+
     files_to_update = [
         "pyproject.toml",
         "actionscope/__init__.py",
@@ -39,7 +42,13 @@ def bump_version(old: str, new: str, release_date: str | None = None) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python scripts/bump_version.py OLD_VERSION NEW_VERSION")
+    if len(sys.argv) != 4:
+        print(
+            "Usage: python scripts/bump_version.py OLD_VERSION NEW_VERSION YYYY-MM-DD"
+        )
         sys.exit(1)
-    bump_version(sys.argv[1], sys.argv[2])
+    try:
+        bump_version(sys.argv[1], sys.argv[2], sys.argv[3])
+    except ValueError as exc:
+        print(f"Invalid release date: {exc}")
+        sys.exit(1)

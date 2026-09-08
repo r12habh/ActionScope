@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from scripts.bump_version import bump_version
 
 
@@ -23,3 +25,10 @@ def test_bump_version_updates_citation_version_and_date(tmp_path, monkeypatch) -
     assert "date-released: 2026-12-01" in citation
     for filename in ("pyproject.toml", "actionscope/__init__.py", "action.yml"):
         assert "0.6.0" in (tmp_path / filename).read_text(encoding="utf-8")
+
+
+def test_bump_version_rejects_invalid_release_date(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        bump_version("0.5.0", "0.6.0", release_date="December 1, 2026")

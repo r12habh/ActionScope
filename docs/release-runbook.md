@@ -37,11 +37,13 @@ GitHub Releases, and GitHub Marketplace.
 1. Update the version across project files:
 
    ```bash
-   python scripts/bump_version.py OLD_VERSION NEW_VERSION
+   python scripts/bump_version.py OLD_VERSION NEW_VERSION YYYY-MM-DD
    ```
 
    This updates `pyproject.toml`, `actionscope/__init__.py`, `action.yml`, and
-   the version and release date in `CITATION.cff`.
+   the version and release date in `CITATION.cff`. Use the intended publication
+   date, and rerun the command with the corrected date before tagging if the
+   release is delayed.
 
 2. Update `CHANGELOG.md` with the release date and the changes.
 3. Run the pre-release checks:
