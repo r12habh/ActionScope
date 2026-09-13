@@ -28,3 +28,4 @@ research/scored2026/
 
 # mkdocs build output
 site/
+.mkdocs-build/

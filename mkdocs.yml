@@ -92,6 +92,7 @@ nav:
   - Detectors:
       - Compromised Actions: compromised-actions.md
       - OIDC Trust Policy: oidc-trust.md
+      - GitHub Environments: github-environments.md
       - Script Injection: script-injection.md
       - AI Agent Prompt Injection: ai-agent-prompt-injection.md
       - Reusable Workflows: reusable-workflows.md
