@@ -25,6 +25,23 @@ def test_action_exposes_confidence_and_new_only_inputs() -> None:
     assert inputs["require-baseline"]["default"] == "false"
 
 
+def test_action_inputs_have_complete_metadata() -> None:
+    for name, metadata in _action()["inputs"].items():
+        assert isinstance(metadata.get("description"), str), name
+        assert metadata["description"].strip(), name
+        assert isinstance(metadata.get("required"), bool), name
+        assert "default" in metadata, name
+
+
+def test_action_outputs_have_complete_metadata() -> None:
+    for name, metadata in _action()["outputs"].items():
+        assert isinstance(metadata.get("description"), str), name
+        assert metadata["description"].strip(), name
+        assert isinstance(metadata.get("value"), str), name
+        assert metadata["value"].strip(), name
+        assert f"steps.scan.outputs.{name}" in metadata["value"], name
+
+
 def test_action_exposes_custom_risk_policy_input() -> None:
     inputs = _action()["inputs"]
     text = ACTION_FILE.read_text(encoding="utf-8")
