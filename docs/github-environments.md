@@ -179,10 +179,13 @@ role:
 4. The trust policy's `aud` and `sub` conditions match the workflow's actual
    OIDC claims.
 
-If the role or trust policy is external, run `actionscope scan` with the
-appropriate GitHub token or use `--aws-verify` where available. ActionScope
-does not fetch or infer GitHub Environment protection rules, evaluate dynamic
-matrix or `if:` expressions, or prove the effective permissions of a role.
+If the role or trust policy is external, ActionScope has incomplete static
+evidence. Inspect the role trust policy in AWS and confirm that its `sub`
+condition matches the environment. The `--aws-verify` mode can enrich IAM
+permission evidence, but it does not currently import role trust policies for
+this detector. ActionScope also does not fetch or infer GitHub Environment
+protection rules, evaluate dynamic matrix or `if:` expressions, or prove the
+effective permissions of a role.
 
 ## Running the check
 
