@@ -657,15 +657,24 @@ def run_corpus(
     finished = total - len(pending)
     with ThreadPoolExecutor(max_workers=options.jobs) as pool:
         futures = [pool.submit(_process_entry, entry, options) for entry in pending]
-        with progress_path.open("a", encoding="utf-8") as log:
-            for future in as_completed(futures):
-                record = future.result()
-                log.write(json.dumps(record, sort_keys=True) + "\n")
-                log.flush()
-                records[record["key"]] = record
-                finished += 1
-                if progress is not None:
-                    progress(_progress_line(record, finished, total, identity, options))
+        try:
+            with progress_path.open("a", encoding="utf-8") as log:
+                for future in as_completed(futures):
+                    record = future.result()
+                    log.write(json.dumps(record, sort_keys=True) + "\n")
+                    log.flush()
+                    records[record["key"]] = record
+                    finished += 1
+                    if progress is not None:
+                        progress(
+                            _progress_line(record, finished, total, identity, options)
+                        )
+        except BaseException:
+            # On Ctrl-C or any error, drop queued entries instead of letting
+            # the pool finish them after the log has closed; --resume retries
+            # everything that was not recorded.
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
 
     ordered = [records[entry.key] for entry in manifest.entries]
     repo_rows, binding_rows = _build_tables(ordered, identity)

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -618,6 +619,49 @@ def test_scan_timeout_is_recorded_without_stopping_the_run(
     run = run_corpus(_options(manifest, tmp_path / "out", scan_timeout=1))
 
     assert run.summary["status_counts"] == {"scan_timeout": 1}
+
+
+def test_interrupt_cancels_queued_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {"repo_url": "https://github.com/octo/repo", "commit": str(n) * 40}
+                for n in range(1, 7)
+            ]
+        )
+    )
+    started: list[str] = []
+
+    def slow_entry(entry: corpus.ManifestEntry, options: object) -> dict[str, object]:
+        started.append(entry.commit)
+        time.sleep(0.05)
+        return {
+            "key": entry.key,
+            "row": entry.row,
+            "repo_url": entry.repo_url,
+            "source": entry.source,
+            "commit": entry.commit,
+            "path": entry.path,
+            "status": "fetch_failed",
+            "error": "stub",
+            "scan": None,
+            "elapsed_seconds": 0.05,
+        }
+
+    def interrupt(line: str) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(corpus, "_process_entry", slow_entry)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_corpus(_options(manifest, tmp_path / "out", jobs=1), progress=interrupt)
+
+    # One entry completed and at most one more was already running; the rest
+    # were cancelled instead of being processed after the interrupt.
+    assert len(started) <= 2
 
 
 def test_worker_crash_is_recorded_as_scan_failure(
