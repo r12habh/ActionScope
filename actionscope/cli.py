@@ -10,23 +10,9 @@ import click
 from rich.console import Console
 
 from actionscope import __version__
-from actionscope.analyzers.reusable_workflows import (
-    ReusableWorkflowScan,
-    scan_reusable_workflows,
-)
-from actionscope.analyzers.risk_engine import (
-    build_scan_result,
-    finalize_scan_metadata,
-)
 from actionscope.models import PolicyFinding, ScanResult
-from actionscope.parsers.cloudformation import scan_cloudformation_files
-from actionscope.parsers.policy_json import scan_policy_files
-from actionscope.parsers.terraform import scan_terraform_files
-from actionscope.parsers.workflow import (
-    find_workflow_files,
-    parse_workflow_file,
-    scan_workflows,
-)
+from actionscope.parsers.workflow import find_workflow_files, parse_workflow_file
+from actionscope.pipeline import collect_static_evidence, correlate_evidence
 from actionscope.reporters.json_reporter import to_json, write_json
 from actionscope.reporters.markdown import to_markdown, write_markdown
 from actionscope.reporters.terminal import render_no_aws_found, render_scan_result
@@ -232,65 +218,13 @@ def scan(
         else Console(no_color=no_color, stderr=True)
     )
 
-    try:
-        (
-            credential_sources,
-            github_token_perms,
-            unpinned_actions,
-            workflow_errors,
-        ) = scan_workflows(repo_path)
-    except Exception as exc:
-        credential_sources, github_token_perms, unpinned_actions = [], [], []
-        workflow_errors = [f"Fatal error scanning workflows: {exc}"]
-
-    try:
-        reusable_scan = scan_reusable_workflows(
-            repo_path,
-            github_token=None if offline else github_token,
-            offline=offline,
-        )
-    except Exception as exc:
-        reusable_scan = ReusableWorkflowScan(
-            errors=[f"Fatal error scanning reusable workflows: {exc}"]
-        )
-
-    credential_sources.extend(reusable_scan.credential_sources)
-    github_token_perms.extend(reusable_scan.github_token_permissions)
-    unpinned_actions.extend(reusable_scan.unpinned_actions)
-    workflow_errors.extend(reusable_scan.errors)
-
-    try:
-        # Click sets max_policy_files=None when the user does not pass the
-        # flag; in that case, scan_policy_files uses its built-in default.
-        if max_policy_files is None:
-            json_findings, json_errors = scan_policy_files(repo_path)
-        else:
-            json_findings, json_errors = scan_policy_files(
-                repo_path, max_other_files=max_policy_files
-            )
-    except Exception as exc:
-        json_findings, json_errors = [], [str(exc)]
-
-    try:
-        tf_findings, tf_errors = scan_terraform_files(repo_path)
-    except Exception as exc:
-        tf_findings, tf_errors = [], [str(exc)]
-
-    try:
-        cloudformation_findings, cloudformation_errors = (
-            scan_cloudformation_files(repo_path)
-        )
-    except Exception as exc:
-        cloudformation_findings, cloudformation_errors = [], [str(exc)]
-
-    all_policy_findings = (
-        json_findings + tf_findings + cloudformation_findings
-    )
-    all_errors = (
-        workflow_errors
-        + json_errors
-        + tf_errors
-        + cloudformation_errors
+    # Click sets max_policy_files=None when the user does not pass the flag;
+    # the policy parser then applies its built-in default cap.
+    evidence = collect_static_evidence(
+        repo_path,
+        github_token=github_token,
+        offline=offline,
+        max_policy_files=max_policy_files,
     )
 
     if aws_verify:
@@ -304,7 +238,7 @@ def scan(
             check_boto3_available()
             status_console.print("[dim]Running AWS verification...[/dim]")
             aws_findings, aws_errors = verify_all_credential_sources(
-                credential_sources
+                evidence.credential_sources
             )
             successful_aws_findings = [
                 finding
@@ -317,7 +251,7 @@ def scan(
                 if finding.role_arn
             }
             workflow_role_arns_by_name: dict[str, set[str]] = {}
-            for source in credential_sources:
+            for source in evidence.credential_sources:
                 if not source.role_arn:
                     continue
                 role_name = extract_role_name_from_arn(source.role_arn)
@@ -332,42 +266,22 @@ def scan(
             }
             static_only = [
                 finding
-                for finding in all_policy_findings
+                for finding in evidence.policy_findings
                 if not _finding_matches_verified_role(
                     finding,
                     verified_role_arns,
                     verified_role_names,
                 )
             ]
-            all_policy_findings = static_only + aws_findings
-            all_errors.extend(aws_errors)
+            evidence.policy_findings = static_only + aws_findings
+            evidence.errors.extend(aws_errors)
         except RuntimeError as exc:
             status_console.print(f"[red]AWS verification failed: {exc}[/red]")
-            all_errors.append(f"AWS verification failed: {exc}")
+            evidence.errors.append(f"AWS verification failed: {exc}")
 
-    try:
-        result = build_scan_result(
-            repo_path=repo_path,
-            credential_sources=credential_sources,
-            github_token_perms=github_token_perms,
-            policy_findings=all_policy_findings,
-            unpinned_actions=unpinned_actions,
-            errors=all_errors,
-            reusable_scan=reusable_scan,
-            offline=offline,
-            config=scan_config,
-        )
-    except Exception as exc:
-        result = ScanResult(
-            scan_path=repo_path,
-            workflow_count=0,
-            credential_sources=credential_sources,
-            github_token_permissions=github_token_perms,
-            unpinned_actions=unpinned_actions,
-            policy_findings=all_policy_findings,
-            errors=all_errors + [f"Could not correlate scan results: {exc}"],
-        )
-        finalize_scan_metadata(result, config=scan_config)
+    result = correlate_evidence(
+        repo_path, evidence, offline=offline, config=scan_config
+    )
 
     if resolve_pins:
         status_console.print("[dim]Resolving action pins via GitHub API...[/dim]")
@@ -396,7 +310,7 @@ def scan(
     # Step 5: Handle a truly empty scan. Repos can have useful non-credential
     # findings such as OIDC trust-policy issues or script injection risks.
     if (
-        not credential_sources
+        not evidence.credential_sources
         and not _has_reportable_findings(result)
         and not result.errors
     ):
