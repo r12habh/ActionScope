@@ -30,5 +30,6 @@ research/joss/
 site/
 .mkdocs-build/
 
-# Local scratch output (rendered PDFs, page previews)
-tmp/
+# Local scratch output at the repository root (rendered PDFs, page previews).
+# Anchored so nested directories named tmp/ (e.g. test fixtures) stay tracked.
+/tmp/
