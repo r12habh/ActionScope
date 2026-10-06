@@ -295,6 +295,28 @@ def test_manifest_skips_duplicate_entries(tmp_path: Path) -> None:
     assert loaded.duplicates == 1
 
 
+def test_manifest_keeps_distinct_rows_with_different_rejected_paths(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            [
+                {"repo_url": "https://github.com/octo/repo", "commit": "f" * 40,
+                 "path": "../first"},
+                {"repo_url": "https://github.com/octo/repo", "commit": "f" * 40,
+                 "path": "../second"},
+            ]
+        )
+    )
+
+    loaded = load_manifest(manifest)
+
+    assert [entry.path for entry in loaded.entries] == ["../first", "../second"]
+    assert all(entry.problem for entry in loaded.entries)
+    assert loaded.duplicates == 0
+
+
 def test_github_repository_identity_is_case_and_suffix_insensitive() -> None:
     assert (
         corpus._repo_identity("https://GitHub.com/Octo/Repo.git/")
@@ -456,6 +478,29 @@ def test_csv_neutralizes_formula_cells_from_scanned_repositories(
     json_rows = json.loads((tmp_path / "out" / "bindings.json").read_text())
     assert "'=SUM(1,2)" in csv_text
     assert "=SUM(1,2)" in {row["step"] for row in json_rows}
+
+
+def test_workflows_without_findings_are_still_counted(tmp_path: Path) -> None:
+    repo = tmp_path / "clean"
+    workflows = repo / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    # No permissions block, AWS credentials, or actions: nothing for any
+    # detector to report, so only file discovery can count this workflow.
+    (workflows / "lint.yml").write_text(
+        "name: lint\non: push\njobs:\n"
+        "  lint:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - run: echo lint\n"
+    )
+    sha = _commit(repo)
+    manifest = _write_manifest(
+        tmp_path / "manifest.csv", [(str(repo), sha)], "repo_url,commit"
+    )
+
+    run_corpus(_options(manifest, tmp_path / "out"))
+
+    row = json.loads((tmp_path / "out" / "repositories.json").read_text())[0]
+    assert row["workflow_count"] == 1
+    assert row["credential_bindings"] == 0
 
 
 def test_path_column_scans_a_subdirectory(tmp_path: Path) -> None:

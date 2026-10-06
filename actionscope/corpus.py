@@ -312,13 +312,15 @@ def _resolve_source(repo_url: str, base_dir: Path) -> tuple[str, str | None]:
 
 
 def _normalize_subpath(path: str) -> tuple[str, str | None]:
+    # A rejected path is returned unchanged so distinct invalid rows keep
+    # distinct keys; invalid entries are never fetched or scanned.
     if not path:
         return "", None
     if "\\" in path:
-        return "", "path must use forward slashes"
+        return path, "path must use forward slashes"
     pure = PurePosixPath(path)
     if pure.is_absolute() or ".." in pure.parts:
-        return "", "path must be relative to the repository root without '..'"
+        return path, "path must be relative to the repository root without '..'"
     normalized = pure.as_posix().strip("/")
     return ("" if normalized == "." else normalized), None
 
@@ -542,6 +544,7 @@ def _process_entry(entry: ManifestEntry, options: CorpusOptions) -> dict[str, An
 def scan_rows(scan_root: str) -> dict[str, Any]:
     """Scan one checkout and return rows without IAM ARNs or account IDs."""
     from actionscope.config import ActionScopeConfig
+    from actionscope.parsers.workflow import find_workflow_files
     from actionscope.pipeline import collect_static_evidence, correlate_evidence
 
     evidence = collect_static_evidence(scan_root, offline=True)
@@ -552,7 +555,9 @@ def scan_rows(scan_root: str) -> dict[str, Any]:
     )
     root = Path(scan_root).resolve()
     return {
-        "workflow_count": result.workflow_count,
+        # result.workflow_count only counts files that produced evidence, so a
+        # clean workflow would look like no workflow at all.
+        "workflow_count": len(find_workflow_files(scan_root)),
         "overall_risk": result.overall_risk.name.lower(),
         "coverage_status": result.coverage_status,
         "oidc_trust_findings": len(result.oidc_trust_findings),
