@@ -9,18 +9,21 @@ from actionscope.cli import main
 
 CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "cli-reference.md"
 SCAN_HEADING = "## `actionscope scan [PATH] [OPTIONS]`"
+CORPUS_SCAN_HEADING = "## `actionscope corpus scan MANIFEST [OPTIONS]`"
 SCAN_OPTIONS_HEADING = "### Options"
 
 
-def _scan_command():
-    command = main.commands.get("scan")
-    assert command is not None, "scan command is missing from actionscope.cli.main"
+def _command(*path: str):
+    command = main
+    for name in path:
+        command = command.commands.get(name)
+        assert command is not None, f"{' '.join(path)} is missing from the CLI"
     return command
 
 
-def _public_scan_long_options() -> list[str]:
+def _public_long_options(*path: str) -> list[str]:
     names: list[str] = []
-    for param in _scan_command().params:
+    for param in _command(*path).params:
         if getattr(param, "hidden", False):
             continue
         long_opts = [
@@ -32,12 +35,12 @@ def _public_scan_long_options() -> list[str]:
     return names
 
 
-def _scan_options_section(text: str) -> str:
-    heading_at = text.find(SCAN_HEADING)
-    assert heading_at != -1, f"missing {SCAN_HEADING!r} in {CLI_REFERENCE}"
+def _scan_options_section(text: str, heading: str = SCAN_HEADING) -> str:
+    heading_at = text.find(heading)
+    assert heading_at != -1, f"missing {heading!r} in {CLI_REFERENCE}"
     section = text[heading_at:]
     options_at = section.find(SCAN_OPTIONS_HEADING)
-    assert options_at != -1, f"missing {SCAN_OPTIONS_HEADING!r} under scan command"
+    assert options_at != -1, f"missing {SCAN_OPTIONS_HEADING!r} under {heading!r}"
     section = section[options_at:]
     next_headings = [
         index
@@ -49,9 +52,9 @@ def _scan_options_section(text: str) -> str:
     return section
 
 
-def _documented_scan_options(text: str) -> set[str]:
+def _documented_scan_options(text: str, heading: str = SCAN_HEADING) -> set[str]:
     options: set[str] = set()
-    for line in _scan_options_section(text).splitlines():
+    for line in _scan_options_section(text, heading).splitlines():
         if not line.startswith("|"):
             continue
         first_cell = line.split("|", 2)[1]
@@ -59,18 +62,26 @@ def _documented_scan_options(text: str) -> set[str]:
     return options
 
 
-def test_cli_reference_lists_every_scan_option() -> None:
+def _assert_options_documented(heading: str, *command_path: str) -> None:
     docs = CLI_REFERENCE.read_text(encoding="utf-8")
-    documented_options = _documented_scan_options(docs)
+    documented_options = _documented_scan_options(docs, heading)
     missing = [
         option
-        for option in _public_scan_long_options()
+        for option in _public_long_options(*command_path)
         if option not in documented_options
     ]
     assert not missing, (
-        "scan options missing from the CLI reference Options section: "
+        f"{' '.join(command_path)} options missing from the CLI reference: "
         + ", ".join(missing)
     )
+
+
+def test_cli_reference_lists_every_scan_option() -> None:
+    _assert_options_documented(SCAN_HEADING, "scan")
+
+
+def test_cli_reference_lists_every_corpus_scan_option() -> None:
+    _assert_options_documented(CORPUS_SCAN_HEADING, "corpus", "scan")
 
 
 def test_scan_options_section_excludes_later_examples() -> None:

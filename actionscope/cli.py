@@ -559,6 +559,111 @@ def gate_command(
     raise click.exceptions.Exit(decision.exit_code)
 
 
+@main.group("corpus")
+def corpus_group() -> None:
+    """Run reproducible scans over many repositories for empirical studies."""
+
+
+@corpus_group.command("scan")
+@click.argument(
+    "manifest",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Directory for result tables; must be new or empty unless resuming",
+)
+@click.option(
+    "--jobs",
+    "-j",
+    default=4,
+    show_default=True,
+    type=click.IntRange(1, 64),
+    help="Repositories to fetch and scan in parallel",
+)
+@click.option(
+    "--fetch-timeout",
+    default=300,
+    show_default=True,
+    type=click.IntRange(1),
+    help="Seconds allowed to fetch one repository",
+)
+@click.option(
+    "--scan-timeout",
+    default=300,
+    show_default=True,
+    type=click.IntRange(1),
+    help="Seconds allowed to scan one repository",
+)
+@click.option(
+    "--resume",
+    is_flag=True,
+    default=False,
+    help="Continue an interrupted run, retrying entries that did not scan",
+)
+@click.option(
+    "--no-anonymize",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include repository URLs, commits, and workflow names in the shareable "
+        "tables (for owners scanning their own repositories)"
+    ),
+)
+@click.option("--quiet", "-q", is_flag=True, default=False)
+def corpus_scan(
+    manifest: Path,
+    output_dir: Path,
+    jobs: int,
+    fetch_timeout: int,
+    scan_timeout: int,
+    resume: bool,
+    no_anonymize: bool,
+    quiet: bool,
+) -> None:
+    """Scan every repository in MANIFEST at its pinned commit.
+
+    MANIFEST is a CSV or JSON file with repo_url and commit columns (full
+    40-character SHAs) and an optional path column for a subdirectory.
+    """
+    from actionscope.corpus import (
+        CorpusError,
+        CorpusOptions,
+        ManifestError,
+        run_corpus,
+    )
+
+    options = CorpusOptions(
+        manifest_path=manifest,
+        output_dir=output_dir,
+        jobs=jobs,
+        fetch_timeout=fetch_timeout,
+        scan_timeout=scan_timeout,
+        resume=resume,
+        anonymize=not no_anonymize,
+    )
+    progress = None if quiet else (lambda line: click.echo(line, err=True))
+    try:
+        run = run_corpus(options, progress=progress)
+    except (ManifestError, CorpusError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not quiet:
+        summary = run.summary
+        rate = summary["static_match_rate"]
+        click.echo(
+            f"Scanned {summary['entries_scanned']} of {summary['entries']} "
+            f"entries: {summary['credential_bindings']} credential bindings, "
+            f"{summary['static_matches']} static IAM matches"
+            + (f" ({rate:.1%})" if rate is not None else "")
+            + f". Results: {run.output_dir}",
+            err=True,
+        )
+
+
 def _exit_with_gate(result: ScanResult) -> None:
     decision = result.gate
     if decision is None:
