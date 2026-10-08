@@ -17,10 +17,10 @@ htmlcov/
 research/paper/
 research/_archive_paper_may2026/
 research/scored2026/
+research/joss/
 
-# Belt-and-suspenders: never commit un-anonymized evaluation working data,
-# even if a parent dir is later un-ignored or files are moved. Private rerun
-# outputs retain real third-party repo names, AWS account IDs, and role ARNs.
+# Never commit un-anonymized evaluation working data. Private reruns can retain
+# third-party repository names, AWS account IDs, and role ARNs.
 *_private/
 **/*_private/
 *private*.csv
@@ -29,3 +29,7 @@ research/scored2026/
 # mkdocs build output
 site/
 .mkdocs-build/
+
+# Local scratch output at the repository root (rendered PDFs, page previews).
+# Anchored so nested directories named tmp/ (e.g. test fixtures) stay tracked.
+/tmp/
