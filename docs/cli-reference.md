@@ -158,6 +158,36 @@ actionscope gate scan.json --fail-on high --new-only --min-confidence high
 | `--require-baseline` | `False` | Exit 2 instead of 0 when a new-only gate has no exact baseline. Requires `--new-only`. | `actionscope gate scan.json --fail-on high --new-only --require-baseline` |
 | `--write-back` | `False` | Store the gate decision in the JSON report for later rendering. | `actionscope gate scan.json --fail-on high --write-back` |
 
+## `actionscope corpus scan MANIFEST [OPTIONS]`
+
+Scan many repositories, each pinned to a commit SHA, and write per-repository
+and per-credential-binding tables for empirical studies. Repository identities
+are anonymized by default. See [Corpus Scans](corpus.md) for the manifest
+format, output schema, and anonymization model.
+
+```bash
+actionscope corpus scan manifest.csv --output-dir results/
+actionscope corpus scan manifest.csv --output-dir results/ --resume
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `MANIFEST` | CSV or JSON file with `repo_url` and `commit` (full 40-character SHA) per row, plus an optional `path` subdirectory. |
+
+### Options
+
+| Flag | Short | Default | Description | Example |
+|------|-------|---------|-------------|---------|
+| `--output-dir` | `-o` | required | Directory for the result tables. Must be new or empty unless resuming. | `actionscope corpus scan m.csv -o results/` |
+| `--jobs` | `-j` | `4` | Repositories to fetch and scan in parallel (1–64). | `actionscope corpus scan m.csv -o results/ -j 8` |
+| `--fetch-timeout` | none | `300` | Seconds allowed to fetch one repository. A slower fetch is recorded as `fetch_timeout`. | `actionscope corpus scan m.csv -o results/ --fetch-timeout 600` |
+| `--scan-timeout` | none | `300` | Seconds allowed to scan one repository. A slower scan is recorded as `scan_timeout`. | `actionscope corpus scan m.csv -o results/ --scan-timeout 120` |
+| `--resume` | none | `False` | Continue an interrupted run in the same output directory. Scanned entries are kept; every other entry is retried. The manifest and ActionScope version must match the original run. | `actionscope corpus scan m.csv -o results/ --resume` |
+| `--no-anonymize` | none | `False` | Put repository URLs, commits, paths, and workflow, job, and step names in the shareable tables. Intended for owners scanning their own repositories. Role ARNs are never written. | `actionscope corpus scan m.csv -o results/ --no-anonymize` |
+| `--quiet` | `-q` | `False` | Suppress per-repository progress lines and the final summary. | `actionscope corpus scan m.csv -o results/ -q` |
+
 ## Planned Commands
 
 The roadmap issues below are open, but these commands are not implemented in

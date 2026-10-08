@@ -5,6 +5,14 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- `actionscope corpus scan` runs the static pipeline over a manifest of
+  repositories pinned to commit SHAs and writes per-repository and
+  per-credential-binding tables (CSV and JSON) with a run summary for empirical
+  studies. Repository identities are replaced with salted keyed hashes by
+  default, role ARNs and account IDs are never written, and each repository is
+  fetched with hardened git settings and scanned in an isolated worker with
+  per-repository timeouts. Interrupted runs can be resumed. See
+  `docs/corpus.md`.
 - Machine-readable citation metadata, a contributor code of conduct, public
   governance and support policies, and CI checks that keep this project
   metadata synchronized with releases and source distributions.

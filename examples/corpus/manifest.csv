@@ -1,0 +1,6 @@
+repo_url,commit,path
+https://github.com/r12habh/ActionScope,a1c4cbb93990a27d5f16d78a74c7f13f326d24b5,examples/aws-blast-radius-demo
+https://github.com/r12habh/ActionScope,a1c4cbb93990a27d5f16d78a74c7f13f326d24b5,tests/fixtures/coverage_repo
+https://github.com/r12habh/ActionScope,a1c4cbb93990a27d5f16d78a74c7f13f326d24b5,tests/fixtures/demo_repo
+https://github.com/r12habh/ActionScope,a1c4cbb93990a27d5f16d78a74c7f13f326d24b5,tests/fixtures/cli_repo_safe
+https://github.com/r12habh/ActionScope,a1c4cbb93990a27d5f16d78a74c7f13f326d24b5,tests/fixtures/medium_only_repo

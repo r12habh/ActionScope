@@ -99,6 +99,8 @@ nav:
       - Correlated Exposure Paths: exposure-paths.md
       - SARIF and Code Scanning: sarif.md
   - Compromised Actions Database: compromised-actions-database.md
+  - Research:
+      - Corpus Scans: corpus.md
   - Operations:
       - AWS Verification Permissions: aws-verify-permissions.md
       - Release Runbook: release-runbook.md
