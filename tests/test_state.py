@@ -66,6 +66,23 @@ def test_compute_delta_no_previous_has_no_risk_change() -> None:
     assert delta.risk_changed is False
 
 
+def test_compute_delta_ignores_corrected_workflow_count() -> None:
+    previous = {
+        "overall_risk": "info",
+        "workflow_count": 0,
+        "finding_counts": {},
+        "finding_types": [],
+    }
+    current = _result()
+    current.workflow_count = 1
+
+    delta = compute_delta(previous, current)
+
+    assert delta.risk_changed is False
+    assert delta.new_finding_types == []
+    assert delta.resolved_finding_types == []
+
+
 def test_compute_delta_detects_risk_increase() -> None:
     previous = {"overall_risk": "high", "finding_counts": {}}
 

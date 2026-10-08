@@ -25,6 +25,8 @@ All notable changes to ActionScope are documented here.
   environment variables, reusable-workflow inputs, and other expressions.
 
 ### Fixed
+- Workflow counts now include analyzed workflow files that produce no findings,
+  so a clean repository is no longer reported as having zero workflows.
 - AWS access keys inherited through workflow- or job-level `env` blocks, and
   keys used directly by shell steps without `configure-aws-credentials`, are
   now recorded as static credential sources.

@@ -37,6 +37,7 @@ from actionscope.models import (
     get_unmatched_findings,
 )
 from actionscope.parsers.terraform_refs import parse_resource_reference
+from actionscope.parsers.workflow import find_workflow_files
 
 if TYPE_CHECKING:
     from actionscope.analyzers.reusable_workflows import ReusableWorkflowScan
@@ -387,7 +388,8 @@ def build_scan_result(
         exposure_paths,
     )
     workflow_count = len(
-        {source.workflow_file for source in credential_sources}
+        set(find_workflow_files(repo_path))
+        | {source.workflow_file for source in credential_sources}
         | {perm.workflow_file for perm in github_token_perms}
         | {finding.workflow_file for finding in normalized_unpinned}
         | {finding.workflow_file for finding in script_injection_findings}
