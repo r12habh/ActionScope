@@ -39,6 +39,18 @@ def test_scan_json_output_valid(runner: CliRunner, cli_repo_safe: Path) -> None:
     assert "overall_risk" in data
 
 
+def test_scan_counts_workflow_without_findings(
+    runner: CliRunner, cli_repo_safe: Path
+) -> None:
+    result = runner.invoke(
+        main,
+        ["scan", str(cli_repo_safe), "--output-format", "json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["workflow_count"] == 1
+
+
 def test_fail_on_critical_exits_one_when_critical(
     runner: CliRunner, cli_repo_critical: Path
 ) -> None:

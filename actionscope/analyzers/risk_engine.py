@@ -37,6 +37,7 @@ from actionscope.models import (
     get_unmatched_findings,
 )
 from actionscope.parsers.terraform_refs import parse_resource_reference
+from actionscope.parsers.workflow import find_workflow_files
 
 if TYPE_CHECKING:
     from actionscope.analyzers.reusable_workflows import ReusableWorkflowScan
@@ -386,8 +387,9 @@ def build_scan_result(
         environment_findings,
         exposure_paths,
     )
-    workflow_count = len(
-        {source.workflow_file for source in credential_sources}
+    observed_workflow_files = (
+        set(find_workflow_files(repo_path))
+        | {source.workflow_file for source in credential_sources}
         | {perm.workflow_file for perm in github_token_perms}
         | {finding.workflow_file for finding in normalized_unpinned}
         | {finding.workflow_file for finding in script_injection_findings}
@@ -403,6 +405,12 @@ def build_scan_result(
             reference.target_workflow
             for reference in (reusable_scan.references if reusable_scan else [])
             if reference.status == "inspected"
+        }
+    )
+    workflow_count = len(
+        {
+            _workflow_identity(repo_path, workflow_file)
+            for workflow_file in observed_workflow_files
         }
     )
 
@@ -429,6 +437,21 @@ def build_scan_result(
     )
     result.overall_risk = overall_risk
     return finalize_scan_metadata(result, config=config)
+
+
+def _workflow_identity(repo_path: str, workflow_file: str) -> str:
+    """Canonicalize repository-local paths without rewriting remote locators."""
+    scan_path = Path(repo_path).expanduser()
+    root = scan_path.parent if scan_path.is_file() else scan_path
+    candidate = Path(workflow_file).expanduser()
+    if candidate.is_absolute():
+        return str(candidate.resolve())
+
+    local_candidate = root / candidate
+    is_workflow_relative = candidate.parts[:2] == (".github", "workflows")
+    if is_workflow_relative or local_candidate.exists():
+        return str(local_candidate.resolve())
+    return workflow_file
 
 
 def finalize_scan_metadata(
