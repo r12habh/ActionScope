@@ -603,6 +603,19 @@ def test_build_scan_result_produces_correct_workflow_count() -> None:
     assert result.workflow_count == 2
 
 
+def test_build_scan_result_deduplicates_relative_and_discovered_paths(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / ".github" / "workflows" / "deploy.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("on: push\njobs: {}\n", encoding="utf-8")
+    source = credential_source(workflow_file=".github/workflows/deploy.yml")
+
+    result = build_scan_result(str(tmp_path), [source], [], [], [])
+
+    assert result.workflow_count == 1
+
+
 def test_unmatched_critical_policy_is_report_only() -> None:
     critical = policy_finding(RiskLevel.CRITICAL)
 
