@@ -20,6 +20,7 @@ from actionscope.compromised_db import (
 from actionscope.models import CompromisedActionFinding, RiskLevel
 from actionscope.parsers.actions_lock import (
     canonical_action_key,
+    dependency_closure,
     load_actions_lock,
     repository_root,
 )
@@ -177,7 +178,7 @@ def scan_for_compromised_actions(
         dependencies_by_workflow = {
             str((root / workflow_path).resolve()): {
                 pin: lockfile.dependencies[pin]
-                for pin in pins
+                for pin in dependency_closure(lockfile, pins)
                 if pin in lockfile.dependencies
             }
             for workflow_path, pins in lockfile.workflows.items()
@@ -194,7 +195,7 @@ def scan_for_compromised_actions(
             ]
         seen_locked_findings: set[tuple[str, str, str]] = set()
         for workflow_path, pins in lockfile.workflows.items():
-            for pin in pins:
+            for pin in dependency_closure(lockfile, pins):
                 dependency = lockfile.dependencies.get(pin)
                 if dependency is None:
                     continue

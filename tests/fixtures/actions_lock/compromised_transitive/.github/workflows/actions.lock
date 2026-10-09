@@ -2,7 +2,6 @@ version: v0.0.3
 workflows:
   .github/workflows/ci.yml:
     - example/composite-action@v1
-    - tj-actions/changed-files@v45
 dependencies:
   example/composite-action@v1:
     ref: v1
@@ -16,4 +15,3 @@ dependencies:
     commit: sha1-0e58ed867288e6711d10da9293b8db84f3f3ed85
     owner_id: 30
     repo_id: 40
-

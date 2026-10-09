@@ -33,6 +33,44 @@ _HOSTNAME_RE = re.compile(
 )
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader,
+    node: yaml.nodes.MappingNode,
+    deep: bool = False,
+) -> dict:
+    mapping: dict = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable mapping key",
+                key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
 @dataclass(frozen=True)
 class LockedActionDependency:
     """Normalized metadata for one lockfile dependency."""
@@ -84,7 +122,10 @@ def load_actions_lock(
         return None, []
 
     try:
-        data = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+        data = yaml.load(
+            lock_path.read_text(encoding="utf-8"),
+            Loader=_UniqueKeyLoader,
+        )
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         return None, [f"Could not parse dependency lockfile {lock_path}: {exc}"]
 
@@ -184,6 +225,13 @@ def load_actions_lock(
                     f"{dependency.key!r} references missing child {child!r}"
                 )
 
+    cycle = _dependency_cycle(lockfile)
+    if cycle is not None:
+        errors.append(
+            f"Invalid dependency lockfile {lock_path}: uses cycle detected at "
+            f"dependency {cycle!r}"
+        )
+
     lockfile.valid = not errors
     return lockfile, errors
 
@@ -224,7 +272,7 @@ def scan_dependency_locks(
             valid_pins = set()
         else:
             listed_pins = set(lockfile.workflows.get(relative_workflow, ()))
-            valid_pins = {pin for pin in listed_pins if pin in lockfile.dependencies}
+            valid_pins = dependency_closure(lockfile, listed_pins)
             locked_direct = direct_keys & valid_pins
             if locked_direct == direct_keys:
                 status = "fully_locked"
@@ -308,11 +356,30 @@ def canonical_action_key(uses_ref: str) -> str | None:
     value = uses_ref.strip()
     if value.startswith(("./", "../", "$/", "docker://")) or "@" not in value:
         return None
-    action_part, ref = value.rsplit("@", 1)
+    action_part, ref = value.split("@", 1)
     pieces = action_part.split("/")
     if len(pieces) < 2 or not pieces[0] or not pieces[1] or not ref:
         return None
     return f"{pieces[0].lower()}/{pieces[1].lower()}@{ref}"
+
+
+def dependency_closure(
+    lockfile: ActionsLockFile,
+    pins: set[str] | tuple[str, ...],
+) -> set[str]:
+    """Return valid direct and transitive pins reachable from ``pins``."""
+    reachable: set[str] = set()
+    pending = list(pins)
+    while pending:
+        pin = pending.pop()
+        if pin in reachable:
+            continue
+        dependency = lockfile.dependencies.get(pin)
+        if dependency is None:
+            continue
+        reachable.add(pin)
+        pending.extend(dependency.uses)
+    return reachable
 
 
 def _normalize_dependency(
@@ -446,7 +513,11 @@ def _positive_int(value: object) -> bool:
 
 
 def _normalize_workflow_path(path: str) -> str | None:
-    candidate = PurePosixPath(path.replace("\\", "/"))
+    if any(ord(character) <= 0x1F or ord(character) == 0x7F for character in path):
+        return None
+    if "\\" in path or ":" in path:
+        return None
+    candidate = PurePosixPath(path)
     if candidate.is_absolute() or ".." in candidate.parts:
         return None
     normalized = str(candidate).removeprefix("./")
@@ -455,6 +526,32 @@ def _normalize_workflow_path(path: str) -> str | None:
     if PurePosixPath(normalized).suffix.lower() not in {".yml", ".yaml"}:
         return None
     return normalized
+
+
+def _dependency_cycle(lockfile: ActionsLockFile) -> str | None:
+    colors: dict[str, int] = {}
+
+    def visit(key: str) -> str | None:
+        color = colors.get(key, 0)
+        if color == 1:
+            return key
+        if color == 2:
+            return None
+        colors[key] = 1
+        dependency = lockfile.dependencies.get(key)
+        if dependency is not None:
+            for child in dependency.uses:
+                cycle = visit(child)
+                if cycle is not None:
+                    return cycle
+        colors[key] = 2
+        return None
+
+    for key in lockfile.dependencies:
+        cycle = visit(key)
+        if cycle is not None:
+            return cycle
+    return None
 
 
 def _relative_workflow_path(root: Path, workflow_file: str) -> str:

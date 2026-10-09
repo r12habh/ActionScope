@@ -211,6 +211,73 @@ def test_unsafe_workflow_path_invalidates_entire_lockfile(tmp_path: Path) -> Non
     assert any("unsafe workflow path" in error for error in evidence.errors)
 
 
+def test_duplicate_yaml_key_is_rejected_without_suppressing_finding(
+    tmp_path: Path,
+) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: actions/checkout@v4\n",
+        encoding="utf-8",
+    )
+    dependency = (
+        f"    ref: v4\n    commit: sha1-{'e' * 40}\n    owner_id: 1\n    repo_id: 2\n"
+    )
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows:\n"
+        "  .github/workflows/ci.yml:\n"
+        "    - actions/checkout@v4\n"
+        "dependencies:\n"
+        f"  actions/checkout@v4:\n{dependency}"
+        f"  actions/checkout@v4:\n{dependency}",
+        encoding="utf-8",
+    )
+
+    evidence = collect_static_evidence(str(tmp_path), offline=True)
+
+    assert evidence.dependency_locks[0].status == "invalid"
+    assert len(evidence.unpinned_actions) == 1
+    assert any("duplicate key" in error for error in evidence.errors)
+
+
+def test_dependency_cycle_invalidates_lockfile(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: octo/a@v1\n",
+        encoding="utf-8",
+    )
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows:\n"
+        "  .github/workflows/ci.yml:\n"
+        "    - octo/a@v1\n"
+        "dependencies:\n"
+        "  octo/a@v1:\n"
+        "    ref: v1\n"
+        f"    commit: sha1-{'a' * 40}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n"
+        "    uses: [octo/b@v1]\n"
+        "  octo/b@v1:\n"
+        "    ref: v1\n"
+        f"    commit: sha1-{'b' * 40}\n"
+        "    owner_id: 3\n"
+        "    repo_id: 4\n"
+        "    uses: [octo/a@v1]\n",
+        encoding="utf-8",
+    )
+
+    evidence = collect_static_evidence(str(tmp_path), offline=True)
+
+    assert evidence.dependency_locks[0].status == "invalid"
+    assert len(evidence.unpinned_actions) == 1
+    assert any("uses cycle" in error for error in evidence.errors)
+
+
 def test_v001_pin_suffix_is_normalized(tmp_path: Path) -> None:
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
@@ -263,6 +330,12 @@ def test_same_repository_dollar_reference_is_local() -> None:
     assert canonical_action_key(reference) is None
     assert is_pinned_to_sha(reference) is True
     assert classify_action_ref(reference) == "local"
+
+
+def test_ref_containing_at_sign_uses_the_full_ref() -> None:
+    assert canonical_action_key("octo/action@release@2026") == (
+        "octo/action@release@2026"
+    )
 
 
 def test_job_level_reusable_workflow_is_covered_by_lock(tmp_path: Path) -> None:
