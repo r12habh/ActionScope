@@ -133,6 +133,37 @@ def test_safe_locked_commit_suppresses_compromised_tag_finding(
     assert findings == []
 
 
+def test_deleted_workflow_lock_entry_does_not_report_compromise(
+    tmp_path: Path,
+) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - run: echo safe\n",
+        encoding="utf-8",
+    )
+    malicious_sha = "0e58ed867288e6711d10da9293b8db84f3f3ed85"
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows:\n"
+        "  .github/workflows/deleted.yml:\n"
+        "    - tj-actions/changed-files@v45\n"
+        "dependencies:\n"
+        "  tj-actions/changed-files@v45:\n"
+        "    ref: v45\n"
+        f"    commit: sha1-{malicious_sha}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_for_compromised_actions(str(tmp_path), offline=True)
+
+    assert errors == []
+    assert findings == []
+
+
 def test_json_reports_per_workflow_lock_coverage() -> None:
     repo = str(FIXTURES / "fully_locked")
     evidence = collect_static_evidence(repo, offline=True)

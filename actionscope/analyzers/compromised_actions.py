@@ -153,7 +153,8 @@ def scan_for_compromised_actions(
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         return [], [f"Could not load compromised actions database {DATA_FILE}: {exc}"]
 
-    for workflow_file in _workflow_files(repo_path):
+    workflow_files = _workflow_files(repo_path)
+    for workflow_file in workflow_files:
         try:
             with workflow_file.open("r", encoding="utf-8") as handle:
                 workflow_data = yaml.load(handle, Loader=GitHubWorkflowLoader)
@@ -175,6 +176,9 @@ def scan_for_compromised_actions(
     lockfile, _ = load_actions_lock(repo_path)
     if lockfile is not None:
         root = repository_root(repo_path)
+        existing_workflows = {
+            str(workflow_file.resolve()) for workflow_file in workflow_files
+        }
         dependencies_by_workflow = {
             str((root / workflow_path).resolve()): {
                 pin: lockfile.dependencies[pin]
@@ -182,6 +186,7 @@ def scan_for_compromised_actions(
                 if pin in lockfile.dependencies
             }
             for workflow_path, pins in lockfile.workflows.items()
+            if str((root / workflow_path).resolve()) in existing_workflows
         }
         # A valid lock replaces the mutable workflow ref with its recorded
         # commit. Evaluate that commit below instead of reporting the tag as if
@@ -195,6 +200,9 @@ def scan_for_compromised_actions(
             ]
         seen_locked_findings: set[tuple[str, str, str]] = set()
         for workflow_path, pins in lockfile.workflows.items():
+            resolved_workflow = str((root / workflow_path).resolve())
+            if resolved_workflow not in existing_workflows:
+                continue
             for pin in dependency_closure(lockfile, pins):
                 dependency = lockfile.dependencies.get(pin)
                 if dependency is None:
@@ -218,7 +226,7 @@ def scan_for_compromised_actions(
                 seen_locked_findings.add(finding_key)
                 findings.append(
                     CompromisedActionFinding(
-                        workflow_file=str((root / workflow_path).resolve()),
+                        workflow_file=resolved_workflow,
                         job_name="actions.lock",
                         step_name="Locked direct or transitive dependency",
                         uses_ref=(
