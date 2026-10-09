@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from actionscope.models import RiskLevel, ScriptInjectionFinding
+from actionscope.parsers.steps import job_steps
 
 UNTRUSTED_CONTEXTS = [
     "github.event.pull_request.title",
@@ -142,19 +143,15 @@ def scan_workflow_for_injections(
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if isinstance(step, dict):
-                findings.extend(
-                    analyze_step_for_injection(
-                        step,
-                        str(job_name),
-                        workflow_file,
-                        trigger_context=trigger_context,
-                    )
+        for step in job_steps(job):
+            findings.extend(
+                analyze_step_for_injection(
+                    step,
+                    str(job_name),
+                    workflow_file,
+                    trigger_context=trigger_context,
                 )
+            )
     return findings
 
 

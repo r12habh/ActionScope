@@ -25,6 +25,10 @@ All notable changes to ActionScope are documented here.
   environment variables, reusable-workflow inputs, and other expressions.
 
 ### Fixed
+- Steps grouped under `parallel:` are now analyzed. Every detector previously
+  skipped them, so AWS credential steps, unpinned or compromised actions, and
+  script, artifact, or AI-agent injection risks inside a parallel group went
+  unreported and the scan's overall risk was understated.
 - Workflow counts now include analyzed workflow files that produce no findings,
   so a clean repository is no longer reported as having zero workflows.
 - AWS access keys inherited through workflow- or job-level `env` blocks, and
