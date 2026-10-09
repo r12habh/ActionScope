@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from click.testing import CliRunner
+
 from actionscope.analyzers.compromised_actions import (
     scan_for_compromised_actions,
 )
+from actionscope.cli import main
 from actionscope.models import RiskLevel
 from actionscope.parsers.actions_lock import (
     canonical_action_key,
@@ -139,6 +142,24 @@ def test_json_reports_per_workflow_lock_coverage() -> None:
     assert payload["summary"]["fully_locked_workflows"] == 1
     assert payload["dependency_locks"][0]["status"] == "fully_locked"
     assert payload["dependency_locks"][0]["transitive_dependencies"] == 1
+
+
+def test_terminal_reports_lock_coverage_without_aws_credentials() -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "scan",
+            str(FIXTURES / "fully_locked"),
+            "--output-format",
+            "terminal",
+            "--no-color",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Workflow Dependency Locks" in result.output
+    assert "fully locked" in result.output
+    assert "Unpinned Actions" not in result.output
 
 
 def test_unsupported_future_schema_fails_open(tmp_path: Path) -> None:
