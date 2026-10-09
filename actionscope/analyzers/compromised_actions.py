@@ -18,6 +18,11 @@ from actionscope.compromised_db import (
     load_best_database,
 )
 from actionscope.models import CompromisedActionFinding, RiskLevel
+from actionscope.parsers.actions_lock import (
+    canonical_action_key,
+    load_actions_lock,
+    repository_root,
+)
 from actionscope.parsers.workflow import GitHubWorkflowLoader
 
 DATA_FILE = BUNDLED_DB_FILE
@@ -166,6 +171,72 @@ def scan_for_compromised_actions(
                 )
             )
 
+    lockfile, _ = load_actions_lock(repo_path)
+    if lockfile is not None:
+        root = repository_root(repo_path)
+        dependencies_by_workflow = {
+            str((root / workflow_path).resolve()): {
+                pin: lockfile.dependencies[pin]
+                for pin in pins
+                if pin in lockfile.dependencies
+            }
+            for workflow_path, pins in lockfile.workflows.items()
+        }
+        # A valid lock replaces the mutable workflow ref with its recorded
+        # commit. Evaluate that commit below instead of reporting the tag as if
+        # the runner still followed it dynamically.
+        if lockfile.valid:
+            findings = [
+                finding
+                for finding in findings
+                if canonical_action_key(finding.uses_ref)
+                not in dependencies_by_workflow.get(finding.workflow_file, {})
+            ]
+        seen_locked_findings: set[tuple[str, str, str]] = set()
+        for workflow_path, pins in lockfile.workflows.items():
+            for pin in pins:
+                dependency = lockfile.dependencies.get(pin)
+                if dependency is None:
+                    continue
+                compromised, entry = is_compromised_ref(
+                    dependency.action_name,
+                    dependency.commit_sha,
+                    db,
+                )
+                finding_key = (
+                    workflow_path,
+                    dependency.action_name,
+                    dependency.commit_sha,
+                )
+                if (
+                    not compromised
+                    or entry is None
+                    or finding_key in seen_locked_findings
+                ):
+                    continue
+                seen_locked_findings.add(finding_key)
+                findings.append(
+                    CompromisedActionFinding(
+                        workflow_file=str((root / workflow_path).resolve()),
+                        job_name="actions.lock",
+                        step_name="Locked direct or transitive dependency",
+                        uses_ref=(
+                            f"{dependency.action_name}@{dependency.commit_sha}"
+                        ),
+                        action_name=dependency.action_name,
+                        ref=dependency.commit_sha,
+                        is_sha_pinned=True,
+                        compromise_date=str(entry.get("compromised_at", "")),
+                        advisory_url=str(entry.get("advisory_url", "")),
+                        description=(
+                            "The workflow dependency lock resolves this action "
+                            "to a documented malicious commit. "
+                            + str(entry.get("description", ""))
+                        ),
+                        risk_level=RiskLevel.CRITICAL,
+                    )
+                )
+
     return findings, errors
 
 
@@ -177,7 +248,7 @@ def _entry_for_action(action_name: str, db: dict) -> dict | None:
 
 
 def _parse_uses_ref(uses_ref: str) -> tuple[str, str] | None:
-    if uses_ref.startswith(("./", "../", "docker://")):
+    if uses_ref.startswith(("./", "../", "$/", "docker://")):
         return None
     if "@" not in uses_ref:
         return None

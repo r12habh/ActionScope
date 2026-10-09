@@ -37,7 +37,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from actionscope import __version__
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PRIVATE_DIRNAME = "_private"
 DEFAULT_TIMEOUT_SECONDS = 300
 
@@ -86,6 +86,9 @@ _REPO_COLUMNS = (
     "coverage_status",
     *_DETECTOR_COLUMNS,
     "unpinned_actions",
+    "dependency_lock_workflows",
+    "fully_locked_workflows",
+    "partially_locked_workflows",
     "error_count",
     "elapsed_seconds",
 )
@@ -114,6 +117,19 @@ _BINDING_IDENTITY_COLUMNS = (
     "job",
     "step",
 )
+_LOCK_COLUMNS = (
+    "entry_id",
+    "repo_id",
+    "workflow_id",
+    "status",
+    "schema_version",
+    "direct_dependencies",
+    "locked_direct_dependencies",
+    "transitive_dependencies",
+    "uncovered_dependencies",
+    "invalid_dependencies",
+)
+_LOCK_IDENTITY_COLUMNS = ("repo_url", "commit", "path", "workflow_path")
 
 
 class ManifestError(ValueError):
@@ -568,6 +584,10 @@ def scan_rows(scan_root: str) -> dict[str, Any]:
         "environment_findings": len(result.environment_findings),
         "exposure_paths": len(result.exposure_paths),
         "unpinned_actions": len(result.unpinned_actions),
+        "dependency_locks": [
+            _dependency_lock_payload(item, root)
+            for item in result.dependency_locks
+        ],
         "errors": [_redact(str(error)) for error in result.errors],
         "bindings": [_binding_payload(binding, root) for binding in result.bindings],
     }
@@ -606,6 +626,19 @@ def _binding_payload(binding: Any, root: Path) -> dict[str, Any]:
             if policy
             else None
         ),
+    }
+
+
+def _dependency_lock_payload(coverage: Any, root: Path) -> dict[str, Any]:
+    return {
+        "workflow_path": _redact(_relative_path(coverage.workflow_file, root)),
+        "status": coverage.status,
+        "schema_version": coverage.schema_version,
+        "direct_dependencies": coverage.direct_dependencies,
+        "locked_direct_dependencies": coverage.locked_direct_dependencies,
+        "transitive_dependencies": coverage.transitive_dependencies,
+        "uncovered_dependencies": len(coverage.uncovered_dependencies),
+        "invalid_dependencies": len(coverage.invalid_dependencies),
     }
 
 
@@ -677,10 +710,12 @@ def run_corpus(
             raise
 
     ordered = [records[entry.key] for entry in manifest.entries]
-    repo_rows, binding_rows = _build_tables(ordered, identity)
-    summary = _summarize(manifest, meta, options, repo_rows, binding_rows)
+    repo_rows, binding_rows, lock_rows = _build_tables(ordered, identity)
+    summary = _summarize(
+        manifest, meta, options, repo_rows, binding_rows, lock_rows
+    )
     public_files = _write_outputs(
-        options, private_dir, repo_rows, binding_rows, summary
+        options, private_dir, repo_rows, binding_rows, lock_rows, summary
     )
 
     violations = _check_publishable(public_files, manifest, options.anonymize)
@@ -806,15 +841,21 @@ def _progress_line(
 
 def _build_tables(
     records: list[dict[str, Any]], identity: _Identity
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     repo_rows: list[dict[str, Any]] = []
     binding_rows: list[dict[str, Any]] = []
+    lock_rows: list[dict[str, Any]] = []
     for record in records:
         repo_key = _repo_identity(record["source"] or record["repo_url"])
         entry_id = identity.token("entry", record["key"])
         repo_id = identity.token("repo", repo_key)
         scan = record.get("scan") if record["status"] == STATUS_SCANNED else None
         bindings = scan["bindings"] if scan else []
+        dependency_locks = scan.get("dependency_locks", []) if scan else []
         sources = Counter(binding.get("policy_source") for binding in bindings)
         # Unscanned entries report unknown (None), never zero.
         measured: dict[str, Any] = (
@@ -829,6 +870,17 @@ def _build_tables(
                 "coverage_status": scan.get("coverage_status"),
                 **{name: scan.get(name) for name in _DETECTOR_COLUMNS},
                 "unpinned_actions": scan.get("unpinned_actions"),
+                "dependency_lock_workflows": len(dependency_locks),
+                "fully_locked_workflows": sum(
+                    1
+                    for item in dependency_locks
+                    if item.get("status") == "fully_locked"
+                ),
+                "partially_locked_workflows": sum(
+                    1
+                    for item in dependency_locks
+                    if item.get("status") == "partially_locked"
+                ),
                 "error_count": len(scan.get("errors", [])),
             }
             if scan
@@ -884,7 +936,38 @@ def _build_tables(
                     },
                 }
             )
-    return repo_rows, binding_rows
+        for dependency_lock in dependency_locks:
+            workflow_path = dependency_lock.get("workflow_path", "")
+            lock_rows.append(
+                {
+                    "entry_id": entry_id,
+                    "repo_id": repo_id,
+                    "repo_url": record["repo_url"],
+                    "commit": record["commit"],
+                    "path": record["path"],
+                    "workflow_path": workflow_path,
+                    "workflow_id": identity.token(
+                        "workflow",
+                        repo_key,
+                        record["path"],
+                        workflow_path,
+                        length=12,
+                    ),
+                    **{
+                        name: dependency_lock.get(name)
+                        for name in (
+                            "status",
+                            "schema_version",
+                            "direct_dependencies",
+                            "locked_direct_dependencies",
+                            "transitive_dependencies",
+                            "uncovered_dependencies",
+                            "invalid_dependencies",
+                        )
+                    },
+                }
+            )
+    return repo_rows, binding_rows, lock_rows
 
 
 def _columns(
@@ -901,24 +984,34 @@ def _write_outputs(
     private_dir: Path,
     repo_rows: list[dict[str, Any]],
     binding_rows: list[dict[str, Any]],
+    lock_rows: list[dict[str, Any]],
     summary: dict[str, Any],
 ) -> list[Path]:
     output_dir = options.output_dir
     shared = not options.anonymize
     repo_columns = _columns(_REPO_COLUMNS, _REPO_IDENTITY_COLUMNS, shared)
     binding_columns = _columns(_BINDING_COLUMNS, _BINDING_IDENTITY_COLUMNS, shared)
+    lock_columns = _columns(_LOCK_COLUMNS, _LOCK_IDENTITY_COLUMNS, shared)
 
     public_files = [
         _write_csv(output_dir / "repositories.csv", repo_rows, repo_columns),
         _write_csv(output_dir / "bindings.csv", binding_rows, binding_columns),
         _write_json(output_dir / "repositories.json", repo_rows, repo_columns),
         _write_json(output_dir / "bindings.json", binding_rows, binding_columns),
+        _write_csv(
+            output_dir / "workflow_locks.csv", lock_rows, lock_columns
+        ),
+        _write_json(
+            output_dir / "workflow_locks.json", lock_rows, lock_columns
+        ),
         _write_summary(output_dir / "summary.json", summary),
     ]
     full_repo = [*_columns(_REPO_COLUMNS, _REPO_IDENTITY_COLUMNS, True), "error"]
     full_binding = _columns(_BINDING_COLUMNS, _BINDING_IDENTITY_COLUMNS, True)
+    full_lock = _columns(_LOCK_COLUMNS, _LOCK_IDENTITY_COLUMNS, True)
     _write_csv(private_dir / "repositories.csv", repo_rows, full_repo)
     _write_csv(private_dir / "bindings.csv", binding_rows, full_binding)
+    _write_csv(private_dir / "workflow_locks.csv", lock_rows, full_lock)
     return public_files
 
 
@@ -959,6 +1052,7 @@ def _summarize(
     options: CorpusOptions,
     repo_rows: list[dict[str, Any]],
     binding_rows: list[dict[str, Any]],
+    lock_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     scanned = [row for row in repo_rows if row["status"] == STATUS_SCANNED]
     matches = sum(1 for row in binding_rows if row.get("matched"))
@@ -993,6 +1087,8 @@ def _summarize(
         ),
         "policy_source_counts": _counts(binding_rows, "policy_source"),
         "role_reference_kind_counts": _counts(binding_rows, "role_reference_kind"),
+        "workflow_dependency_locks": len(lock_rows),
+        "dependency_lock_status_counts": _counts(lock_rows, "status"),
         "notes": notes,
     }
 

@@ -255,7 +255,7 @@ def is_pinned_to_sha(uses_ref: str) -> bool:
     repository. Docker actions are considered pinned only when they use an image
     digest.
     """
-    if uses_ref.startswith(("./", "../")):
+    if uses_ref.startswith(("./", "../", "$/")):
         return True
     if uses_ref.startswith("docker://"):
         return "@sha256:" in uses_ref
@@ -273,7 +273,7 @@ def classify_action_ref(uses_ref: str) -> str:
     Returns one of: ``sha``, ``tag``, ``branch``, ``short_sha``, ``local``, or
     ``unresolvable``.
     """
-    if uses_ref.startswith(("./", "../")):
+    if uses_ref.startswith(("./", "../", "$/")):
         return "local"
     if uses_ref.startswith("docker://"):
         return "sha" if "@sha256:" in uses_ref else "tag"

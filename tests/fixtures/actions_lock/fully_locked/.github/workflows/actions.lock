@@ -1,0 +1,25 @@
+version: v0.0.3
+workflows:
+  .github/workflows/ci.yml:
+    - actions/checkout@v4
+    - actions/setup-python@v5
+    - actions/cache@v4
+dependencies:
+  actions/checkout@v4:
+    ref: v4
+    commit: sha1-1111111111111111111111111111111111111111
+    owner_id: 1
+    repo_id: 2
+  actions/setup-python@v5:
+    ref: v5
+    commit: sha1-2222222222222222222222222222222222222222
+    owner_id: 1
+    repo_id: 3
+    uses:
+      - actions/cache@v4
+  actions/cache@v4:
+    ref: v4
+    commit: sha1-3333333333333333333333333333333333333333
+    owner_id: 1
+    repo_id: 4
+

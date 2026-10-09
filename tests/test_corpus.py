@@ -196,6 +196,8 @@ def _shareable_text(run_dir: Path) -> str:
         "bindings.csv",
         "repositories.json",
         "bindings.json",
+        "workflow_locks.csv",
+        "workflow_locks.json",
         "summary.json",
     ]
     return "\n".join((run_dir / name).read_text() for name in names)
@@ -757,6 +759,37 @@ def test_worker_payload_never_contains_role_arns() -> None:
 
     assert payload["bindings"]
     assert "arn:aws" not in json.dumps(payload)
+
+
+def test_corpus_exports_per_workflow_dependency_lock_coverage(
+    tmp_path: Path,
+) -> None:
+    repo = (
+        Path(__file__).parent
+        / "fixtures"
+        / "actions_lock"
+        / "fully_locked"
+    )
+    # Corpus fetches a pinned git commit, so copy the fixture into a temporary
+    # repository before constructing the manifest.
+    checkout = tmp_path / "locked"
+    shutil.copytree(repo, checkout)
+    sha = _commit(checkout)
+    manifest = _write_manifest(
+        tmp_path / "manifest.csv", [(str(checkout), sha)], "repo_url,commit"
+    )
+
+    run = run_corpus(_options(manifest, tmp_path / "out"))
+    lock_rows = json.loads(
+        (tmp_path / "out" / "workflow_locks.json").read_text()
+    )
+
+    assert run.summary["schema_version"] == 2
+    assert run.summary["dependency_lock_status_counts"] == {"fully_locked": 1}
+    assert len(lock_rows) == 1
+    assert lock_rows[0]["status"] == "fully_locked"
+    assert lock_rows[0]["locked_direct_dependencies"] == 2
+    assert "workflow_path" not in lock_rows[0]
 
 
 # --------------------------------------------------------------------------
