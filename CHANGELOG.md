@@ -5,6 +5,11 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- GitHub Actions dependency-lock support for `.github/workflows/actions.lock`
+  schema versions v0.0.1-v0.0.3. Valid exact lock entries cover mutable
+  direct references, transitive locked commits are checked against the
+  compromised-actions database, and JSON/corpus reports include per-workflow
+  lock coverage.
 - `actionscope corpus scan` runs the static pipeline over a manifest of
   repositories pinned to commit SHAs and writes per-repository and
   per-credential-binding tables (CSV and JSON) with a run summary for empirical

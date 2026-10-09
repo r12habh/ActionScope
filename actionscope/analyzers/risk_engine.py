@@ -34,6 +34,7 @@ from actionscope.models import (
     ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
+    WorkflowDependencyLockCoverage,
     get_unmatched_findings,
 )
 from actionscope.parsers.terraform_refs import parse_resource_reference
@@ -277,6 +278,7 @@ def build_scan_result(
     reusable_scan: ReusableWorkflowScan | None = None,
     offline: bool = False,
     config: ActionScopeConfig | None = None,
+    dependency_locks: list[WorkflowDependencyLockCoverage] | None = None,
 ) -> ScanResult:
     """Build the final correlated scan result."""
     if errors is None:
@@ -420,6 +422,7 @@ def build_scan_result(
         credential_sources=credential_sources,
         github_token_permissions=github_token_perms,
         unpinned_actions=normalized_unpinned,
+        dependency_locks=list(dependency_locks or []),
         reusable_workflows=(
             list(reusable_scan.references) if reusable_scan is not None else []
         ),

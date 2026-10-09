@@ -148,6 +148,22 @@ class UnpinnedActionFinding:
 
 
 @dataclass
+class WorkflowDependencyLockCoverage:
+    """Dependency-lock coverage for one repository workflow."""
+
+    workflow_file: str
+    lockfile_path: Optional[str]
+    schema_version: Optional[str]
+    status: str
+    direct_dependencies: int
+    locked_direct_dependencies: int
+    transitive_dependencies: int
+    locked_references: list[str] = field(default_factory=list)
+    uncovered_dependencies: list[str] = field(default_factory=list)
+    invalid_dependencies: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ReusableWorkflowReference:
     """A job-level call from one workflow to a reusable workflow."""
 
@@ -367,6 +383,9 @@ class ScanResult:
         default_factory=list
     )
     unpinned_actions: list[UnpinnedActionFinding] = field(default_factory=list)
+    dependency_locks: list[WorkflowDependencyLockCoverage] = field(
+        default_factory=list
+    )
     reusable_workflows: list[ReusableWorkflowReference] = field(
         default_factory=list
     )

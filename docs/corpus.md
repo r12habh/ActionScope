@@ -74,6 +74,8 @@ results/
 ├── repositories.json    the same rows as JSON
 ├── bindings.csv         one row per workflow credential binding
 ├── bindings.json        the same rows as JSON
+├── workflow_locks.csv   dependency-lock coverage per workflow
+├── workflow_locks.json  the same rows as JSON
 └── _private/            identifying data — do not publish
 ```
 
@@ -96,6 +98,8 @@ apply is `null`; in CSV it is an empty cell.
 | `overall_risk` | Highest finding severity in the scan. |
 | `coverage_status` | `complete` or `partial`, as reported by a normal scan. |
 | `oidc_trust_findings`, `script_injection_findings`, `artifact_poisoning_findings`, `ai_agent_findings`, `compromised_action_findings`, `environment_findings`, `exposure_paths`, `unpinned_actions` | Finding counts per detector. |
+| `dependency_lock_workflows` | Workflows measured for dependency-lock coverage. |
+| `fully_locked_workflows`, `partially_locked_workflows` | Workflows whose external dependencies are fully or partially covered by valid `actions.lock` entries. |
 | `error_count` | Analyzer errors reported during the scan. |
 | `elapsed_seconds` | Time spent on this entry, including the fetch. |
 
@@ -119,6 +123,18 @@ means unknown, not zero.
 | `action_count` | IAM actions in the linked policy. |
 | `policy_coverage_complete` | `false` when the linked policy has attachments or elements ActionScope could not resolve. |
 
+### `workflow_locks` columns
+
+| Column | Description |
+|--------|-------------|
+| `entry_id`, `repo_id` | Join keys to `repositories`. |
+| `workflow_id` | Anonymized workflow identifier. |
+| `status` | `fully_locked`, `partially_locked`, `not_locked`, `invalid`, or `no_dependencies`. |
+| `schema_version` | Parsed `actions.lock` schema version, when valid. |
+| `direct_dependencies`, `locked_direct_dependencies` | External direct references and the subset covered by valid exact lock entries. |
+| `transitive_dependencies` | Additional valid locked dependencies recorded for the workflow. |
+| `uncovered_dependencies`, `invalid_dependencies` | Counts of uncovered direct refs and referenced malformed/missing lock entries. |
+
 Role ARNs and AWS account IDs are never written to any output, including
 `_private/`.
 
@@ -140,8 +156,9 @@ candidate repository names.
 `_private/` holds what is needed to audit or resume the run:
 
 - `salt` — the key for the anonymized IDs
-- `repositories.csv`, `bindings.csv` — the same tables with repository URLs,
-  commits, paths, workflow, job, and step names, and error messages
+- `repositories.csv`, `bindings.csv`, `workflow_locks.csv` — the same tables
+  with repository URLs, commits, paths, workflow, job, and step names, and
+  error messages
 - `progress.jsonl`, `run.json` — the resume log and run settings
 
 Do not publish `_private/`, and do not publish the manifest of an anonymized
