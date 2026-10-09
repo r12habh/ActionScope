@@ -15,6 +15,7 @@ from actionscope.models import (
     GitHubTokenPermission,
     UnpinnedActionFinding,
 )
+from actionscope.parsers.steps import expand_steps, job_steps
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 IAM_ROLE_ARN_PATTERN = re.compile(r"^arn:[^:]+:iam::\d{12}:role/.+")
@@ -117,14 +118,14 @@ def extract_aws_credential_sources(
         job_sources: list[AwsCredentialSource] = []
         temporary_credential_step_ids = {
             str(step.get("id"))
-            for step in _job_steps(job_data)
+            for step in job_steps(job_data)
             if step.get("id")
             and _is_configure_aws_credentials_action(step.get("uses"))
             and isinstance(step.get("with"), dict)
             and _optional_string(step["with"].get("role-to-assume"))
         }
 
-        for step in _job_steps(job_data):
+        for step in job_steps(job_data):
             source = _credential_source_from_step(
                 step,
                 workflow_file,
@@ -185,7 +186,7 @@ def extract_delegated_credential_sources(
         has_oidc = workflow_has_oidc or job_has_oidc
         temporary_credential_step_ids = _temporary_credential_step_ids(job_data)
 
-        for step in _job_steps(job_data):
+        for step in job_steps(job_data):
             uses = step.get("uses")
             if not isinstance(uses, str):
                 continue
@@ -307,14 +308,7 @@ def find_unpinned_action_uses(
         if not isinstance(job, dict):
             continue
 
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-
+        for step in job_steps(job):
             uses = step.get("uses")
             if not isinstance(uses, str):
                 continue
@@ -400,13 +394,6 @@ def scan_workflows(
     return credential_sources, token_permissions, unpinned_actions, errors
 
 
-def _job_steps(job_data: dict) -> list[dict]:
-    steps = job_data.get("steps") or []
-    if not isinstance(steps, list):
-        return []
-    return [step for step in steps if isinstance(step, dict)]
-
-
 def _credential_source_from_step(
     step: dict,
     workflow_file: str,
@@ -467,7 +454,7 @@ def _credential_source_from_environment(
             str(step.get("name") or "Shell step environment"),
             {**inherited_env, **extract_env_var_references(step)},
         )
-        for step in _job_steps(job_data)
+        for step in job_steps(job_data)
     )
 
     for location, env_vars in candidates:
@@ -589,7 +576,7 @@ def _temporary_credential_step_ids(job_data: dict) -> set[str]:
     """Return role-assumption step IDs that can emit temporary credentials."""
     return {
         str(step.get("id"))
-        for step in _job_steps(job_data)
+        for step in job_steps(job_data)
         if step.get("id")
         and _is_configure_aws_credentials_action(step.get("uses"))
         and isinstance(step.get("with"), dict)
@@ -626,8 +613,8 @@ def _inspect_local_composite_action(
         ]
 
     runs = action_data.get("runs") if isinstance(action_data, dict) else None
-    steps = runs.get("steps") if isinstance(runs, dict) else None
-    if not isinstance(steps, list):
+    steps = expand_steps(runs.get("steps") if isinstance(runs, dict) else None)
+    if not steps:
         return [], []
 
     caller_with = caller_step.get("with", {})
@@ -641,8 +628,6 @@ def _inspect_local_composite_action(
     sources: list[AwsCredentialSource] = []
     environment_sources: list[AwsCredentialSource] = []
     for nested_step in steps:
-        if not isinstance(nested_step, dict):
-            continue
         resolved_step = _resolve_composite_inputs(nested_step, caller_with)
         source = _credential_source_from_step(
             resolved_step,
@@ -714,7 +699,7 @@ def _local_action_access_key_locations(
             **_environment_mapping(job_data.get("env")),
         }
         temporary_credential_step_ids = _temporary_credential_step_ids(job_data)
-        for step in _job_steps(job_data):
+        for step in job_steps(job_data):
             uses = step.get("uses")
             if not isinstance(uses, str) or not _is_local_action_reference(
                 uses.strip()

@@ -20,6 +20,7 @@ from actionscope.models import (
     GitHubTokenPermission,
     RiskLevel,
 )
+from actionscope.parsers.steps import job_steps
 
 AI_AGENT_ACTIONS = [
     "anthropics/claude-code-action",
@@ -80,12 +81,7 @@ def detect_ai_agent_steps(workflow_data: dict) -> list[tuple[str, str, dict]]:
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
+        for step in job_steps(job):
             step_name = str(step.get("name") or step.get("uses") or "step")
             uses = str(step.get("uses") or "").lower()
             env = step.get("env") if isinstance(step.get("env"), dict) else {}

@@ -13,6 +13,7 @@ from typing import Any, Iterator
 import yaml
 
 from actionscope.models import ArtifactPoisoningFinding, RiskLevel
+from actionscope.parsers.steps import job_steps
 
 EXECUTION_PATTERNS = [
     r"chmod\s+\+x",
@@ -66,12 +67,7 @@ def executes_after_download(workflow_data: dict) -> bool:
         if not isinstance(job, dict):
             continue
         seen_download = False
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
+        for step in job_steps(job):
             if _is_download_artifact_step(step):
                 seen_download = True
                 continue
@@ -182,12 +178,8 @@ def _iter_steps(workflow_data: dict) -> Iterator[tuple[str, dict]]:
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if isinstance(step, dict):
-                yield str(job_name), step
+        for step in job_steps(job):
+            yield str(job_name), step
 
 
 def _jobs_with_downloads(workflow_data: dict) -> list[str]:

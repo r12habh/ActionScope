@@ -18,6 +18,7 @@ from actionscope.compromised_db import (
     load_best_database,
 )
 from actionscope.models import CompromisedActionFinding, RiskLevel
+from actionscope.parsers.steps import job_steps
 from actionscope.parsers.workflow import GitHubWorkflowLoader
 
 DATA_FILE = BUNDLED_DB_FILE
@@ -94,12 +95,7 @@ def check_workflow_for_compromised_actions(
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
+        for step in job_steps(job):
             uses = step.get("uses")
             if not isinstance(uses, str):
                 continue
