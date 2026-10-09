@@ -18,6 +18,7 @@ from actionscope.models import (
     OidcTrustFinding,
     RiskLevel,
 )
+from actionscope.parsers.steps import job_steps
 from actionscope.parsers.workflow import (
     GitHubWorkflowLoader,
     extract_aws_credential_sources,
@@ -86,7 +87,7 @@ def is_deploy_job(
     if job_name and any(hint in job_name for hint in DEPLOY_JOB_NAME_HINTS):
         return True
 
-    for step in _steps(job_data):
+    for step in job_steps(job_data):
         run_block = step.get("run")
         if isinstance(run_block, str):
             lowered = run_block.lower()
@@ -316,13 +317,6 @@ def _finding_matches_role(finding: OidcTrustFinding, role_arn: str | None) -> bo
     if finding.role_name:
         return f":role/{finding.role_name}" in role_arn
     return False
-
-
-def _steps(job_data: dict) -> list[dict]:
-    steps = job_data.get("steps") or []
-    if not isinstance(steps, list):
-        return []
-    return [step for step in steps if isinstance(step, dict)]
 
 
 def _workflow_files(repo_path: str) -> list[Path]:
