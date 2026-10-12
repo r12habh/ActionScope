@@ -18,6 +18,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
+from actionscope.analyzers.artifact_poisoning import executes_after_download
 from actionscope.cli import main
 from actionscope.parsers.steps import expand_steps, job_steps
 from actionscope.parsers.workflow import GitHubWorkflowLoader
@@ -50,6 +51,85 @@ def test_expand_steps_drops_malformed_entries() -> None:
     ]
     assert job_steps(None) == []
     assert job_steps({"steps": {"run": "make"}}) == []
+
+
+def test_expand_steps_does_not_reenter_a_cyclic_group() -> None:
+    steps = yaml.load(
+        "steps: &steps\n  - run: make\n  - parallel: *steps\n",
+        GitHubWorkflowLoader,
+    )["steps"]
+
+    assert expand_steps(steps) == [{"run": "make"}]
+
+
+def test_cyclic_group_does_not_hide_other_workflows(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "cyclic.yml").write_text(
+        "on: pull_request_target\n"
+        "jobs:\n"
+        "  loop:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps: &steps\n"
+        "      - parallel: *steps\n",
+        encoding="utf-8",
+    )
+    (workflows / "deploy.yml").write_text(
+        "on: pull_request_target\n"
+        "permissions:\n"
+        "  id-token: write\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: aws-actions/configure-aws-credentials@v4\n"
+        "        with:\n"
+        "          role-to-assume: arn:aws:iam::123456789012:role/deploy\n"
+        '      - run: echo "${{ github.event.pull_request.title }}"\n',
+        encoding="utf-8",
+    )
+
+    report = _scan_json(tmp_path)
+
+    assert report["summary"]["credential_sources"] == 1
+    assert report["summary"]["script_injection_risks"] == 1
+    assert not [error for error in report["errors"] if "Recursion" in error]
+
+
+def _artifact_workflow(steps: list) -> dict:
+    return {
+        "on": {"workflow_run": {"workflows": ["build"]}},
+        "jobs": {"publish": {"steps": steps}},
+    }
+
+
+DOWNLOAD = {"uses": "actions/download-artifact@v4"}
+EXECUTE = {"run": "bash ./artifact/install.sh"}
+
+
+@pytest.mark.parametrize(
+    ("steps", "expected"),
+    [
+        ([{"parallel": [EXECUTE, DOWNLOAD]}], True),
+        ([{**EXECUTE, "background": "true"}, DOWNLOAD], True),
+        ([{**EXECUTE, "background": "false"}, DOWNLOAD], False),
+        ([EXECUTE, DOWNLOAD], False),
+        ([{"parallel": [EXECUTE]}, DOWNLOAD], False),
+    ],
+    ids=[
+        "parallel-sibling",
+        "background-before-download",
+        "background-false",
+        "sequential-before-download",
+        "earlier-parallel-group",
+    ],
+)
+def test_concurrent_execution_counts_as_after_download(
+    steps: list, expected: bool
+) -> None:
+    workflow = _artifact_workflow(steps)
+
+    assert executes_after_download(workflow) is expected
 
 
 def _wrap_in_parallel_group(steps: list) -> list:
