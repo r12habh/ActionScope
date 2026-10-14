@@ -1,0 +1,11 @@
+version: v0.0.3
+workflows:
+  .github/workflows/ci.yml:
+    - actions/checkout@v4
+dependencies:
+  actions/checkout@v4:
+    ref: v4
+    commit: sha1-1111111
+    owner_id: 1
+    repo_id: 2
+

@@ -28,6 +28,7 @@ from actionscope.models import (
     ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
+    WorkflowDependencyLockCoverage,
     get_unmatched_findings,
 )
 
@@ -209,6 +210,7 @@ def _render_scan_result_impl(
     _render_script_injection_section(c, result.script_injection_findings)
     _render_artifact_poisoning_section(c, result.artifact_poisoning_findings)
     _render_ai_agent_section(c, result.ai_agent_injection_findings)
+    _render_dependency_lock_section(c, result.dependency_locks)
     _render_unpinned_actions_section(c, result.unpinned_actions)
     _render_pin_suggestions_section(c, result.pin_suggestions)
 
@@ -780,6 +782,48 @@ def _render_unpinned_actions_section(
     )
 
 
+def _render_dependency_lock_section(
+    c: Console,
+    coverage: list[WorkflowDependencyLockCoverage],
+) -> None:
+    visible = [
+        item
+        for item in coverage
+        if item.lockfile_path is not None or item.status == "invalid"
+    ]
+    if not visible:
+        return
+
+    c.print()
+    c.rule("[bold]Workflow Dependency Locks[/]", style="dim")
+    c.print()
+    table = Table(box=box.SIMPLE, show_header=True)
+    table.add_column("Workflow")
+    table.add_column("Status")
+    table.add_column("Direct", justify="right")
+    table.add_column("Transitive", justify="right")
+    table.add_column("Uncovered", justify="right")
+    for item in visible:
+        status = item.status.replace("_", " ")
+        style = {
+            "fully_locked": "green",
+            "partially_locked": "yellow",
+            "invalid": "red",
+        }.get(item.status, "dim")
+        table.add_row(
+            _workflow_basename(item.workflow_file),
+            f"[{style}]{status}[/]",
+            f"{item.locked_direct_dependencies}/{item.direct_dependencies}",
+            str(item.transitive_dependencies),
+            str(len(item.uncovered_dependencies)),
+        )
+    c.print(table)
+    c.print(
+        "[dim]Lock coverage is accepted only for exact action/ref entries with "
+        "valid full commit digests.[/]"
+    )
+
+
 def _render_pin_suggestions_section(c: Console, suggestions: list) -> None:
     if not suggestions:
         return
@@ -1195,6 +1239,26 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                         str(action.get("risk_level", "")).upper(),
                     )
                 c.print(table)
+
+        dependency_locks = [
+            item
+            for item in data.get("dependency_locks", [])
+            if isinstance(item, dict)
+            and (item.get("lockfile_path") or item.get("status") == "invalid")
+        ]
+        if dependency_locks:
+            c.print()
+            c.rule("[bold]Workflow Dependency Locks[/]")
+            for item in dependency_locks:
+                workflow = _workflow_basename(
+                    str(item.get("workflow_file", ""))
+                )
+                c.print(
+                    f"{workflow}: {str(item.get('status', '')).replace('_', ' ')} "
+                    f"({item.get('locked_direct_dependencies', 0)}/"
+                    f"{item.get('direct_dependencies', 0)} direct, "
+                    f"{item.get('transitive_dependencies', 0)} transitive)"
+                )
 
         unpinned = data.get("unpinned_actions", [])
         if unpinned:

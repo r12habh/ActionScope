@@ -24,6 +24,11 @@ from actionscope.models import (
     PolicyFinding,
     ScanResult,
     UnpinnedActionFinding,
+    WorkflowDependencyLockCoverage,
+)
+from actionscope.parsers.actions_lock import (
+    filter_lock_covered_unpinned_actions,
+    scan_dependency_locks,
 )
 from actionscope.parsers.cloudformation import scan_cloudformation_files
 from actionscope.parsers.policy_json import scan_policy_files
@@ -40,6 +45,9 @@ class StaticEvidence:
         default_factory=list
     )
     unpinned_actions: list[UnpinnedActionFinding] = field(default_factory=list)
+    dependency_locks: list[WorkflowDependencyLockCoverage] = field(
+        default_factory=list
+    )
     policy_findings: list[PolicyFinding] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     reusable_scan: ReusableWorkflowScan = field(
@@ -87,6 +95,17 @@ def collect_static_evidence(
     workflow_errors.extend(reusable_scan.errors)
 
     try:
+        dependency_locks, lock_errors = scan_dependency_locks(repo_path)
+        unpinned_actions = filter_lock_covered_unpinned_actions(
+            unpinned_actions,
+            dependency_locks,
+        )
+    except Exception as exc:
+        dependency_locks = []
+        lock_errors = [f"Fatal error scanning dependency lockfile: {exc}"]
+    workflow_errors.extend(lock_errors)
+
+    try:
         # None means "use scan_policy_files' built-in default cap".
         if max_policy_files is None:
             json_findings, json_errors = scan_policy_files(repo_path)
@@ -113,6 +132,7 @@ def collect_static_evidence(
         credential_sources=credential_sources,
         github_token_permissions=github_token_perms,
         unpinned_actions=unpinned_actions,
+        dependency_locks=dependency_locks,
         policy_findings=json_findings + tf_findings + cloudformation_findings,
         errors=workflow_errors + json_errors + tf_errors + cloudformation_errors,
         reusable_scan=reusable_scan,
@@ -138,6 +158,7 @@ def correlate_evidence(
             reusable_scan=evidence.reusable_scan,
             offline=offline,
             config=config,
+            dependency_locks=evidence.dependency_locks,
         )
     except Exception as exc:
         result = ScanResult(
@@ -146,6 +167,7 @@ def correlate_evidence(
             credential_sources=evidence.credential_sources,
             github_token_permissions=evidence.github_token_permissions,
             unpinned_actions=evidence.unpinned_actions,
+            dependency_locks=evidence.dependency_locks,
             policy_findings=evidence.policy_findings,
             errors=evidence.errors
             + [f"Could not correlate scan results: {exc}"],

@@ -150,6 +150,13 @@ def _summary_dict(
         "policies_partial": policies_partial,
         "github_token_risks": github_token_risks,
         "unpinned_actions": len(result.unpinned_actions),
+        "dependency_lock_workflows": len(result.dependency_locks),
+        "fully_locked_workflows": sum(
+            1 for item in result.dependency_locks if item.status == "fully_locked"
+        ),
+        "partially_locked_workflows": sum(
+            1 for item in result.dependency_locks if item.status == "partially_locked"
+        ),
         "reusable_workflows": len(result.reusable_workflows),
         "exposure_paths": len(result.exposure_paths),
         "uninspected_reusable_workflows": sum(
@@ -220,6 +227,10 @@ def to_json(result: ScanResult, indent: int = 2) -> str:
         "unpinned_actions": [
             _serialize_for_json(asdict(finding))
             for finding in result.unpinned_actions
+        ],
+        "dependency_locks": [
+            _serialize_for_json(asdict(coverage))
+            for coverage in result.dependency_locks
         ],
         "reusable_workflows": [
             _serialize_for_json(asdict(reference))
