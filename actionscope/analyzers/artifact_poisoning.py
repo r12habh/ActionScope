@@ -13,6 +13,11 @@ from typing import Any, Iterator
 import yaml
 
 from actionscope.models import ArtifactPoisoningFinding, RiskLevel
+from actionscope.parsers.steps import (
+    concurrent_step_groups,
+    job_steps,
+    runs_in_background,
+)
 
 EXECUTION_PATTERNS = [
     r"chmod\s+\+x",
@@ -57,31 +62,30 @@ def downloads_artifact_in_workflow(workflow_data: dict) -> bool:
 
 
 def executes_after_download(workflow_data: dict) -> bool:
-    """Return True if a job appears to execute content after artifact download."""
+    """Return True if a job may execute content after artifact download.
+
+    Steps in a ``parallel`` group run concurrently, and a background step
+    keeps running while later steps start, so either can execute downloaded
+    content even when it is listed before the download.
+    """
     jobs = workflow_data.get("jobs") or {}
     if not isinstance(jobs, dict):
         return False
 
     for job in jobs.values():
-        if not isinstance(job, dict):
-            continue
         seen_download = False
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            if _is_download_artifact_step(step):
-                seen_download = True
-                continue
-            run_block = step.get("run")
-            if (
-                seen_download
-                and isinstance(run_block, str)
-                and _EXECUTION_RE.search(run_block)
-            ):
+        background_execution = False
+        for group in concurrent_step_groups(job):
+            downloads = any(_is_download_artifact_step(step) for step in group)
+            executing = [step for step in group if _executes_content(step)]
+            if executing and (seen_download or downloads):
                 return True
+            if downloads and background_execution:
+                return True
+            seen_download = seen_download or downloads
+            background_execution = background_execution or any(
+                runs_in_background(step) for step in executing
+            )
     return False
 
 
@@ -175,6 +179,11 @@ def _is_download_artifact_step(step: dict) -> bool:
     )
 
 
+def _executes_content(step: dict) -> bool:
+    run_block = step.get("run")
+    return isinstance(run_block, str) and bool(_EXECUTION_RE.search(run_block))
+
+
 def _iter_steps(workflow_data: dict) -> Iterator[tuple[str, dict]]:
     jobs = workflow_data.get("jobs") or {}
     if not isinstance(jobs, dict):
@@ -182,12 +191,8 @@ def _iter_steps(workflow_data: dict) -> Iterator[tuple[str, dict]]:
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if isinstance(step, dict):
-                yield str(job_name), step
+        for step in job_steps(job):
+            yield str(job_name), step
 
 
 def _jobs_with_downloads(workflow_data: dict) -> list[str]:
