@@ -160,7 +160,7 @@ def _unique_unpinned_refs(workflow_data: dict) -> set[str]:
         if isinstance(job_uses, str):
             job_uses = job_uses.strip()
             if (
-                not job_uses.startswith(("./", "../", "docker://"))
+                not job_uses.startswith(("./", "../", "$/", "docker://"))
                 and "@" in job_uses
                 and classify_action_ref(job_uses) != "sha"
             ):
@@ -170,7 +170,7 @@ def _unique_unpinned_refs(workflow_data: dict) -> set[str]:
             if not isinstance(uses, str):
                 continue
             uses = uses.strip()
-            if uses.startswith(("./", "../", "docker://")):
+            if uses.startswith(("./", "../", "$/", "docker://")):
                 continue
             if "@" not in uses or classify_action_ref(uses) == "sha":
                 continue
