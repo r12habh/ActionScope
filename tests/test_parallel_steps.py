@@ -21,7 +21,10 @@ from click.testing import CliRunner
 from actionscope.analyzers.artifact_poisoning import executes_after_download
 from actionscope.cli import main
 from actionscope.parsers.steps import expand_steps, job_steps
-from actionscope.parsers.workflow import GitHubWorkflowLoader
+from actionscope.parsers.workflow import (
+    GitHubWorkflowLoader,
+    find_unpinned_action_uses,
+)
 from actionscope.resolvers.pin_resolver import resolve_pins_for_workflow
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "coverage_repo"
@@ -180,6 +183,34 @@ def test_wait_all_ends_unnamed_background_execution() -> None:
     assert executes_after_download(workflow) is False
 
 
+def test_parallel_group_implicitly_waits_for_background_members() -> None:
+    workflow = _artifact_workflow(
+        [
+            {
+                "parallel": [
+                    {**EXECUTE, "id": "installer", "background": True},
+                    {"run": "echo independent"},
+                ]
+            },
+            DOWNLOAD,
+        ]
+    )
+
+    assert executes_after_download(workflow) is False
+
+
+def test_parallel_wait_does_not_end_preexisting_background_execution() -> None:
+    workflow = _artifact_workflow(
+        [
+            {**EXECUTE, "id": "installer", "background": True},
+            {"parallel": [{"run": "echo independent"}]},
+            DOWNLOAD,
+        ]
+    )
+
+    assert executes_after_download(workflow) is True
+
+
 def _wrap_in_parallel_group(steps: list) -> list:
     return [{"parallel": steps}]
 
@@ -289,3 +320,24 @@ def test_pin_resolver_skips_same_repository_lock_references() -> None:
         pins = resolve_pins_for_workflow(workflow, "ci.yml", delay_seconds=0)
 
     assert [pin.original_ref for pin in pins] == ["actions/checkout@v4"]
+
+
+def test_same_repository_action_inside_parallel_group_is_pinned() -> None:
+    workflow = {
+        "jobs": {
+            "build": {
+                "steps": [
+                    {
+                        "parallel": [
+                            {"uses": "$/shared/action"},
+                            {"uses": "actions/checkout@v4"},
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+
+    findings = find_unpinned_action_uses(workflow, "ci.yml")
+
+    assert [finding["uses"] for finding in findings] == ["actions/checkout@v4"]

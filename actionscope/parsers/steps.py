@@ -46,16 +46,24 @@ def job_steps(job: Any) -> list[dict]:
     return expand_steps(job.get("steps"))
 
 
-def concurrent_step_groups(job: Any) -> list[list[dict]]:
+def concurrent_step_groups(job: Any) -> list[tuple[list[dict], bool]]:
     """Return a job's steps grouped by their entry in ``jobs.<id>.steps``.
 
-    The steps of one ``parallel`` group run concurrently and form one group.
-    Every other entry is a group of one step.
+    Each tuple contains a group and whether GitHub inserts an implicit wait at
+    its boundary. The steps of one ``parallel`` group run concurrently and are
+    implicitly joined before the next top-level step starts.
     """
     if not isinstance(job, dict) or not isinstance(job.get("steps"), list):
         return []
-    groups = [expand_steps([entry]) for entry in job["steps"]]
-    return [group for group in groups if group]
+    groups: list[tuple[list[dict], bool]] = []
+    for entry in job["steps"]:
+        group = expand_steps([entry])
+        if group:
+            implicit_wait = isinstance(entry, dict) and isinstance(
+                entry.get("parallel"), list
+            )
+            groups.append((group, implicit_wait))
+    return groups
 
 
 def runs_in_background(step: dict) -> bool:

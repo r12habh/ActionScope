@@ -75,8 +75,8 @@ def executes_after_download(workflow_data: dict) -> bool:
     for job in jobs.values():
         seen_download = False
         active_background_execution: set[str] = set()
-        anonymous_background_execution = False
-        for group in concurrent_step_groups(job):
+        anonymous_background_execution = 0
+        for group, implicit_wait in concurrent_step_groups(job):
             downloads = any(_is_download_artifact_step(step) for step in group)
             executing = [step for step in group if _executes_content(step)]
             if executing and (seen_download or downloads):
@@ -86,15 +86,19 @@ def executes_after_download(workflow_data: dict) -> bool:
             ):
                 return True
             seen_download = seen_download or downloads
+            started_background_ids: set[str] = set()
+            started_anonymous_backgrounds = 0
             for step in executing:
                 if not runs_in_background(step):
                     continue
                 step_id = step.get("id")
                 if isinstance(step_id, str) and step_id.strip():
-                    active_background_execution.add(step_id.strip())
+                    started_background_ids.add(step_id.strip())
                 else:
                     # Named wait/cancel controls cannot identify this step.
-                    anonymous_background_execution = True
+                    started_anonymous_backgrounds += 1
+            active_background_execution.update(started_background_ids)
+            anonymous_background_execution += started_anonymous_backgrounds
 
             # Control steps run after the current group has started. Apply them
             # after the overlap checks above, then carry only still-active
@@ -102,10 +106,17 @@ def executes_after_download(workflow_data: dict) -> bool:
             for step in group:
                 if "wait-all" in step:
                     active_background_execution.clear()
-                    anonymous_background_execution = False
+                    anonymous_background_execution = 0
                     continue
                 for step_id in _background_control_ids(step):
                     active_background_execution.discard(step_id)
+
+            if implicit_wait:
+                active_background_execution.difference_update(started_background_ids)
+                anonymous_background_execution = max(
+                    0,
+                    anonymous_background_execution - started_anonymous_backgrounds,
+                )
     return False
 
 
