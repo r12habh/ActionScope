@@ -7,6 +7,7 @@ The authoritative format is maintained by ``github/actions-lockfile``.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -16,12 +17,14 @@ from actionscope.models import (
     UnpinnedActionFinding,
     WorkflowDependencyLockCoverage,
 )
+from actionscope.parsers.steps import job_steps
 from actionscope.parsers.workflow import find_workflow_files, parse_workflow_file
 
 LOCKFILE_RELATIVE_PATH = Path(".github/workflows/actions.lock")
 SUPPORTED_VERSIONS = frozenset({"v0.0.1", "v0.0.2", "v0.0.3"})
 _SHA1_DIGEST_RE = re.compile(r"^sha1-([0-9a-f]{40})$", re.IGNORECASE)
 _SHA256_DIGEST_RE = re.compile(r"^sha256-([0-9a-f]{64})$", re.IGNORECASE)
+_FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
 _V1_PIN_RE = re.compile(
     r"^(?P<action>[^/@:]+/[^/@:]+)@(?P<ref>[^:]+):"
     r"(?P<digest>(?:sha1|sha256)-[0-9a-f]+)$",
@@ -262,6 +265,7 @@ def scan_dependency_locks(
             status = "no_dependencies"
             listed_pins: set[str] = set()
             valid_pins: set[str] = set()
+            locked_direct: set[str] = set()
         elif lockfile is None or not lockfile.valid:
             status = "invalid" if lockfile_present else "not_locked"
             listed_pins = (
@@ -270,10 +274,15 @@ def scan_dependency_locks(
                 else set()
             )
             valid_pins = set()
+            locked_direct = set()
         else:
             listed_pins = set(lockfile.workflows.get(relative_workflow, ()))
-            valid_pins = dependency_closure(lockfile, listed_pins)
-            locked_direct = direct_keys & valid_pins
+            # The workflow list records its direct dependencies. A direct use
+            # is covered only when that exact pin is present there; merely
+            # reaching the same pin through another dependency's ``uses``
+            # graph does not lock the workflow's direct reference.
+            locked_direct = direct_keys & listed_pins
+            valid_pins = dependency_closure(lockfile, locked_direct)
             if locked_direct == direct_keys:
                 status = "fully_locked"
             elif listed_pins:
@@ -281,7 +290,6 @@ def scan_dependency_locks(
             else:
                 status = "not_locked"
 
-        locked_direct = direct_keys & valid_pins
         invalid_pins = (
             listed_pins & lockfile.invalid_dependencies
             if lockfile is not None
@@ -295,9 +303,9 @@ def scan_dependency_locks(
                 status=status,
                 direct_dependencies=len(direct_keys),
                 locked_direct_dependencies=len(locked_direct),
-                transitive_dependencies=len(valid_pins - direct_keys),
-                locked_references=sorted(valid_pins),
-                uncovered_dependencies=sorted(direct_keys - valid_pins),
+                transitive_dependencies=len(valid_pins - locked_direct),
+                locked_references=sorted(locked_direct),
+                uncovered_dependencies=sorted(direct_keys - listed_pins),
                 invalid_dependencies=sorted(invalid_pins),
             )
         )
@@ -339,12 +347,7 @@ def extract_external_uses(workflow_data: dict) -> list[str]:
         job_uses = job.get("uses")
         if isinstance(job_uses, str) and canonical_action_key(job_uses) is not None:
             references.append(job_uses.strip())
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
+        for step in job_steps(job):
             uses = step.get("uses")
             if isinstance(uses, str) and canonical_action_key(uses) is not None:
                 references.append(uses.strip())
@@ -395,7 +398,7 @@ def _normalize_dependency(
             f"Invalid dependency lockfile {lock_path}: malformed dependency {raw_key!r}"
         ]
     key, key_digest = normalized
-    action_name, key_ref = key.rsplit("@", 1)
+    action_name, key_ref = key.split("@", 1)
 
     ref = raw_dependency.get("ref")
     if version == "v0.0.1":
@@ -404,7 +407,8 @@ def _normalize_dependency(
         ref = tag if isinstance(tag, str) and tag else branch
         if not isinstance(ref, str) or not ref:
             ref = key_ref
-    if not isinstance(ref, str) or not ref or ref != key_ref:
+    key_ref_is_sha = bool(_FULL_SHA_RE.fullmatch(key_ref))
+    if not isinstance(ref, str) or not ref or (ref != key_ref and not key_ref_is_sha):
         errors.append(
             f"Invalid dependency lockfile {lock_path}: dependency {raw_key!r} "
             "has a missing or mismatched ref"
@@ -416,6 +420,11 @@ def _normalize_dependency(
         errors.append(
             f"Invalid dependency lockfile {lock_path}: dependency {raw_key!r} "
             "does not contain a full commit digest"
+        )
+    if key_ref_is_sha and commit_sha is not None and key_ref.lower() != commit_sha:
+        errors.append(
+            f"Invalid dependency lockfile {lock_path}: dependency {raw_key!r} "
+            "uses a full-SHA key that does not match its commit digest"
         )
     if key_digest is not None and commit != key_digest:
         errors.append(
@@ -529,28 +538,36 @@ def _normalize_workflow_path(path: str) -> str | None:
 
 
 def _dependency_cycle(lockfile: ActionsLockFile) -> str | None:
+    """Return a key in a dependency cycle without recursive traversal."""
     colors: dict[str, int] = {}
-
-    def visit(key: str) -> str | None:
-        color = colors.get(key, 0)
-        if color == 1:
-            return key
-        if color == 2:
-            return None
-        colors[key] = 1
-        dependency = lockfile.dependencies.get(key)
-        if dependency is not None:
-            for child in dependency.uses:
-                cycle = visit(child)
-                if cycle is not None:
-                    return cycle
-        colors[key] = 2
-        return None
-
-    for key in lockfile.dependencies:
-        cycle = visit(key)
-        if cycle is not None:
-            return cycle
+    for start in lockfile.dependencies:
+        if colors.get(start, 0) != 0:
+            continue
+        colors[start] = 1
+        dependency = lockfile.dependencies.get(start)
+        stack: list[tuple[str, Iterator[str]]] = [
+            (start, iter(dependency.uses if dependency is not None else ()))
+        ]
+        while stack:
+            key, children = stack[-1]
+            child = next(children, None)
+            if child is None:
+                colors[key] = 2
+                stack.pop()
+                continue
+            child_color = colors.get(child, 0)
+            if child_color == 1:
+                return child
+            if child_color == 2:
+                continue
+            colors[child] = 1
+            child_dependency = lockfile.dependencies.get(child)
+            stack.append(
+                (
+                    child,
+                    iter(child_dependency.uses if child_dependency is not None else ()),
+                )
+            )
     return None
 
 

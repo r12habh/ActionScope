@@ -741,6 +741,12 @@ def _prepare_output(
                 "continue it or choose a new output directory"
             )
         meta = json.loads(run_file.read_text(encoding="utf-8"))
+        if meta.get("schema_version") != SCHEMA_VERSION:
+            raise CorpusError(
+                "this run uses corpus schema "
+                f"{meta.get('schema_version')!r}; start a new run with schema "
+                f"{SCHEMA_VERSION} instead of resuming mixed-schema results"
+            )
         if meta.get("manifest_sha256") != manifest_sha:
             raise CorpusError(
                 "the manifest changed since this run started; start a new run "

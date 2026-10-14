@@ -31,10 +31,12 @@ only when all of these are true:
    `sha256-...` commit digest and the required repository identity fields.
 
 Missing, malformed, or stale entries do not suppress unpinned-action findings.
-ActionScope also checks every valid locked commit, including transitive
-composite-action dependencies, against its known-compromised actions database.
-A lock that resolves to a documented malicious commit produces a CRITICAL
-finding.
+ActionScope follows only dependencies reachable from the workflow's current
+direct `uses:` references, then checks those locked commits, including
+transitive composite-action dependencies, against its known-compromised
+actions database. A lock that resolves to a documented malicious commit
+produces a CRITICAL finding; a compromised-tag finding is cleared only when
+the database identifies the locked commit as a verified safe SHA.
 
 Same-repository references beginning with `$/`, local `./` or `../` actions,
 and Docker references are not matched against the GitHub Actions lockfile.
@@ -47,7 +49,6 @@ workflows:
   .github/workflows/ci.yml:
     - actions/checkout@v4
     - example/composite-action@v1
-    - actions/cache@v4
 dependencies:
   actions/checkout@v4:
     ref: v4
@@ -85,7 +86,8 @@ output includes a `dependency_locks` entry for every workflow:
 
 Corpus scans write the same per-workflow measurements to
 `workflow_locks.csv` and `workflow_locks.json`, using anonymized workflow IDs
-by default.
+by default. A corpus run cannot resume across output-schema versions; start a
+new run after upgrading when the schema changes.
 
 ## Coverage statuses
 
@@ -105,4 +107,3 @@ owner/repository identity enforcement. Use `gh actions-lock` and GitHub's
 runtime dependency locking to generate and enforce the file; use ActionScope
 to include lock coverage and known-malicious commit checks in the broader
 workflow security report.
-

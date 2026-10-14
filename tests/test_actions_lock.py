@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from actionscope.analyzers.compromised_actions import (
@@ -103,28 +104,80 @@ def test_pipeline_propagates_locked_malicious_commit_to_overall_risk() -> None:
     assert result.compromised_action_findings[0].job_name == "actions.lock"
 
 
-def test_safe_locked_commit_suppresses_compromised_tag_finding(
+def test_unverified_locked_commit_keeps_compromised_tag_finding(
     tmp_path: Path,
 ) -> None:
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text(
         "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
-        "    steps:\n      - uses: tj-actions/changed-files@v45\n",
+        "    steps:\n      - uses: actions-cool/issues-helper@v3\n",
         encoding="utf-8",
     )
     (workflows / "actions.lock").write_text(
         "version: v0.0.3\n"
         "workflows:\n"
         "  .github/workflows/ci.yml:\n"
-        "    - tj-actions/changed-files@v45\n"
+        "    - actions-cool/issues-helper@v3\n"
         "dependencies:\n"
-        "  tj-actions/changed-files@v45:\n"
-        "    ref: v45\n"
+        "  actions-cool/issues-helper@v3:\n"
+        "    ref: v3\n"
         f"    commit: sha1-{'f' * 40}\n"
         "    owner_id: 1\n"
         "    repo_id: 2\n",
         encoding="utf-8",
+    )
+
+    findings, errors = scan_for_compromised_actions(str(tmp_path), offline=True)
+
+    assert errors == []
+    assert len(findings) == 1
+    assert findings[0].uses_ref == "actions-cool/issues-helper@v3"
+    assert "f" * 40 in findings[0].description
+    assert "not recorded as a verified safe SHA" in findings[0].description
+
+
+def test_verified_safe_locked_commit_suppresses_compromised_tag_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    safe_sha = "f" * 40
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: example/compromised@v1\n",
+        encoding="utf-8",
+    )
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows:\n"
+        "  .github/workflows/ci.yml:\n"
+        "    - example/compromised@v1\n"
+        "dependencies:\n"
+        "  example/compromised@v1:\n"
+        "    ref: v1\n"
+        f"    commit: sha1-{safe_sha}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n",
+        encoding="utf-8",
+    )
+    db = {
+        "actions": [
+            {
+                "action": "example/compromised",
+                "affected_refs": ["v1"],
+                "malicious_shas": [],
+                "safe_sha": safe_sha,
+                "compromised_at": "2026-01-01T00:00:00Z",
+                "advisory_url": "https://example.test/advisory",
+                "description": "Test compromise.",
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "actionscope.analyzers.compromised_actions.load_compromised_actions",
+        lambda **_kwargs: db,
     )
 
     findings, errors = scan_for_compromised_actions(str(tmp_path), offline=True)
@@ -309,6 +362,193 @@ def test_dependency_cycle_invalidates_lockfile(tmp_path: Path) -> None:
     assert any("uses cycle" in error for error in evidence.errors)
 
 
+def test_deep_dependency_chain_does_not_exhaust_recursion_limit(
+    tmp_path: Path,
+) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    dependencies: list[str] = []
+    depth = 3000
+    for index in range(depth):
+        child = f"\n    uses: [octo/action-{index + 1}@v1]" if index + 1 < depth else ""
+        dependencies.append(
+            f"  octo/action-{index}@v1:\n"
+            "    ref: v1\n"
+            f"    commit: sha1-{index:040x}\n"
+            f"    owner_id: {index + 1}\n"
+            f"    repo_id: {index + 1}{child}\n"
+        )
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\nworkflows: {}\ndependencies:\n" + "".join(dependencies),
+        encoding="utf-8",
+    )
+
+    lockfile, errors = load_actions_lock(str(tmp_path))
+
+    assert errors == []
+    assert lockfile is not None
+    assert lockfile.valid is True
+    assert len(lockfile.dependencies) == depth
+
+
+def test_sha_key_can_keep_symbolic_body_ref(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    sha = "36fa7d009e22618ca7cd599486979b8150596c74"
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.2\n"
+        "workflows: {}\n"
+        "dependencies:\n"
+        f"  actions/attest-build-provenance@{sha}:\n"
+        "    ref: predicate@1.1.4\n"
+        f"    commit: sha1-{sha}\n"
+        "    owner_id: 44036562\n"
+        "    repo_id: 760702757\n",
+        encoding="utf-8",
+    )
+
+    lockfile, errors = load_actions_lock(str(tmp_path))
+
+    assert errors == []
+    assert lockfile is not None
+    assert (
+        lockfile.dependencies[f"actions/attest-build-provenance@{sha}"].ref
+        == "predicate@1.1.4"
+    )
+
+
+def test_sha_key_must_match_commit_digest(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    sha = "a" * 40
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows: {}\n"
+        "dependencies:\n"
+        f"  octo/action@{sha}:\n"
+        "    ref: v1\n"
+        f"    commit: sha1-{'b' * 40}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n",
+        encoding="utf-8",
+    )
+
+    lockfile, errors = load_actions_lock(str(tmp_path))
+
+    assert lockfile is not None
+    assert lockfile.valid is False
+    assert any("full-SHA key" in error for error in errors)
+
+
+def test_transitive_pin_does_not_cover_same_direct_use(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: octo/b@v1\n",
+        encoding="utf-8",
+    )
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows:\n"
+        "  .github/workflows/ci.yml: [octo/a@v1]\n"
+        "dependencies:\n"
+        "  octo/a@v1:\n"
+        "    ref: v1\n"
+        f"    commit: sha1-{'a' * 40}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n"
+        "    uses: [octo/b@v1]\n"
+        "  octo/b@v1:\n"
+        "    ref: v1\n"
+        f"    commit: sha1-{'b' * 40}\n"
+        "    owner_id: 3\n"
+        "    repo_id: 4\n",
+        encoding="utf-8",
+    )
+
+    evidence = collect_static_evidence(str(tmp_path), offline=True)
+
+    assert [finding.uses for finding in evidence.unpinned_actions] == ["octo/b@v1"]
+    coverage = evidence.dependency_locks[0]
+    assert coverage.status == "partially_locked"
+    assert coverage.locked_direct_dependencies == 0
+    assert coverage.transitive_dependencies == 0
+    assert coverage.locked_references == []
+    assert coverage.uncovered_dependencies == ["octo/b@v1"]
+
+
+def test_stale_locked_malicious_sha_is_not_reported(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    malicious_sha = "0e58ed867288e6711d10da9293b8db84f3f3ed85"
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: actions/checkout@v4\n",
+        encoding="utf-8",
+    )
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows:\n"
+        "  .github/workflows/ci.yml:\n"
+        "    - actions/checkout@v4\n"
+        "    - tj-actions/changed-files@v45\n"
+        "dependencies:\n"
+        "  actions/checkout@v4:\n"
+        "    ref: v4\n"
+        f"    commit: sha1-{'c' * 40}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n"
+        "  tj-actions/changed-files@v45:\n"
+        "    ref: v45\n"
+        f"    commit: sha1-{malicious_sha}\n"
+        "    owner_id: 3\n"
+        "    repo_id: 4\n",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_for_compromised_actions(str(tmp_path), offline=True)
+
+    assert errors == []
+    assert findings == []
+
+
+def test_parallel_group_actions_are_covered_by_lock(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - parallel:\n"
+        "          - uses: actions/checkout@v4\n"
+        "          - uses: actions/setup-python@v5\n",
+        encoding="utf-8",
+    )
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows:\n"
+        "  .github/workflows/ci.yml:\n"
+        "    - actions/checkout@v4\n"
+        "    - actions/setup-python@v5\n"
+        "dependencies:\n"
+        "  actions/checkout@v4:\n"
+        "    ref: v4\n"
+        f"    commit: sha1-{'d' * 40}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n"
+        "  actions/setup-python@v5:\n"
+        "    ref: v5\n"
+        f"    commit: sha1-{'e' * 40}\n"
+        "    owner_id: 3\n"
+        "    repo_id: 4\n",
+        encoding="utf-8",
+    )
+
+    evidence = collect_static_evidence(str(tmp_path), offline=True)
+
+    assert evidence.unpinned_actions == []
+    assert evidence.dependency_locks[0].status == "fully_locked"
+
+
 def test_v001_pin_suffix_is_normalized(tmp_path: Path) -> None:
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
@@ -367,6 +607,28 @@ def test_ref_containing_at_sign_uses_the_full_ref() -> None:
     assert canonical_action_key("octo/action@release@2026") == (
         "octo/action@release@2026"
     )
+
+
+def test_lock_dependency_ref_can_contain_at_sign(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "actions.lock").write_text(
+        "version: v0.0.3\n"
+        "workflows: {}\n"
+        "dependencies:\n"
+        "  octo/action@release@2026:\n"
+        "    ref: release@2026\n"
+        f"    commit: sha1-{'a' * 40}\n"
+        "    owner_id: 1\n"
+        "    repo_id: 2\n",
+        encoding="utf-8",
+    )
+
+    lockfile, errors = load_actions_lock(str(tmp_path))
+
+    assert errors == []
+    assert lockfile is not None
+    assert lockfile.dependencies["octo/action@release@2026"].ref == "release@2026"
 
 
 def test_job_level_reusable_workflow_is_covered_by_lock(tmp_path: Path) -> None:

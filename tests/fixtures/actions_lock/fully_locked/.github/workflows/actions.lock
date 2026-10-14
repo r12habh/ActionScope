@@ -3,7 +3,6 @@ workflows:
   .github/workflows/ci.yml:
     - actions/checkout@v4
     - actions/setup-python@v5
-    - actions/cache@v4
 dependencies:
   actions/checkout@v4:
     ref: v4
@@ -22,4 +21,3 @@ dependencies:
     commit: sha1-3333333333333333333333333333333333333333
     owner_id: 1
     repo_id: 4
-

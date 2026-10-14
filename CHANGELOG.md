@@ -30,6 +30,17 @@ All notable changes to ActionScope are documented here.
   environment variables, reusable-workflow inputs, and other expressions.
 
 ### Fixed
+- Dependency-lock validation now accepts full-SHA dependency keys with a
+  symbolic body `ref`, verifies that SHA keys match their commit digest, uses
+  iterative cycle detection for deeply nested dependency graphs, and ignores
+  stale dependencies that are not reachable from the workflow's current
+  direct references.
+- A dependency lock suppresses a known-compromised mutable reference only when
+  its resolved commit matches a verified `safe_sha` in the advisory database.
+  Unknown locked commits retain the CRITICAL finding and include the resolved
+  SHA in the explanation.
+- Corpus resume now rejects prior output-schema versions instead of mixing
+  previously completed records with newly collected fields.
 - Steps grouped under `parallel:` are now analyzed. Every detector previously
   skipped them, so AWS credential steps, unpinned or compromised actions, and
   script, artifact, or AI-agent injection risks inside a parallel group went

@@ -584,6 +584,24 @@ def test_resume_rejects_a_changed_manifest(
         run_corpus(_options(manifest, tmp_path / "out", resume=True))
 
 
+def test_resume_rejects_an_older_corpus_schema(
+    tmp_path: Path, mixed_repo: tuple[Path, str]
+) -> None:
+    repo, sha = mixed_repo
+    manifest = _write_manifest(
+        tmp_path / "manifest.csv", [(str(repo), sha)], "repo_url,commit"
+    )
+    output = tmp_path / "out"
+    run_corpus(_options(manifest, output))
+    run_file = output / "_private" / "run.json"
+    metadata = json.loads(run_file.read_text(encoding="utf-8"))
+    metadata["schema_version"] = 1
+    run_file.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(CorpusError, match="corpus schema 1"):
+        run_corpus(_options(manifest, output, resume=True))
+
+
 def test_refuses_a_non_empty_output_directory(
     tmp_path: Path, mixed_repo: tuple[Path, str]
 ) -> None:
