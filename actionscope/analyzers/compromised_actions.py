@@ -175,7 +175,13 @@ def scan_for_compromised_actions(
                 )
             )
 
-    lockfile, _ = load_actions_lock(repo_path)
+    try:
+        lockfile, _ = load_actions_lock(repo_path)
+    except Exception as exc:
+        # Lock enrichment must fail open: a malformed lockfile must never erase
+        # direct compromised-action findings collected from workflow YAML.
+        errors.append(f"Could not analyze dependency lockfile: {exc}")
+        lockfile = None
     if lockfile is not None and lockfile.valid:
         root = repository_root(repo_path)
         existing_workflows = {

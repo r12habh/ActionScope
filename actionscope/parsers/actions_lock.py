@@ -129,7 +129,7 @@ def load_actions_lock(
             lock_path.read_text(encoding="utf-8"),
             Loader=_UniqueKeyLoader,
         )
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, RecursionError) as exc:
         return None, [f"Could not parse dependency lockfile {lock_path}: {exc}"]
 
     if not isinstance(data, dict):
@@ -138,7 +138,7 @@ def load_actions_lock(
         ]
 
     version = data.get("version")
-    if version not in SUPPORTED_VERSIONS:
+    if not isinstance(version, str) or version not in SUPPORTED_VERSIONS:
         return None, [
             f"Unsupported dependency lockfile version {version!r} in {lock_path}; "
             f"supported versions: {', '.join(sorted(SUPPORTED_VERSIONS))}"
@@ -305,7 +305,7 @@ def scan_dependency_locks(
                 locked_direct_dependencies=len(locked_direct),
                 transitive_dependencies=len(valid_pins - locked_direct),
                 locked_references=sorted(locked_direct),
-                uncovered_dependencies=sorted(direct_keys - listed_pins),
+                uncovered_dependencies=sorted(direct_keys - locked_direct),
                 invalid_dependencies=sorted(invalid_pins),
             )
         )

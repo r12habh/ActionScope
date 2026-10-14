@@ -130,7 +130,7 @@ means unknown, not zero.
 | `entry_id`, `repo_id` | Join keys to `repositories`. |
 | `workflow_id` | Anonymized workflow identifier. |
 | `status` | `fully_locked`, `partially_locked`, `not_locked`, `invalid`, or `no_dependencies`. |
-| `schema_version` | Parsed `actions.lock` schema version, when valid. |
+| `schema_version` | Declared `actions.lock` schema version when the file could be read; may be set for `invalid` rows. |
 | `direct_dependencies`, `locked_direct_dependencies` | External direct references and the subset covered by valid exact lock entries. |
 | `transitive_dependencies` | Additional valid locked dependencies recorded for the workflow. |
 | `uncovered_dependencies`, `invalid_dependencies` | Counts of uncovered direct refs and referenced malformed/missing lock entries. |

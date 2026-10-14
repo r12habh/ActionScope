@@ -77,6 +77,9 @@ def test_malformed_commit_fails_open_and_reports_error() -> None:
     assert [item.uses for item in evidence.unpinned_actions] == ["actions/checkout@v4"]
     assert evidence.dependency_locks[0].status == "invalid"
     assert evidence.dependency_locks[0].invalid_dependencies == ["actions/checkout@v4"]
+    assert evidence.dependency_locks[0].uncovered_dependencies == [
+        "actions/checkout@v4"
+    ]
     assert any("full commit digest" in error for error in evidence.errors)
 
 
@@ -266,6 +269,51 @@ def test_unsupported_future_schema_fails_open(tmp_path: Path) -> None:
     assert any("Unsupported dependency lockfile version" in e for e in evidence.errors)
 
 
+def test_unhashable_schema_version_fails_open(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  triage:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: actions-cool/issues-helper@v3\n",
+        encoding="utf-8",
+    )
+    (workflows / "actions.lock").write_text(
+        "version: []\nworkflows: {}\ndependencies: {}\n",
+        encoding="utf-8",
+    )
+
+    lockfile, errors = load_actions_lock(str(tmp_path))
+    findings, _ = scan_for_compromised_actions(str(tmp_path), offline=True)
+
+    assert lockfile is None
+    assert any("Unsupported dependency lockfile version" in error for error in errors)
+    assert [finding.uses_ref for finding in findings] == [
+        "actions-cool/issues-helper@v3"
+    ]
+
+
+def test_recursive_yaml_failure_is_reported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "actions.lock").write_text("version: v0.0.3\n", encoding="utf-8")
+
+    def raise_recursion_error(*_args: object, **_kwargs: object) -> None:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(
+        "actionscope.parsers.actions_lock.yaml.load",
+        raise_recursion_error,
+    )
+
+    lockfile, errors = load_actions_lock(str(tmp_path))
+
+    assert lockfile is None
+    assert any("maximum recursion depth exceeded" in error for error in errors)
+
+
 def test_unsafe_workflow_path_invalidates_entire_lockfile(tmp_path: Path) -> None:
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
@@ -358,8 +406,37 @@ def test_dependency_cycle_invalidates_lockfile(tmp_path: Path) -> None:
     evidence = collect_static_evidence(str(tmp_path), offline=True)
 
     assert evidence.dependency_locks[0].status == "invalid"
+    assert evidence.dependency_locks[0].uncovered_dependencies == ["octo/a@v1"]
     assert len(evidence.unpinned_actions) == 1
     assert any("uses cycle" in error for error in evidence.errors)
+
+
+def test_lock_loader_failure_preserves_direct_compromised_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\njobs:\n  triage:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: actions-cool/issues-helper@v3\n",
+        encoding="utf-8",
+    )
+
+    def raise_recursion_error(_repo_path: str) -> None:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(
+        "actionscope.analyzers.compromised_actions.load_actions_lock",
+        raise_recursion_error,
+    )
+
+    findings, errors = scan_for_compromised_actions(str(tmp_path), offline=True)
+
+    assert [finding.uses_ref for finding in findings] == [
+        "actions-cool/issues-helper@v3"
+    ]
+    assert any("maximum recursion depth exceeded" in error for error in errors)
 
 
 def test_deep_dependency_chain_does_not_exhaust_recursion_limit(

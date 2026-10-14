@@ -96,7 +96,7 @@ new run after upgrading when the schema changes.
 | `fully_locked` | Every external direct reference has a valid exact lock entry. |
 | `partially_locked` | The workflow is listed, but one or more current references are missing or invalid. |
 | `not_locked` | The workflow has external dependencies but no lock entry covers it. |
-| `invalid` | An `actions.lock` file exists but its version or root structure could not be parsed safely. |
+| `invalid` | An `actions.lock` file exists but failed validation (unsupported version, malformed structure or entries, duplicate keys, missing dependencies, or cycles). Any error invalidates the whole file. |
 | `no_dependencies` | The workflow has no external action or reusable-workflow dependency. |
 
 ## What this does not prove
