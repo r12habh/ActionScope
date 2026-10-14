@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from actionscope.models import GitHubTokenPermission, RiskLevel
+from actionscope.parsers.steps import job_steps
 
 KNOWN_PERMISSION_SCOPES = (
     "actions",
@@ -217,13 +218,7 @@ def _job_uses_oidc_consumer(job_data: dict) -> bool:
     ):
         return True
 
-    steps = job_data.get("steps", [])
-    if not isinstance(steps, list):
-        return False
-
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
+    for step in job_steps(job_data):
         action = _action_name(step.get("uses"))
         step_with = step.get("with", {})
         if (
