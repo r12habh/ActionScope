@@ -74,19 +74,55 @@ def executes_after_download(workflow_data: dict) -> bool:
 
     for job in jobs.values():
         seen_download = False
-        background_execution = False
+        active_background_execution: set[str] = set()
+        anonymous_background_execution = False
         for group in concurrent_step_groups(job):
             downloads = any(_is_download_artifact_step(step) for step in group)
             executing = [step for step in group if _executes_content(step)]
             if executing and (seen_download or downloads):
                 return True
-            if downloads and background_execution:
+            if downloads and (
+                active_background_execution or anonymous_background_execution
+            ):
                 return True
             seen_download = seen_download or downloads
-            background_execution = background_execution or any(
-                runs_in_background(step) for step in executing
-            )
+            for step in executing:
+                if not runs_in_background(step):
+                    continue
+                step_id = step.get("id")
+                if isinstance(step_id, str) and step_id.strip():
+                    active_background_execution.add(step_id.strip())
+                else:
+                    # Named wait/cancel controls cannot identify this step.
+                    anonymous_background_execution = True
+
+            # Control steps run after the current group has started. Apply them
+            # after the overlap checks above, then carry only still-active
+            # background execution into the next sequential group.
+            for step in group:
+                if "wait-all" in step:
+                    active_background_execution.clear()
+                    anonymous_background_execution = False
+                    continue
+                for step_id in _background_control_ids(step):
+                    active_background_execution.discard(step_id)
     return False
+
+
+def _background_control_ids(step: dict) -> set[str]:
+    """Return background step IDs completed by ``wait`` or ``cancel``."""
+    ids: set[str] = set()
+    for key in ("wait", "cancel"):
+        value = step.get(key)
+        if isinstance(value, str) and value.strip():
+            ids.add(value.strip())
+        elif isinstance(value, list):
+            ids.update(
+                item.strip()
+                for item in value
+                if isinstance(item, str) and item.strip()
+            )
+    return ids
 
 
 def workflow_accesses_secrets(workflow_data: dict) -> bool:

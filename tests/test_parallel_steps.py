@@ -132,6 +132,46 @@ def test_concurrent_execution_counts_as_after_download(
     assert executes_after_download(workflow) is expected
 
 
+@pytest.mark.parametrize(
+    "control",
+    [
+        {"wait": "installer"},
+        {"wait": ["installer"]},
+        {"cancel": "installer"},
+        {"wait-all": None},
+    ],
+    ids=["wait", "wait-list", "cancel", "wait-all"],
+)
+def test_background_control_ends_execution_before_later_download(
+    control: dict,
+) -> None:
+    workflow = _artifact_workflow(
+        [{**EXECUTE, "id": "installer", "background": True}, control, DOWNLOAD]
+    )
+
+    assert executes_after_download(workflow) is False
+
+
+def test_control_for_another_background_step_does_not_end_execution() -> None:
+    workflow = _artifact_workflow(
+        [
+            {**EXECUTE, "id": "installer", "background": True},
+            {"cancel": "monitor"},
+            DOWNLOAD,
+        ]
+    )
+
+    assert executes_after_download(workflow) is True
+
+
+def test_wait_all_ends_unnamed_background_execution() -> None:
+    workflow = _artifact_workflow(
+        [{**EXECUTE, "background": True}, {"wait-all": None}, DOWNLOAD]
+    )
+
+    assert executes_after_download(workflow) is False
+
+
 def _wrap_in_parallel_group(steps: list) -> list:
     return [{"parallel": steps}]
 
@@ -220,3 +260,24 @@ def test_pin_resolver_resolves_actions_inside_parallel_groups() -> None:
 
     assert [pin.original_ref for pin in pins] == ["actions/checkout@v4"]
     assert pins[0].resolved_sha == FULL_SHA
+
+
+def test_pin_resolver_skips_same_repository_lock_references() -> None:
+    workflow = {
+        "jobs": {
+            "call": {"uses": "$/shared/.github/workflows/test.yml@main"},
+            "build": {
+                "steps": [
+                    {"uses": "$/shared/action@main"},
+                    {"uses": "actions/checkout@v4"},
+                ]
+            },
+        }
+    }
+    payload = json.dumps({"object": {"type": "commit", "sha": FULL_SHA}}).encode()
+
+    with patch("urllib.request.urlopen") as urlopen:
+        urlopen.return_value.__enter__.return_value.read.return_value = payload
+        pins = resolve_pins_for_workflow(workflow, "ci.yml", delay_seconds=0)
+
+    assert [pin.original_ref for pin in pins] == ["actions/checkout@v4"]
