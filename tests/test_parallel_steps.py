@@ -62,6 +62,14 @@ def test_expand_steps_does_not_reenter_a_cyclic_group() -> None:
     assert expand_steps(steps) == [{"run": "make"}]
 
 
+def test_expand_steps_visits_repeated_acyclic_alias_once() -> None:
+    group: list[dict] = [{"run": "make"}]
+    for _ in range(12):
+        group = [{"parallel": group}, {"parallel": group}]
+
+    assert expand_steps(group) == [{"run": "make"}]
+
+
 def test_cyclic_group_does_not_hide_other_workflows(tmp_path: Path) -> None:
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)

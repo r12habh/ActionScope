@@ -16,26 +16,25 @@ def expand_steps(steps: Any) -> list[dict]:
     ``uses`` or ``run`` and are returned unchanged, so detectors skip them.
     Non-mapping entries are dropped.
 
-    Expansion is iterative, and a group that contains itself through a YAML
-    alias is not entered again, so a crafted workflow cannot exhaust the
-    recursion limit and abort the scan.
+    Expansion is iterative, and each list reached through a YAML alias is
+    entered at most once. This bounds work to the parsed workflow graph even
+    when an acyclic alias is referenced repeatedly.
     """
     if not isinstance(steps, list):
         return []
     expanded: list[dict] = []
-    open_groups = [id(steps)]
+    seen_groups = {id(steps)}
     pending = [iter(steps)]
     while pending:
         step = next(pending[-1], _END)
         if step is _END:
             pending.pop()
-            open_groups.pop()
         elif isinstance(step, dict):
             group = step.get("parallel")
             if not isinstance(group, list):
                 expanded.append(step)
-            elif id(group) not in open_groups:
-                open_groups.append(id(group))
+            elif id(group) not in seen_groups:
+                seen_groups.add(id(group))
                 pending.append(iter(group))
     return expanded
 
