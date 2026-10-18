@@ -144,6 +144,23 @@ variable, environment variable, reusable-workflow input, or other expression),
 but ActionScope does not resolve their runtime values. Provide a literal ARN,
 co-located policy evidence, or use `--aws-verify` for role-policy correlation.
 
+### S3-compatible services are not necessarily AWS
+
+Cloudflare R2 uses the AWS CLI and the `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY` environment variables, but these credentials do not
+identify an AWS IAM principal. ActionScope excludes credential uses that it
+can establish are simple S3/S3API commands targeting an explicit
+`*.r2.cloudflarestorage.com` endpoint. It checks `--endpoint-url`,
+`AWS_ENDPOINT_URL_S3`, and `AWS_ENDPOINT_URL`, including workflow/job/step
+environment inheritance and inspectable local composite actions.
+
+This exclusion applies to the specific credential use, not the whole job.
+Other AWS commands and role assumptions remain in the report. Unresolved
+endpoints, unrecognized services, and complex scripts remain conservatively
+reported as possible AWS credential sources; secret names or `region: auto`
+alone do not establish that credentials belong to R2. ActionScope does not
+analyze R2 permissions or verify that repository secrets were deleted.
+
 ### YAML expression edge cases
 
 ActionScope parses YAML workflow files but does not evaluate GitHub

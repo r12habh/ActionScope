@@ -1,0 +1,17 @@
+name: Release to Cloudflare R2
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upload release binaries
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+        run: |
+          aws s3 sync dist/release "s3://$BUCKET/releases" --endpoint-url "https://$ACCOUNT_ID.r2.cloudflarestorage.com" --no-progress
