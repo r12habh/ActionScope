@@ -198,6 +198,15 @@ the current release:
 | `actionscope trend` | Planned | GitHub issue: historical risk tracking and trend reporting |
 | `actionscope pin` | Not implemented; current support is `scan --resolve-pins` | GitHub issue: auto-pin resolver follow-ups |
 
+## Offline Pinning Gate
+
+`actionscope-check-pins [PATH]` is an additional executable for pre-commit and
+local use. `PATH` defaults to `.`. It checks workflow action references and
+external reusable-workflow references without making network or AWS calls.
+Exit codes are 0 for no unpinned references, 1 for unpinned references, and 2
+for an unparseable workflow. It intentionally enforces explicit pins rather
+than dependency-lock coverage. See [pre-commit integration](pre-commit.md).
+
 ## Exit Codes
 
 | Code | Meaning |

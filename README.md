@@ -394,6 +394,8 @@ exact permission set required.
 
 ## Contributing
 
+For offline local checks, see [pre-commit integration](docs/pre-commit.md).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions.
 
 New to the codebase? Start with a

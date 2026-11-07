@@ -60,6 +60,7 @@ dependencies = [
 [project.optional-dependencies]
 aws = ["boto3>=1.26"]
 dev = [
+  "pre-commit>=4.0",
   "pytest>=7.0",
   "pytest-cov>=4.0",
   "ruff>=0.1.0",
@@ -80,6 +81,7 @@ Changelog = "https://github.com/r12habh/ActionScope/blob/main/CHANGELOG.md"
 
 [project.scripts]
 actionscope = "actionscope.cli:main"
+actionscope-check-pins = "actionscope.hooks:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["actionscope"]
@@ -89,6 +91,7 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 include = [
+  "/.pre-commit-hooks.yaml",
   "/actionscope",
   "/action.yml",
   "/CHANGELOG.md",

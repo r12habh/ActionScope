@@ -698,6 +698,7 @@ def _resolve_pin_suggestions(
 
     suggestions = []
     seen: set[str] = set()
+    cache = {}
     for workflow_file in find_workflow_files(repo_path):
         workflow_data = parse_workflow_file(workflow_file)
         if not isinstance(workflow_data, dict):
@@ -706,6 +707,7 @@ def _resolve_pin_suggestions(
             workflow_data,
             workflow_file,
             github_token=github_token,
+            cache=cache,
         ):
             if pin.original_ref in seen:
                 continue

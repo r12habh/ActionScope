@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from actionscope.parsers.workflow import SHA_PATTERN, classify_action_ref
+
+MAX_TAG_DEPTH = 8
 
 
 @dataclass
@@ -31,7 +34,7 @@ def resolve_tag_to_sha(
     original_ref: str | None = None,
 ) -> ResolvedPin:
     """Resolve a GitHub Action tag to the commit SHA it currently points at."""
-    if "/" not in action_name:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", action_name):
         return _error_pin(action_name, tag, "invalid ref", original_ref)
 
     owner, repo = action_name.split("/", 1)
@@ -46,18 +49,33 @@ def resolve_tag_to_sha(
     if not isinstance(obj, dict):
         return _error_pin(action_name, tag, "unexpected response", original_ref)
 
-    obj_type = obj.get("type")
-    sha = obj.get("sha")
-    if obj_type == "tag" and isinstance(sha, str):
+    seen_tags: set[str] = set()
+    while obj.get("type") == "tag":
+        sha = obj.get("sha")
+        if (
+            not isinstance(sha, str)
+            or not SHA_PATTERN.fullmatch(sha)
+            or sha in seen_tags
+            or len(seen_tags) >= MAX_TAG_DEPTH
+        ):
+            return _error_pin(
+                action_name, tag, "invalid or cyclic tag chain", original_ref
+            )
+        seen_tags.add(sha)
         tag_url = f"https://api.github.com/repos/{owner}/{repo}/git/tags/{sha}"
         tag_data, error = _api_get_json(tag_url, github_token)
         if error is not None:
             return _error_pin(action_name, tag, error, original_ref)
-        tag_obj = tag_data.get("object") if isinstance(tag_data, dict) else None
-        if isinstance(tag_obj, dict):
-            sha = tag_obj.get("sha")
+        obj = tag_data.get("object") if isinstance(tag_data, dict) else None
+        if not isinstance(obj, dict):
+            return _error_pin(action_name, tag, "unexpected tag response", original_ref)
 
-    if not isinstance(sha, str) or not SHA_PATTERN.fullmatch(sha):
+    sha = obj.get("sha")
+    if (
+        obj.get("type") != "commit"
+        or not isinstance(sha, str)
+        or not SHA_PATTERN.fullmatch(sha)
+    ):
         return _error_pin(
             action_name,
             tag,
@@ -83,25 +101,37 @@ def resolve_pins_for_workflow(
     workflow_file: str,
     github_token: str | None = None,
     delay_seconds: float = 0.5,
+    cache: dict[tuple[str, str], ResolvedPin] | None = None,
 ) -> list[ResolvedPin]:
     """Resolve unique non-SHA external action refs in a workflow."""
     refs = sorted(_unique_unpinned_refs(workflow_data))
     resolved: list[ResolvedPin] = []
-    for index, uses_ref in enumerate(refs):
-        if index > 0 and delay_seconds > 0:
-            time.sleep(delay_seconds)
+    if cache is None:
+        cache = {}
+    requested = bool(cache)
+    for uses_ref in refs:
         action_name, tag = uses_ref.rsplit("@", 1)
         action_name = _repo_name(action_name)
         if action_name is None:
             continue
-        resolved.append(
-            resolve_tag_to_sha(
+        key = (action_name.lower(), tag)
+        if key not in cache:
+            if requested and delay_seconds > 0:
+                time.sleep(delay_seconds)
+            cache[key] = resolve_tag_to_sha(
                 action_name,
                 tag,
                 github_token,
                 original_ref=uses_ref,
             )
+            requested = True
+        pin = cache[key]
+        pinned_ref = (
+            f"{uses_ref.rsplit('@', 1)[0]}@{pin.resolved_sha}  # {tag}"
+            if pin.resolved_sha is not None and pin.error is None
+            else None
         )
+        resolved.append(replace(pin, original_ref=uses_ref, pinned_ref=pinned_ref))
     return resolved
 
 
@@ -132,7 +162,7 @@ def _api_get_json(
         return {}, f"GitHub API error: {exc.code}"
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return {}, f"network error: {exc}"
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         return {}, f"invalid GitHub API response: {exc}"
 
 

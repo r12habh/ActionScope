@@ -6,6 +6,8 @@ import json
 import urllib.error
 from unittest.mock import patch
 
+import pytest
+
 from actionscope.resolvers.pin_resolver import (
     ResolvedPin,
     format_pinned_replacement,
@@ -52,6 +54,124 @@ def test_resolve_tag_to_sha_handles_annotated_tags() -> None:
         pin = resolve_tag_to_sha("actions/setup-python", "v5")
 
     assert pin.resolved_sha == FULL_SHA
+
+
+@pytest.mark.parametrize(
+    "payloads",
+    [
+        [{"object": {"type": "tag", "sha": TAG_SHA}}, {}],
+        [{"object": {"type": "tree", "sha": FULL_SHA}}],
+        [{"object": {"type": "blob", "sha": FULL_SHA}}],
+        [{"object": {"sha": FULL_SHA}}],
+        [{"object": {"type": "tag", "sha": TAG_SHA}}] * 2,
+        [{"object": {"type": "tag", "sha": "../bad"}}],
+    ],
+)
+def test_non_commit_objects_never_produce_pin_suggestions(payloads: list) -> None:
+    with patch(
+        "urllib.request.urlopen", side_effect=[FakeResponse(p) for p in payloads]
+    ):
+        pin = resolve_tag_to_sha("actions/checkout", "v4")
+    assert pin.error
+    assert pin.resolved_sha is None
+    assert pin.pinned_ref is None
+
+
+def test_nested_annotated_tags_are_peeled_to_commit() -> None:
+    payloads = [
+        {"object": {"type": "tag", "sha": TAG_SHA}},
+        {"object": {"type": "tag", "sha": "b" * 40}},
+        {"object": {"type": "commit", "sha": FULL_SHA}},
+    ]
+    with patch(
+        "urllib.request.urlopen", side_effect=[FakeResponse(p) for p in payloads]
+    ) as request:
+        pin = resolve_tag_to_sha("actions/checkout", "v4")
+    assert pin.resolved_sha == FULL_SHA
+    assert request.call_count == 3
+
+
+def test_tag_chain_has_a_request_bound() -> None:
+    from actionscope.resolvers.pin_resolver import MAX_TAG_DEPTH
+
+    payloads = [
+        {"object": {"type": "tag", "sha": f"{i:040x}"}}
+        for i in range(MAX_TAG_DEPTH + 1)
+    ]
+    with patch(
+        "urllib.request.urlopen", side_effect=[FakeResponse(p) for p in payloads]
+    ) as request:
+        pin = resolve_tag_to_sha("actions/checkout", "v4")
+    assert pin.error
+    assert request.call_count == MAX_TAG_DEPTH + 1
+
+
+def test_shared_cache_resolves_repository_tag_once_and_preserves_subpaths() -> None:
+    cache = {}
+    workflows = [
+        {"jobs": {"test": {"steps": [{"uses": ref}]}}}
+        for ref in ("owner/repo/first@v1", "owner/repo/second@v1")
+    ]
+    with patch(
+        "urllib.request.urlopen",
+        return_value=FakeResponse({"object": {"type": "commit", "sha": FULL_SHA}}),
+    ) as request:
+        pins = [
+            resolve_pins_for_workflow(w, "ci.yml", delay_seconds=0, cache=cache)[0]
+            for w in workflows
+        ]
+    assert request.call_count == 1
+    assert pins[0].pinned_ref == f"owner/repo/first@{FULL_SHA}  # v1"
+    assert pins[1].pinned_ref == f"owner/repo/second@{FULL_SHA}  # v1"
+
+
+def test_cli_shares_cache_across_workflow_files(tmp_path) -> None:
+    from actionscope.cli import _resolve_pin_suggestions
+
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    for name in ("ci.yml", "release.yaml"):
+        (workflows / name).write_text(
+            "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - uses: actions/checkout@v4\n"
+        )
+    with patch(
+        "urllib.request.urlopen",
+        return_value=FakeResponse({"object": {"type": "commit", "sha": FULL_SHA}}),
+    ) as request:
+        pins = _resolve_pin_suggestions(str(tmp_path), None)
+    assert len(pins) == 1
+    assert request.call_count == 1
+
+
+def test_shared_cache_retains_failed_lookups_without_retrying() -> None:
+    workflow = {"jobs": {"test": {"steps": [{"uses": "actions/checkout@v4"}]}}}
+    cache = {}
+    error = urllib.error.HTTPError("url", 403, "forbidden", {}, None)
+    with patch("urllib.request.urlopen", side_effect=error) as request:
+        first = resolve_pins_for_workflow(workflow, "a.yml", cache=cache)
+        second = resolve_pins_for_workflow(workflow, "b.yaml", cache=cache)
+    assert first[0].error == second[0].error == "rate limited"
+    assert first[0].pinned_ref is None
+    assert request.call_count == 1
+
+
+def test_shared_cache_delays_new_requests_across_workflows() -> None:
+    cache = {}
+    with (
+        patch(
+            "urllib.request.urlopen",
+            return_value=FakeResponse(
+                {"object": {"type": "commit", "sha": FULL_SHA}}
+            ),
+        ) as request,
+        patch("time.sleep") as sleep,
+    ):
+        for ref in ("actions/checkout@v4", "actions/checkout@v4", "actions/cache@v4"):
+            workflow = {"jobs": {"test": {"steps": [{"uses": ref}]}}}
+            resolve_pins_for_workflow(workflow, "ci.yml", cache=cache)
+    assert request.call_count == 2
+    sleep.assert_called_once_with(0.5)
 
 
 def test_resolve_tag_to_sha_returns_error_for_404() -> None:
