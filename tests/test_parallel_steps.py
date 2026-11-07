@@ -43,6 +43,33 @@ def test_expand_steps_flattens_parallel_groups_in_order() -> None:
     assert expand_steps(steps) == [checkout, server, frontend, backend, stop]
 
 
+def test_self_repository_composite_preserves_aws_binding(tmp_path: Path) -> None:
+    action = tmp_path / "actions" / "deploy"
+    action.mkdir(parents=True)
+    (action / "action.yml").write_text(
+        "runs:\n  using: composite\n  steps:\n"
+        "    - uses: aws-actions/configure-aws-credentials@v4\n"
+        "      with:\n"
+        "        role-to-assume: arn:aws:iam::123456789012:role/deploy\n"
+    )
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "on: push\npermissions:\n  id-token: write\njobs:\n"
+        "  deploy:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: $/actions/deploy\n"
+    )
+    report = _scan_json(tmp_path)
+    assert report["summary"]["credential_sources"] == 1
+    assert report["findings"][0]["auth_type"] == "oidc"
+
+
+def test_self_repository_action_cannot_escape_checkout(tmp_path: Path) -> None:
+    from actionscope.parsers.workflow import _local_action_file
+
+    assert _local_action_file(str(tmp_path), "$/../outside") is None
+
+
 def test_expand_steps_drops_malformed_entries() -> None:
     step = {"run": "make"}
 

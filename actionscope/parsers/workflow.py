@@ -800,8 +800,8 @@ def _parse_delegated_yaml(path: Path) -> dict | None:
 
 
 def _is_local_action_reference(uses_ref: str) -> bool:
-    return uses_ref.startswith("./") and not uses_ref.startswith(
-        "./.github/workflows/"
+    return uses_ref.startswith(("./", "$/")) and not uses_ref[2:].startswith(
+        ".github/workflows/"
     )
 
 
