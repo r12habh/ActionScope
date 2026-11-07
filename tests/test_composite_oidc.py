@@ -112,6 +112,66 @@ def test_nested_composites_resolve_defaults_and_caller_inputs(tmp_path):
     assert token_risk(workflow([{"uses": "./inner"}]), tmp_path) is RiskLevel.HIGH
 
 
+@pytest.mark.parametrize("inputs", [{"role": {}}, {"role": None}, {}])
+def test_omitted_input_does_not_establish_oidc_consumer(tmp_path, inputs):
+    write_action(
+        tmp_path,
+        "auth",
+        [
+            {
+                **AWS_STEP,
+                "with": {"role-to-assume": "${{ inputs.role }}"},
+            }
+        ],
+        inputs=inputs,
+    )
+    data = workflow([{"uses": "./auth"}])
+    assert token_risk(data, tmp_path) is RiskLevel.HIGH
+    target = tmp_path / WORKFLOW
+    target.parent.mkdir(parents=True)
+    target.write_text(yaml.safe_dump(data))
+    result = CliRunner().invoke(
+        main,
+        [
+            "scan",
+            str(tmp_path),
+            "--offline",
+            "--fail-on",
+            "high",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert any(
+        p["scope"] == "id-token" and p["risk_level"] == "high"
+        for p in json.loads(result.stdout)["github_token_permissions"]
+    )
+
+
+def test_explicit_runtime_input_is_preserved(tmp_path):
+    write_action(
+        tmp_path,
+        "auth",
+        [
+            {
+                **AWS_STEP,
+                "with": {"role-to-assume": "${{ inputs.role }}"},
+            }
+        ],
+        inputs={"role": {}},
+    )
+    data = workflow(
+        [
+            {
+                "uses": "./auth",
+                "with": {"role": "${{ inputs.deploy_role }}"},
+            }
+        ]
+    )
+    assert token_risk(data, tmp_path) is RiskLevel.INFO
+
+
 def test_no_root_does_not_inspect_local_files(tmp_path):
     write_action(tmp_path, "auth", [AWS_STEP])
     assert token_risk(workflow([{"uses": "./auth"}]), None) is RiskLevel.HIGH

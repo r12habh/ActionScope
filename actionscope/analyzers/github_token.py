@@ -349,9 +349,8 @@ def _local_composite_uses_oidc(
         inputs = data.get("inputs") or {}
         values = (
             {
-                name: spec["default"]
+                name: spec.get("default", "") if isinstance(spec, dict) else ""
                 for name, spec in inputs.items()
-                if isinstance(spec, dict) and "default" in spec
             }
             if isinstance(inputs, dict)
             else {}
@@ -360,7 +359,7 @@ def _local_composite_uses_oidc(
         if isinstance(caller_values, dict):
             values.update(caller_values)
         resolved = [
-            _resolve_composite_inputs(child, values)
+            _resolve_composite_inputs(child, values, missing_inputs_empty=True)
             for child in steps
             if isinstance(child, dict)
         ]

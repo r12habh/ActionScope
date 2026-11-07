@@ -742,18 +742,24 @@ def _local_action_access_key_locations(
     return locations
 
 
-def _resolve_composite_inputs(step: dict, caller_with: dict) -> dict:
+def _resolve_composite_inputs(
+    step: dict, caller_with: dict, *, missing_inputs_empty: bool = False
+) -> dict:
     resolved = dict(step)
     with_block = resolved.get("with")
     if isinstance(with_block, dict):
         resolved["with"] = {
-            key: _resolve_input_expression(value, caller_with)
+            key: _resolve_input_expression(
+                value, caller_with, missing_inputs_empty=missing_inputs_empty
+            )
             for key, value in with_block.items()
         }
     env_block = resolved.get("env")
     if isinstance(env_block, dict):
         resolved["env"] = {
-            key: _resolve_input_expression(value, caller_with)
+            key: _resolve_input_expression(
+                value, caller_with, missing_inputs_empty=missing_inputs_empty
+            )
             for key, value in env_block.items()
         }
     return resolved
@@ -769,14 +775,16 @@ def _environment_mapping(value: Any) -> dict[str, str]:
     }
 
 
-def _resolve_input_expression(value: Any, caller_with: dict) -> Any:
+def _resolve_input_expression(
+    value: Any, caller_with: dict, *, missing_inputs_empty: bool = False
+) -> Any:
     if not isinstance(value, str):
         return value
     match = re.fullmatch(r"\s*\$\{\{\s*inputs\.([A-Za-z0-9_-]+)\s*}}\s*", value)
     if not match:
         return value
     input_name = match.group(1)
-    return caller_with.get(input_name, value)
+    return caller_with.get(input_name, "" if missing_inputs_empty else value)
 
 
 def _local_action_file(repo_path: str, uses_ref: str) -> Path | None:

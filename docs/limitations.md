@@ -109,7 +109,8 @@ per job inspection, each capped at 256 KiB. Resolved paths,
 including symlinks, must stay within the scanned repository. Missing,
 cyclic, malformed, oversized, and out-of-repository actions do not establish
 an expected consumer. Whole-value composite input references in `with` and
-`env` are substituted from defaults and caller inputs; arbitrary expressions,
+`env` are substituted from defaults and caller inputs; omitted inputs are empty
+for token calibration. Arbitrary expressions,
 external action implementations, and shell data flow are not evaluated.
 
 For workflow-level grants, every inheriting job must have a recognized
