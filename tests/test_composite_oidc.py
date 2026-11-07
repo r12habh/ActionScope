@@ -215,6 +215,58 @@ def test_missing_action_keeps_warning(tmp_path):
     assert token_risk(workflow([{"uses": "./missing"}]), tmp_path) is RiskLevel.HIGH
 
 
+def test_invalid_yaml_timestamp_in_nested_action_does_not_crash_scan(tmp_path):
+    path = write_action(tmp_path, "inner", [AWS_STEP])
+    path.write_text(path.read_text() + "date: 2024-13-45\n")
+    write_action(tmp_path, "outer", [{"uses": "./inner"}])
+    data = workflow([{"uses": "./outer"}])
+    assert token_risk(data, tmp_path) is RiskLevel.HIGH
+    target = tmp_path / WORKFLOW
+    target.parent.mkdir(parents=True)
+    target.write_text(yaml.safe_dump(data))
+    result = CliRunner().invoke(
+        main,
+        [
+            "scan",
+            str(tmp_path),
+            "--offline",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert any(
+        p["scope"] == "id-token" and p["risk_level"] == "high"
+        for p in json.loads(result.stdout)["github_token_permissions"]
+    )
+
+
+@pytest.mark.parametrize("malformed_file", ["workflow", "composite"])
+def test_invalid_yaml_timestamp_at_scan_entrypoints_is_reported(
+    tmp_path, malformed_file
+):
+    path = write_action(tmp_path, "auth", [AWS_STEP])
+    target = tmp_path / WORKFLOW
+    target.parent.mkdir(parents=True)
+    target.write_text(yaml.safe_dump(workflow([{"uses": "./auth"}])))
+    malformed = target if malformed_file == "workflow" else path
+    malformed.write_text(malformed.read_text() + "date: 2024-13-45\n")
+    result = CliRunner().invoke(
+        main,
+        [
+            "scan",
+            str(tmp_path),
+            "--offline",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["errors"]
+    assert data["coverage_status"] == "partial"
+
+
 def test_cycle_is_bounded_and_keeps_warning(tmp_path):
     write_action(tmp_path, "one", [{"uses": "./two"}])
     write_action(tmp_path, "two", [{"uses": "./one"}])
@@ -279,6 +331,9 @@ def test_keyless_cosign_is_recognized_directly_and_in_composite(tmp_path, comman
     [
         "cosign sign --key cosign.key image",
         "cosign sign --key=env://COSIGN_PRIVATE_KEY image",
+        "cosign sign --sk image",
+        "cosign sign --oidc-disable-ambient-providers image",
+        "cosign sign --signing-config config.json image",
         "cosign sign --identity-token token image",
         "cosign sign --oidc-provider custom image",
         'echo "cosign sign --yes image"',

@@ -30,6 +30,8 @@ All notable changes to ActionScope are documented here.
   when any inheriting job lacks a recognized consumer. Keyless Cosign signing
   is recognized separately from Docker username/password login; identifying
   an expected consumer does not establish IAM coverage or workflow safety.
+- Invalid YAML timestamp scalars in workflow and local-action metadata are
+  reported as parse failures instead of aborting the scan.
 - Workflow counts now include analyzed workflow files that produce no findings,
   so a clean repository is no longer reported as having zero workflows.
 - AWS access keys inherited through workflow- or job-level `env` blocks, and

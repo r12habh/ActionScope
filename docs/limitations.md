@@ -118,8 +118,9 @@ consumer before the shared permission record is calibrated to INFO. A
 consumer in one job cannot downgrade an unrelated job's explicit grant.
 
 Simple keyless `cosign sign` and `cosign sign-blob` commands count as expected
-consumers. Explicit signing keys, explicit identity tokens or alternative
-OIDC providers, and a `SIGSTORE_ID_TOKEN` environment value do not establish
+consumers. Explicit signing keys (including hardware keys), signing config
+files, disabled ambient OIDC, explicit identity tokens or alternative OIDC
+providers, and a `SIGSTORE_ID_TOKEN` environment value do not establish
 GitHub OIDC use through this heuristic. Docker username/password login alone
 does not count. Complex shell commands can remain HIGH and need manual review.
 See [GitHub's OIDC reference](https://docs.github.com/en/actions/reference/security/oidc)

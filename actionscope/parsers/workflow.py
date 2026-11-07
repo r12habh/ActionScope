@@ -66,7 +66,7 @@ def parse_workflow_file(filepath: str) -> dict | None:
     try:
         with Path(filepath).open("r", encoding="utf-8") as workflow_file:
             workflow_data = yaml.load(workflow_file, Loader=GitHubWorkflowLoader)
-    except (OSError, yaml.YAMLError, UnicodeDecodeError) as exc:
+    except (OSError, yaml.YAMLError, ValueError) as exc:
         _warn(f"Could not parse workflow file {filepath}: {exc}")
         return None
 
@@ -816,7 +816,7 @@ def _parse_delegated_yaml(path: Path) -> dict | None:
     except (FileNotFoundError, PermissionError, UnicodeDecodeError, OSError) as exc:
         _warn(f"Could not read delegated workflow/action {path}: {exc}")
         return None
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError) as exc:
         _warn(f"Could not parse delegated workflow/action {path}: {exc}")
         return None
     return data if isinstance(data, dict) else None

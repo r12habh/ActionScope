@@ -284,9 +284,12 @@ def _uses_keyless_cosign(run_block: str, env: dict) -> bool:
             word.split("=", 1)[0]
             in {
                 "--key",
+                "--sk",
+                "--signing-config",
                 "--identity-token",
                 "--oidc-provider",
                 "--oidc-issuer",
+                "--oidc-disable-ambient-providers",
             }
             or word in {";", "&&", "||", "|"}
             for word in words[2:]
@@ -366,7 +369,7 @@ def _local_composite_uses_oidc(
         return _job_uses_oidc_consumer(
             {"steps": resolved}, root, seen | {path}, budget, env
         )
-    except (OSError, UnicodeError, yaml.YAMLError, RuntimeError):
+    except (OSError, ValueError, yaml.YAMLError, RuntimeError):
         return False
 
 
