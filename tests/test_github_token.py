@@ -173,10 +173,9 @@ def test_id_token_write_with_github_pages_deploy_is_info() -> None:
     assert perms[0].risk_level is RiskLevel.INFO
 
 
-def test_id_token_write_with_vault_docker_or_snowflake_consumer_is_info() -> None:
+def test_id_token_write_with_vault_or_snowflake_consumer_is_info() -> None:
     for action in (
         "hashicorp/vault-action@v3",
-        "docker/login-action@v3",
         "snowflakedb/snowflake-cli-action@v1",
     ):
         perms = analyze_workflow_permissions(

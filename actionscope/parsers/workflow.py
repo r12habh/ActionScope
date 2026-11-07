@@ -66,7 +66,7 @@ def parse_workflow_file(filepath: str) -> dict | None:
     try:
         with Path(filepath).open("r", encoding="utf-8") as workflow_file:
             workflow_data = yaml.load(workflow_file, Loader=GitHubWorkflowLoader)
-    except (OSError, yaml.YAMLError, UnicodeDecodeError) as exc:
+    except (OSError, yaml.YAMLError, ValueError) as exc:
         _warn(f"Could not parse workflow file {filepath}: {exc}")
         return None
 
@@ -390,7 +390,7 @@ def scan_workflows(
         credential_sources.extend(delegated_sources)
         errors.extend(delegated_errors)
         token_permissions.extend(
-            analyze_workflow_permissions(workflow_data, workflow_file)
+            analyze_workflow_permissions(workflow_data, workflow_file, repo_path)
         )
         unpinned_actions.extend(
             UnpinnedActionFinding(**finding)
@@ -742,18 +742,24 @@ def _local_action_access_key_locations(
     return locations
 
 
-def _resolve_composite_inputs(step: dict, caller_with: dict) -> dict:
+def _resolve_composite_inputs(
+    step: dict, caller_with: dict, *, missing_inputs_empty: bool = False
+) -> dict:
     resolved = dict(step)
     with_block = resolved.get("with")
     if isinstance(with_block, dict):
         resolved["with"] = {
-            key: _resolve_input_expression(value, caller_with)
+            key: _resolve_input_expression(
+                value, caller_with, missing_inputs_empty=missing_inputs_empty
+            )
             for key, value in with_block.items()
         }
     env_block = resolved.get("env")
     if isinstance(env_block, dict):
         resolved["env"] = {
-            key: _resolve_input_expression(value, caller_with)
+            key: _resolve_input_expression(
+                value, caller_with, missing_inputs_empty=missing_inputs_empty
+            )
             for key, value in env_block.items()
         }
     return resolved
@@ -769,14 +775,16 @@ def _environment_mapping(value: Any) -> dict[str, str]:
     }
 
 
-def _resolve_input_expression(value: Any, caller_with: dict) -> Any:
+def _resolve_input_expression(
+    value: Any, caller_with: dict, *, missing_inputs_empty: bool = False
+) -> Any:
     if not isinstance(value, str):
         return value
     match = re.fullmatch(r"\s*\$\{\{\s*inputs\.([A-Za-z0-9_-]+)\s*}}\s*", value)
     if not match:
         return value
     input_name = match.group(1)
-    return caller_with.get(input_name, value)
+    return caller_with.get(input_name, "" if missing_inputs_empty else value)
 
 
 def _local_action_file(repo_path: str, uses_ref: str) -> Path | None:
@@ -808,7 +816,7 @@ def _parse_delegated_yaml(path: Path) -> dict | None:
     except (FileNotFoundError, PermissionError, UnicodeDecodeError, OSError) as exc:
         _warn(f"Could not read delegated workflow/action {path}: {exc}")
         return None
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, ValueError) as exc:
         _warn(f"Could not parse delegated workflow/action {path}: {exc}")
         return None
     return data if isinstance(data, dict) else None
