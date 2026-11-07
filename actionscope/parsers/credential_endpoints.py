@@ -10,6 +10,8 @@ _ENV_REFERENCE = re.compile(
     r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"
 )
 _GITHUB_EXPRESSION = re.compile(r"\$\{\{.*?\}\}")
+_MAX_RESOLVED_LENGTH = 8192
+_UNRESOLVED = "UNRESOLVED_EXPRESSION"
 _GLOBAL_VALUE_OPTIONS = {
     "--ca-bundle",
     "--cli-connect-timeout",
@@ -32,7 +34,7 @@ def uses_only_non_aws_s3(run: object, env: dict[str, str]) -> bool:
         return False
     if any(marker in run for marker in ("$(", "`", "#")):
         return False
-    text = _GITHUB_EXPRESSION.sub("UNRESOLVED_EXPRESSION", run)
+    text = _GITHUB_EXPRESSION.sub(_UNRESOLVED, run)
     lexer = shlex.shlex(
         text.replace("\\\n", ""), posix=True, punctuation_chars=";&|()<>\n"
     )
@@ -60,7 +62,7 @@ def uses_only_non_aws_s3(run: object, env: dict[str, str]) -> bool:
 
 
 def _targets_non_aws_s3(command: list[str], env: dict[str, str]) -> bool:
-    if not command or command[0].rsplit("/", 1)[-1] != "aws":
+    if not command or command[0] != "aws":
         return False
     index = 1
     while index < len(command) and command[index].startswith("--"):
@@ -91,24 +93,40 @@ def _targets_non_aws_s3(command: list[str], env: dict[str, str]) -> bool:
         return False
 
     endpoint = _resolve_env(endpoint, env)
+    if _UNRESOLVED in endpoint or _ENV_REFERENCE.search(endpoint):
+        return False
     try:
         parsed = urlsplit(endpoint)
         hostname = (parsed.hostname or "").lower()
         if parsed.scheme not in {"http", "https"} or parsed.username is not None:
             return False
-        # R2 account IDs can be expressions; the service hostname must be known.
+        # Only a statically resolved hostname establishes the provider.
         return hostname.endswith(".r2.cloudflarestorage.com")
     except ValueError:
         return False
 
 
 def _resolve_env(value: str, env: dict[str, str]) -> str:
+    if len(value) > _MAX_RESOLVED_LENGTH:
+        return _UNRESOLVED
     for _ in range(4):
-        resolved = _ENV_REFERENCE.sub(
-            lambda match: env.get(match.group(1) or match.group(2), match.group()),
-            value,
-        )
-        if resolved == value or len(resolved) > 8192:
+        parts: list[str] = []
+        size = 0
+        position = 0
+        for match in _ENV_REFERENCE.finditer(value):
+            literal = value[position:match.start()]
+            replacement = env.get(match.group(1) or match.group(2), match.group())
+            size += len(literal) + len(replacement)
+            if size > _MAX_RESOLVED_LENGTH:
+                return _UNRESOLVED
+            parts.extend((literal, replacement))
+            position = match.end()
+        tail = value[position:]
+        if size + len(tail) > _MAX_RESOLVED_LENGTH:
+            return _UNRESOLVED
+        parts.append(tail)
+        resolved = "".join(parts)
+        if resolved == value:
             break
         value = resolved
-    return _GITHUB_EXPRESSION.sub("UNRESOLVED_EXPRESSION", value)
+    return _GITHUB_EXPRESSION.sub(_UNRESOLVED, value)

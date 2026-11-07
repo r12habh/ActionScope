@@ -158,7 +158,10 @@ This exclusion applies to the specific credential use, not the whole job.
 Other AWS commands and role assumptions remain in the report. Unresolved
 endpoints, unrecognized services, and complex scripts remain conservatively
 reported as possible AWS credential sources; secret names or `region: auto`
-alone do not establish that credentials belong to R2. ActionScope does not
+alone do not establish that credentials belong to R2. Dynamic expressions in
+endpoint authorities and path-qualified executables such as `./aws` remain
+unknown; a fixed R2 suffix cannot prove what host a runtime expression selects.
+ActionScope does not
 analyze R2 permissions or verify that repository secrets were deleted.
 
 ### YAML expression edge cases

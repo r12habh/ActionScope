@@ -23,7 +23,7 @@ R2_RUN = (
 KEY_ENV = {
     "AWS_ACCESS_KEY_ID": "${{ secrets.ACCESS_KEY }}",
     "AWS_SECRET_ACCESS_KEY": "${{ secrets.SECRET_KEY }}",
-    "ACCOUNT_ID": "${{ secrets.ACCOUNT_ID }}",
+    "ACCOUNT_ID": "account",
     "BUCKET": "${{ secrets.BUCKET }}",
     "AWS_DEFAULT_REGION": "auto",
 }
@@ -48,7 +48,6 @@ def _workflow(run: str = R2_RUN) -> dict:
         (f"aws s3 ls --endpoint-url={R2_ENDPOINT}", {}),
         (f"aws --endpoint-url {R2_ENDPOINT} s3api list-buckets", {}),
         (f"aws --region auto --endpoint-url {R2_ENDPOINT} s3 ls", {}),
-        (f"/usr/local/bin/aws s3 ls --endpoint-url {R2_ENDPOINT}", {}),
         (f"aws s3 ls \\\n  --endpoint-url {R2_ENDPOINT}", {}),
         (f"aws s3 ls --endpoint-url {R2_ENDPOINT}\n" * 2, {}),
         (
@@ -61,11 +60,6 @@ def _workflow(run: str = R2_RUN) -> dict:
         ("aws s3 ls --endpoint-url $ENDPOINT", {"ENDPOINT": R2_ENDPOINT}),
         ("aws s3 ls --endpoint-url ${ENDPOINT}", {"ENDPOINT": R2_ENDPOINT}),
         ("aws s3 ls --endpoint-url https://account.eu.r2.cloudflarestorage.com", {}),
-        (
-            "aws s3 ls --endpoint-url "
-            "https://${{ secrets.ACCOUNT }}.r2.cloudflarestorage.com",
-            {},
-        ),
         (
             f"aws s3 ls --endpoint-url {R2_ENDPOINT}",
             {
@@ -82,6 +76,17 @@ def test_explicit_r2_endpoints_are_recognized(run: str, env: dict) -> None:
 @pytest.mark.parametrize(
     "run,env",
     [
+        (f"./aws s3 ls --endpoint-url {R2_ENDPOINT}", {}),
+        (f"tools/aws s3 ls --endpoint-url {R2_ENDPOINT}", {}),
+        (f"/usr/local/bin/aws s3 ls --endpoint-url {R2_ENDPOINT}", {}),
+        (
+            "aws s3 ls --endpoint-url "
+            "https://${{ inputs.account }}.r2.cloudflarestorage.com",
+            {},
+        ),
+        (R2_RUN, {**KEY_ENV, "ACCOUNT_ID": "${{ secrets.ACCOUNT_ID }}"}),
+        (R2_RUN, {**KEY_ENV, "ACCOUNT_ID": "s3.amazonaws.com/path"}),
+        ("aws s3 ls", {"AWS_ENDPOINT_URL": "$PART" * 8192, "PART": "x" * 8192}),
         ("aws s3 ls", {}),
         ("aws s3 ls", {"AWS_DEFAULT_REGION": "auto"}),
         ("aws s3 ls", {"AWS_ACCESS_KEY_ID": "${{ secrets.CLOUDFLARE_R2_KEY }}"}),
@@ -130,6 +135,28 @@ def test_explicit_r2_endpoints_are_recognized(run: str, env: dict) -> None:
 )
 def test_aws_or_uncertain_commands_are_not_excluded(run: str, env: dict) -> None:
     assert not uses_only_non_aws_s3(run, env)
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        f"./aws s3 ls --endpoint-url {R2_ENDPOINT}",
+        "aws s3 ls --endpoint-url "
+        "https://${{ inputs.account }}.r2.cloudflarestorage.com",
+    ],
+)
+def test_uncertain_r2_usage_preserves_aws_credentials(run: str) -> None:
+    sources = extract_aws_credential_sources(_workflow(run), "release.yml")
+    assert len(sources) == 1
+    assert sources[0].uses_access_keys
+
+
+def test_env_expansion_is_bounded_and_resolves_chains() -> None:
+    from actionscope.parsers.credential_endpoints import _resolve_env
+
+    assert _resolve_env("$A", {"A": "$B", "B": R2_ENDPOINT}) == R2_ENDPOINT
+    assert _resolve_env("$A" * 8192, {"A": "x" * 8192}) == "UNRESOLVED_EXPRESSION"
+    assert _resolve_env("x" * 8193, {}) == "UNRESOLVED_EXPRESSION"
 
 
 @pytest.mark.parametrize("scope", ["step", "job", "workflow"])
