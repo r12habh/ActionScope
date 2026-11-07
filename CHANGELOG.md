@@ -25,6 +25,11 @@ All notable changes to ActionScope are documented here.
   environment variables, reusable-workflow inputs, and other expressions.
 
 ### Fixed
+- Cloudflare R2-only S3 commands no longer produce AWS static-credential,
+  IAM coverage, or environment-hardening findings merely because they use
+  AWS SDK environment variable names. Explicit R2 endpoint evidence is
+  scoped to each credential use; mixed AWS/R2 jobs and unresolved endpoints
+  retain AWS detection.
 - Workflow counts now include analyzed workflow files that produce no findings,
   so a clean repository is no longer reported as having zero workflows.
 - AWS access keys inherited through workflow- or job-level `env` blocks, and

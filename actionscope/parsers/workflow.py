@@ -15,6 +15,7 @@ from actionscope.models import (
     GitHubTokenPermission,
     UnpinnedActionFinding,
 )
+from actionscope.parsers.credential_endpoints import uses_only_non_aws_s3
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 IAM_ROLE_ARN_PATTERN = re.compile(r"^arn:[^:]+:iam::\d{12}:role/.+")
@@ -461,16 +462,21 @@ def _credential_source_from_environment(
     temporary_credential_step_ids: set[str] | None = None,
 ) -> AwsCredentialSource | None:
     """Return a source when a job exposes AWS SDK credential variables."""
-    candidates = [("Workflow/job environment", inherited_env)]
-    candidates.extend(
-        (
-            str(step.get("name") or "Shell step environment"),
-            {**inherited_env, **extract_env_var_references(step)},
-        )
+    candidates = [
+        (step, {**inherited_env, **extract_env_var_references(step)})
         for step in _job_steps(job_data)
+    ] or [({}, inherited_env)]
+    workflow_path = Path(workflow_file)
+    repo_path = next(
+        (
+            str(parent.parent)
+            for parent in workflow_path.parents
+            if workflow_path.is_absolute() and parent.name == ".github"
+        ),
+        None,
     )
 
-    for location, env_vars in candidates:
+    for step, env_vars in candidates:
         if not _has_usable_static_credential_pair(env_vars):
             continue
         if _uses_temporary_credential_outputs(
@@ -478,6 +484,17 @@ def _credential_source_from_environment(
             temporary_credential_step_ids or set(),
         ):
             continue
+        if _step_uses_only_non_aws_s3(step, env_vars, repo_path):
+            continue
+        inherited_pair = _has_usable_static_credential_pair(inherited_env) and all(
+            env_vars[key] == inherited_env[key]
+            for key in AWS_STATIC_CREDENTIAL_ENV_KEYS
+        )
+        location = (
+            "Workflow/job environment"
+            if inherited_pair
+            else str(step.get("name") or "Shell step environment")
+        )
         uses_session_token = _has_usable_session_credentials({}, env_vars)
         return AwsCredentialSource(
             workflow_file=workflow_file,
@@ -492,6 +509,45 @@ def _credential_source_from_environment(
             uses_session_token=uses_session_token,
         )
     return None
+
+
+def _step_uses_only_non_aws_s3(
+    step: dict,
+    env_vars: dict[str, str],
+    repo_path: str | None,
+    visited: frozenset[str] = frozenset(),
+) -> bool:
+    """Inspect a shell step or a bounded local composite without executing it."""
+    if "run" in step:
+        return uses_only_non_aws_s3(step["run"], env_vars)
+    uses = step.get("uses")
+    if (
+        repo_path is None
+        or not isinstance(uses, str)
+        or not _is_local_action_reference(uses)
+        or len(visited) >= 5
+    ):
+        return False
+    action_file = _local_action_file(repo_path, uses)
+    if action_file is None or str(action_file) in visited:
+        return False
+    data = _parse_delegated_yaml(action_file)
+    runs = data.get("runs") if data else None
+    if not isinstance(runs, dict) or runs.get("using") != "composite":
+        return False
+    steps = _job_steps(runs)
+    inputs = step.get("with")
+    caller_with = inputs if isinstance(inputs, dict) else {}
+    resolved_steps = [_resolve_composite_inputs(child, caller_with) for child in steps]
+    return bool(resolved_steps) and all(
+        _step_uses_only_non_aws_s3(
+            child,
+            {**env_vars, **extract_env_var_references(child)},
+            repo_path,
+            visited | {str(action_file)},
+        )
+        for child in resolved_steps
+    )
 
 
 def _uses_temporary_credential_outputs(
@@ -663,6 +719,9 @@ def _inspect_local_composite_action(
         if (
             isinstance(resolved_step.get("run"), str)
             and _has_usable_static_credential_pair(nested_env)
+            and not _step_uses_only_non_aws_s3(
+                resolved_step, nested_env, repo_path
+            )
             and not _uses_temporary_credential_outputs(
                 nested_env,
                 temporary_credential_step_ids or set(),
