@@ -71,6 +71,12 @@ and identifies workflow-layer attack surfaces.
     tags, and branches. `--resolve-pins` suggests current SHAs via the
     GitHub API.
 
+    Reads GitHub's `.github/workflows/actions.lock` preview format, suppresses
+    unpinned findings only for valid exact lock entries, and checks transitive
+    locked commits against the compromised-actions database.
+
+    [Dependency lock support :material-arrow-right:](dependency-locks.md)
+
 -   :material-file-document-multiple:{ .lg .middle } **SARIF for Code Scanning**
 
     ---

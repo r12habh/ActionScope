@@ -18,10 +18,18 @@ from actionscope.compromised_db import (
     load_best_database,
 )
 from actionscope.models import CompromisedActionFinding, RiskLevel
+from actionscope.parsers.actions_lock import (
+    canonical_action_key,
+    dependency_closure,
+    extract_external_uses,
+    load_actions_lock,
+    repository_root,
+)
+from actionscope.parsers.steps import job_steps
 from actionscope.parsers.workflow import GitHubWorkflowLoader
 
 DATA_FILE = BUNDLED_DB_FILE
-_FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
+_FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
 
 
 def load_compromised_actions(
@@ -46,9 +54,7 @@ def is_compromised_ref(
         return False, None
 
     affected_refs = [str(item) for item in entry.get("affected_refs") or []]
-    malicious_shas = [
-        str(item).lower() for item in entry.get("malicious_shas") or []
-    ]
+    malicious_shas = [str(item).lower() for item in entry.get("malicious_shas") or []]
     if _is_full_sha(normalized_ref):
         normalized_sha = normalized_ref.lower()
         if normalized_sha in malicious_shas:
@@ -94,12 +100,7 @@ def check_workflow_for_compromised_actions(
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
+        for step in job_steps(job):
             uses = step.get("uses")
             if not isinstance(uses, str):
                 continue
@@ -142,12 +143,14 @@ def scan_for_compromised_actions(
     """Scan workflow files for known-compromised action references."""
     findings: list[CompromisedActionFinding] = []
     errors: list[str] = []
+    direct_keys_by_workflow: dict[str, set[str]] = {}
     try:
         db = load_compromised_actions(cache_file=cache_file, offline=offline)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         return [], [f"Could not load compromised actions database {DATA_FILE}: {exc}"]
 
-    for workflow_file in _workflow_files(repo_path):
+    workflow_files = _workflow_files(repo_path)
+    for workflow_file in workflow_files:
         try:
             with workflow_file.open("r", encoding="utf-8") as handle:
                 workflow_data = yaml.load(handle, Loader=GitHubWorkflowLoader)
@@ -158,15 +161,142 @@ def scan_for_compromised_actions(
             errors.append(f"Could not parse workflow file {workflow_file}: {exc}")
             continue
         if isinstance(workflow_data, dict):
+            resolved_workflow = str(workflow_file.resolve())
+            direct_keys_by_workflow[resolved_workflow] = {
+                key
+                for uses_ref in extract_external_uses(workflow_data)
+                if (key := canonical_action_key(uses_ref)) is not None
+            }
             findings.extend(
                 check_workflow_for_compromised_actions(
                     workflow_data,
-                    str(workflow_file.resolve()),
+                    resolved_workflow,
                     db,
                 )
             )
 
+    try:
+        lockfile, _ = load_actions_lock(repo_path)
+    except Exception as exc:
+        # Lock enrichment must fail open: a malformed lockfile must never erase
+        # direct compromised-action findings collected from workflow YAML.
+        errors.append(f"Could not analyze dependency lockfile: {exc}")
+        lockfile = None
+    if lockfile is not None and lockfile.valid:
+        root = repository_root(repo_path)
+        existing_workflows = {
+            str(workflow_file.resolve()) for workflow_file in workflow_files
+        }
+        active_direct_by_workflow: dict[str, set[str]] = {}
+        dependencies_by_workflow: dict[str, dict] = {}
+        for workflow_path, pins in lockfile.workflows.items():
+            resolved_workflow = str((root / workflow_path).resolve())
+            if resolved_workflow not in existing_workflows:
+                continue
+            active_direct = set(pins) & direct_keys_by_workflow.get(
+                resolved_workflow, set()
+            )
+            active_direct_by_workflow[resolved_workflow] = active_direct
+            dependencies_by_workflow[resolved_workflow] = {
+                pin: lockfile.dependencies[pin]
+                for pin in dependency_closure(lockfile, active_direct)
+                if pin in lockfile.dependencies
+            }
+
+        # A lock proves a compromised mutable ref safe only when the database
+        # records the exact resolved commit as a verified safe SHA. Locking a
+        # tag after it was moved is not evidence that the chosen commit is safe.
+        retained_findings: list[CompromisedActionFinding] = []
+        for finding in findings:
+            key = canonical_action_key(finding.uses_ref)
+            dependency = dependencies_by_workflow.get(finding.workflow_file, {}).get(
+                key or ""
+            )
+            if dependency is None:
+                retained_findings.append(finding)
+                continue
+            entry = _entry_for_action(finding.action_name, db)
+            safe_sha = _entry_safe_sha(entry)
+            locked_is_compromised, _ = is_compromised_ref(
+                dependency.action_name,
+                dependency.commit_sha,
+                db,
+            )
+            if safe_sha == dependency.commit_sha and not locked_is_compromised:
+                continue
+            finding.description = (
+                f"{finding.description} The dependency lock resolves this reference "
+                f"to commit {dependency.commit_sha}, which is not recorded as a "
+                "verified safe SHA."
+            )
+            retained_findings.append(finding)
+        findings = retained_findings
+
+        direct_finding_actions = {
+            (finding.workflow_file, finding.action_name.lower()) for finding in findings
+        }
+        seen_locked_findings: set[tuple[str, str, str]] = set()
+        for resolved_workflow, dependencies in dependencies_by_workflow.items():
+            active_direct = active_direct_by_workflow.get(resolved_workflow, set())
+            for pin, dependency in dependencies.items():
+                compromised, entry = is_compromised_ref(
+                    dependency.action_name,
+                    dependency.commit_sha,
+                    db,
+                )
+                finding_key = (
+                    resolved_workflow,
+                    dependency.action_name,
+                    dependency.commit_sha,
+                )
+                if (
+                    not compromised
+                    or entry is None
+                    or finding_key in seen_locked_findings
+                ):
+                    continue
+                if (
+                    pin in active_direct
+                    and (resolved_workflow, dependency.action_name)
+                    in direct_finding_actions
+                ):
+                    continue
+                seen_locked_findings.add(finding_key)
+                findings.append(
+                    CompromisedActionFinding(
+                        workflow_file=resolved_workflow,
+                        job_name="actions.lock",
+                        step_name="Locked direct or transitive dependency",
+                        uses_ref=(f"{dependency.action_name}@{dependency.commit_sha}"),
+                        action_name=dependency.action_name,
+                        ref=dependency.commit_sha,
+                        is_sha_pinned=True,
+                        compromise_date=str(entry.get("compromised_at", "")),
+                        advisory_url=str(entry.get("advisory_url", "")),
+                        description=(
+                            "The workflow dependency lock resolves this action "
+                            "to a documented malicious commit. "
+                            + str(entry.get("description", ""))
+                        ),
+                        risk_level=RiskLevel.CRITICAL,
+                    )
+                )
+
     return findings, errors
+
+
+def _entry_safe_sha(entry: dict | None) -> str | None:
+    if entry is None:
+        return None
+    value = entry.get("safe_sha")
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    for prefix in ("sha1-", "sha256-"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :]
+            break
+    return normalized if _is_full_sha(normalized) else None
 
 
 def _entry_for_action(action_name: str, db: dict) -> dict | None:
@@ -177,11 +307,11 @@ def _entry_for_action(action_name: str, db: dict) -> dict | None:
 
 
 def _parse_uses_ref(uses_ref: str) -> tuple[str, str] | None:
-    if uses_ref.startswith(("./", "../", "docker://")):
+    if uses_ref.startswith(("./", "../", "$/", "docker://")):
         return None
     if "@" not in uses_ref:
         return None
-    action_part, ref = uses_ref.rsplit("@", 1)
+    action_part, ref = uses_ref.split("@", 1)
     pieces = action_part.split("/")
     if len(pieces) < 2:
         return None

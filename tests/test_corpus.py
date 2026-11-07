@@ -196,6 +196,8 @@ def _shareable_text(run_dir: Path) -> str:
         "bindings.csv",
         "repositories.json",
         "bindings.json",
+        "workflow_locks.csv",
+        "workflow_locks.json",
         "summary.json",
     ]
     return "\n".join((run_dir / name).read_text() for name in names)
@@ -582,6 +584,24 @@ def test_resume_rejects_a_changed_manifest(
         run_corpus(_options(manifest, tmp_path / "out", resume=True))
 
 
+def test_resume_rejects_an_older_corpus_schema(
+    tmp_path: Path, mixed_repo: tuple[Path, str]
+) -> None:
+    repo, sha = mixed_repo
+    manifest = _write_manifest(
+        tmp_path / "manifest.csv", [(str(repo), sha)], "repo_url,commit"
+    )
+    output = tmp_path / "out"
+    run_corpus(_options(manifest, output))
+    run_file = output / "_private" / "run.json"
+    metadata = json.loads(run_file.read_text(encoding="utf-8"))
+    metadata["schema_version"] = 1
+    run_file.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(CorpusError, match="corpus schema 1"):
+        run_corpus(_options(manifest, output, resume=True))
+
+
 def test_refuses_a_non_empty_output_directory(
     tmp_path: Path, mixed_repo: tuple[Path, str]
 ) -> None:
@@ -757,6 +777,37 @@ def test_worker_payload_never_contains_role_arns() -> None:
 
     assert payload["bindings"]
     assert "arn:aws" not in json.dumps(payload)
+
+
+def test_corpus_exports_per_workflow_dependency_lock_coverage(
+    tmp_path: Path,
+) -> None:
+    repo = (
+        Path(__file__).parent
+        / "fixtures"
+        / "actions_lock"
+        / "fully_locked"
+    )
+    # Corpus fetches a pinned git commit, so copy the fixture into a temporary
+    # repository before constructing the manifest.
+    checkout = tmp_path / "locked"
+    shutil.copytree(repo, checkout)
+    sha = _commit(checkout)
+    manifest = _write_manifest(
+        tmp_path / "manifest.csv", [(str(checkout), sha)], "repo_url,commit"
+    )
+
+    run = run_corpus(_options(manifest, tmp_path / "out"))
+    lock_rows = json.loads(
+        (tmp_path / "out" / "workflow_locks.json").read_text()
+    )
+
+    assert run.summary["schema_version"] == 2
+    assert run.summary["dependency_lock_status_counts"] == {"fully_locked": 1}
+    assert len(lock_rows) == 1
+    assert lock_rows[0]["status"] == "fully_locked"
+    assert lock_rows[0]["locked_direct_dependencies"] == 2
+    assert "workflow_path" not in lock_rows[0]
 
 
 # --------------------------------------------------------------------------

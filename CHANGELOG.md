@@ -5,6 +5,11 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- GitHub Actions dependency-lock support for `.github/workflows/actions.lock`
+  schema versions v0.0.1-v0.0.3. Valid exact lock entries cover mutable
+  direct references, transitive locked commits are checked against the
+  compromised-actions database, and JSON/corpus reports include per-workflow
+  lock coverage.
 - `actionscope corpus scan` runs the static pipeline over a manifest of
   repositories pinned to commit SHAs and writes per-repository and
   per-credential-binding tables (CSV and JSON) with a run summary for empirical
@@ -25,6 +30,23 @@ All notable changes to ActionScope are documented here.
   environment variables, reusable-workflow inputs, and other expressions.
 
 ### Fixed
+- Dependency-lock validation now accepts full-SHA dependency keys with a
+  symbolic body `ref`, verifies that SHA keys match their commit digest, uses
+  iterative cycle detection for deeply nested dependency graphs, and ignores
+  stale dependencies that are not reachable from the workflow's current
+  direct references.
+- A dependency lock suppresses a known-compromised mutable reference only when
+  its resolved commit matches a verified `safe_sha` in the advisory database.
+  Unknown locked commits retain the CRITICAL finding and include the resolved
+  SHA in the explanation.
+- Corpus resume now rejects prior output-schema versions instead of mixing
+  previously completed records with newly collected fields.
+- Steps grouped under `parallel:` are now analyzed. Every detector previously
+  skipped them, so AWS credential steps, unpinned or compromised actions, and
+  script, artifact, or AI-agent injection risks inside a parallel group went
+  unreported and the scan's overall risk was understated. Artifact poisoning
+  checks also treat a parallel sibling or an earlier background step as able
+  to execute downloaded artifacts.
 - Workflow counts now include analyzed workflow files that produce no findings,
   so a clean repository is no longer reported as having zero workflows.
 - AWS access keys inherited through workflow- or job-level `env` blocks, and

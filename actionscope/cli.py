@@ -685,6 +685,10 @@ def _has_reportable_findings(result: ScanResult) -> bool:
             result.artifact_poisoning_findings,
             result.ai_agent_injection_findings,
             result.reusable_workflows,
+            any(
+                item.lockfile_path is not None or item.status == "invalid"
+                for item in result.dependency_locks
+            ),
             result.errors,
         )
     )

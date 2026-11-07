@@ -22,6 +22,7 @@ from actionscope.models import (
     ScriptInjectionFinding,
     UnpinnedActionFinding,
     WorkflowCredentialBinding,
+    WorkflowDependencyLockCoverage,
 )
 
 RISK_ROW_LABELS = {
@@ -260,6 +261,43 @@ def _unpinned_section(findings: list[UnpinnedActionFinding]) -> str:
             "> ⚠️ Version tags are mutable. Pin to SHA to prevent "
             "supply-chain attacks.",
             "> Reference: the March 2025 tj-actions/changed-files compromise.",
+            "",
+            "---",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _dependency_lock_section(
+    coverage: list[WorkflowDependencyLockCoverage],
+) -> str:
+    visible = [
+        item
+        for item in coverage
+        if item.lockfile_path is not None or item.status == "invalid"
+    ]
+    if not visible:
+        return ""
+    lines = [
+        "### Workflow Dependency Locks",
+        "",
+        "| Workflow | Status | Direct Locked | Transitive | Uncovered |",
+        "|----------|--------|---------------|------------|-----------|",
+    ]
+    for item in visible:
+        lines.append(
+            f"| {_md_cell(_workflow_basename(item.workflow_file))} | "
+            f"{_md_cell(item.status.replace('_', ' '))} | "
+            f"{item.locked_direct_dependencies}/{item.direct_dependencies} | "
+            f"{item.transitive_dependencies} | "
+            f"{len(item.uncovered_dependencies)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "> Lock coverage is accepted only for exact action/ref entries "
+            "with valid full commit digests.",
             "",
             "---",
             "",
@@ -724,6 +762,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
 
     token_part = _github_token_section(result)
     unpinned_part = _unpinned_section(result.unpinned_actions)
+    dependency_lock_part = _dependency_lock_section(result.dependency_locks)
     oidc_part = _oidc_trust_section(result.oidc_trust_findings)
     environment_part = _environment_section(result.environment_findings)
     script_part = _script_injection_section(result.script_injection_findings)
@@ -751,6 +790,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
         + script_part
         + artifact_part
         + ai_part
+        + dependency_lock_part
         + unpinned_part
         + pin_part
         + summary
@@ -1175,6 +1215,37 @@ def to_markdown_from_dict(data: dict) -> str:
         lines.extend(["", "---", ""])
 
     unpinned = data.get("unpinned_actions", [])
+    dependency_locks = data.get("dependency_locks", [])
+    visible_locks = [
+        item
+        for item in dependency_locks
+        if isinstance(item, dict)
+        and (item.get("lockfile_path") or item.get("status") == "invalid")
+    ]
+    if visible_locks:
+        lines.extend(
+            [
+                "### Workflow Dependency Locks",
+                "",
+                "| Workflow | Status | Direct Locked | Transitive | Uncovered |",
+                "|----------|--------|---------------|------------|-----------|",
+            ]
+        )
+        for item in visible_locks:
+            workflow = _md_cell(
+                _workflow_basename(str(item.get("workflow_file", "")))
+            )
+            uncovered = item.get("uncovered_dependencies") or []
+            lines.append(
+                f"| {workflow} | "
+                f"{_md_cell(str(item.get('status', '')).replace('_', ' '))} | "
+                f"{item.get('locked_direct_dependencies', 0)}/"
+                f"{item.get('direct_dependencies', 0)} | "
+                f"{item.get('transitive_dependencies', 0)} | "
+                f"{len(uncovered) if isinstance(uncovered, list) else 0} |"
+            )
+        lines.extend(["", "---", ""])
+
     if unpinned:
         lines.extend(
             [
