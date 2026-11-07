@@ -6,7 +6,7 @@ The hooks in this change are unreleased. Use an exact commit containing
 ```yaml
 repos:
   - repo: https://github.com/r12habh/ActionScope
-    rev: FULL_COMMIT_SHA_CONTAINING_THE_HOOKS
+    rev: d597ea0747295a6a8d0fed67323cbc32b0b09388
     hooks:
       - id: actionscope-pins
 ```

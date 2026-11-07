@@ -144,6 +144,18 @@ def test_cli_shares_cache_across_workflow_files(tmp_path) -> None:
     assert request.call_count == 1
 
 
+def test_shared_cache_retains_failed_lookups_without_retrying() -> None:
+    workflow = {"jobs": {"test": {"steps": [{"uses": "actions/checkout@v4"}]}}}
+    cache = {}
+    error = urllib.error.HTTPError("url", 403, "forbidden", {}, None)
+    with patch("urllib.request.urlopen", side_effect=error) as request:
+        first = resolve_pins_for_workflow(workflow, "a.yml", cache=cache)
+        second = resolve_pins_for_workflow(workflow, "b.yaml", cache=cache)
+    assert first[0].error == second[0].error == "rate limited"
+    assert first[0].pinned_ref is None
+    assert request.call_count == 1
+
+
 def test_resolve_tag_to_sha_returns_error_for_404() -> None:
     error = urllib.error.HTTPError("url", 404, "not found", {}, None)
 
