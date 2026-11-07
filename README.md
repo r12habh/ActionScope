@@ -258,7 +258,7 @@ agents configured with write permissions in untrusted PR contexts.
 
 Detects unpinned actions and resolves tags to current SHAs via the GitHub API.
 Distinguishes full SHAs (safe) from short SHAs (still mutable) and tags.
-Repositories using GitHub's workflow dependency-locking preview are analyzed
+Repositories using GitHub's workflow dependency locking are analyzed
 through `.github/workflows/actions.lock`: valid exact lock entries cover mutable
 workflow refs, and locked transitive commits are checked against the
 known-compromised actions database. See

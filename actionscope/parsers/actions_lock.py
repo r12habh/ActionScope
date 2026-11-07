@@ -1,6 +1,6 @@
 """Parser and coverage analysis for GitHub Actions dependency lockfiles.
 
-GitHub's public-preview lockfile lives at ``.github/workflows/actions.lock``.
+GitHub's dependency lockfile lives at ``.github/workflows/actions.lock``.
 The authoritative format is maintained by ``github/actions-lockfile``.
 """
 
