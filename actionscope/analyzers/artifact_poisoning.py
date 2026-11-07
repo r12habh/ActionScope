@@ -13,6 +13,11 @@ from typing import Any, Iterator
 import yaml
 
 from actionscope.models import ArtifactPoisoningFinding, RiskLevel
+from actionscope.parsers.steps import (
+    concurrent_step_groups,
+    job_steps,
+    runs_in_background,
+)
 
 EXECUTION_PATTERNS = [
     r"chmod\s+\+x",
@@ -57,32 +62,78 @@ def downloads_artifact_in_workflow(workflow_data: dict) -> bool:
 
 
 def executes_after_download(workflow_data: dict) -> bool:
-    """Return True if a job appears to execute content after artifact download."""
+    """Return True if a job may execute content after artifact download.
+
+    Steps in a ``parallel`` group run concurrently, and a background step
+    keeps running while later steps start, so either can execute downloaded
+    content even when it is listed before the download.
+    """
     jobs = workflow_data.get("jobs") or {}
     if not isinstance(jobs, dict):
         return False
 
     for job in jobs.values():
-        if not isinstance(job, dict):
-            continue
         seen_download = False
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            if _is_download_artifact_step(step):
-                seen_download = True
-                continue
-            run_block = step.get("run")
-            if (
-                seen_download
-                and isinstance(run_block, str)
-                and _EXECUTION_RE.search(run_block)
+        active_background_execution: set[str] = set()
+        anonymous_background_execution = 0
+        for group, implicit_wait in concurrent_step_groups(job):
+            downloads = any(_is_download_artifact_step(step) for step in group)
+            executing = [step for step in group if _executes_content(step)]
+            if executing and (seen_download or downloads):
+                return True
+            if downloads and (
+                active_background_execution or anonymous_background_execution
             ):
                 return True
+            seen_download = seen_download or downloads
+            started_background_ids: set[str] = set()
+            started_anonymous_backgrounds = 0
+            for step in executing:
+                if not runs_in_background(step):
+                    continue
+                step_id = step.get("id")
+                if isinstance(step_id, str) and step_id.strip():
+                    started_background_ids.add(step_id.strip())
+                else:
+                    # Named wait/cancel controls cannot identify this step.
+                    started_anonymous_backgrounds += 1
+            active_background_execution.update(started_background_ids)
+            anonymous_background_execution += started_anonymous_backgrounds
+
+            # Control steps run after the current group has started. Apply them
+            # after the overlap checks above, then carry only still-active
+            # background execution into the next sequential group.
+            for step in group:
+                if "wait-all" in step:
+                    active_background_execution.clear()
+                    anonymous_background_execution = 0
+                    continue
+                for step_id in _background_control_ids(step):
+                    active_background_execution.discard(step_id)
+
+            if implicit_wait:
+                active_background_execution.difference_update(started_background_ids)
+                anonymous_background_execution = max(
+                    0,
+                    anonymous_background_execution - started_anonymous_backgrounds,
+                )
     return False
+
+
+def _background_control_ids(step: dict) -> set[str]:
+    """Return background step IDs completed by ``wait`` or ``cancel``."""
+    ids: set[str] = set()
+    for key in ("wait", "cancel"):
+        value = step.get(key)
+        if isinstance(value, str) and value.strip():
+            ids.add(value.strip())
+        elif isinstance(value, list):
+            ids.update(
+                item.strip()
+                for item in value
+                if isinstance(item, str) and item.strip()
+            )
+    return ids
 
 
 def workflow_accesses_secrets(workflow_data: dict) -> bool:
@@ -175,6 +226,11 @@ def _is_download_artifact_step(step: dict) -> bool:
     )
 
 
+def _executes_content(step: dict) -> bool:
+    run_block = step.get("run")
+    return isinstance(run_block, str) and bool(_EXECUTION_RE.search(run_block))
+
+
 def _iter_steps(workflow_data: dict) -> Iterator[tuple[str, dict]]:
     jobs = workflow_data.get("jobs") or {}
     if not isinstance(jobs, dict):
@@ -182,12 +238,8 @@ def _iter_steps(workflow_data: dict) -> Iterator[tuple[str, dict]]:
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if isinstance(step, dict):
-                yield str(job_name), step
+        for step in job_steps(job):
+            yield str(job_name), step
 
 
 def _jobs_with_downloads(workflow_data: dict) -> list[str]:

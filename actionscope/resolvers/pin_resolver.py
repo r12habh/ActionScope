@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+from actionscope.parsers.steps import job_steps
 from actionscope.parsers.workflow import SHA_PATTERN, classify_action_ref
 
 
@@ -159,22 +160,17 @@ def _unique_unpinned_refs(workflow_data: dict) -> set[str]:
         if isinstance(job_uses, str):
             job_uses = job_uses.strip()
             if (
-                not job_uses.startswith(("./", "../", "docker://"))
+                not job_uses.startswith(("./", "../", "$/", "docker://"))
                 and "@" in job_uses
                 and classify_action_ref(job_uses) != "sha"
             ):
                 refs.add(job_uses)
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
-            continue
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
+        for step in job_steps(job):
             uses = step.get("uses")
             if not isinstance(uses, str):
                 continue
             uses = uses.strip()
-            if uses.startswith(("./", "../", "docker://")):
+            if uses.startswith(("./", "../", "$/", "docker://")):
                 continue
             if "@" not in uses or classify_action_ref(uses) == "sha":
                 continue
