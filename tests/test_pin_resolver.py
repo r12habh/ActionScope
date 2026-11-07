@@ -156,6 +156,24 @@ def test_shared_cache_retains_failed_lookups_without_retrying() -> None:
     assert request.call_count == 1
 
 
+def test_shared_cache_delays_new_requests_across_workflows() -> None:
+    cache = {}
+    with (
+        patch(
+            "urllib.request.urlopen",
+            return_value=FakeResponse(
+                {"object": {"type": "commit", "sha": FULL_SHA}}
+            ),
+        ) as request,
+        patch("time.sleep") as sleep,
+    ):
+        for ref in ("actions/checkout@v4", "actions/checkout@v4", "actions/cache@v4"):
+            workflow = {"jobs": {"test": {"steps": [{"uses": ref}]}}}
+            resolve_pins_for_workflow(workflow, "ci.yml", cache=cache)
+    assert request.call_count == 2
+    sleep.assert_called_once_with(0.5)
+
+
 def test_resolve_tag_to_sha_returns_error_for_404() -> None:
     error = urllib.error.HTTPError("url", 404, "not found", {}, None)
 

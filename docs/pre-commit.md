@@ -63,7 +63,10 @@ pre-commit validate-manifest .pre-commit-hooks.yaml
 pre-commit try-repo . actionscope-pins --all-files
 ```
 
-The source checkout intentionally includes unsafe test fixtures. To exercise the
+The broad hook can fail on ActionScope's own checkout because its test fixtures
+intentionally contain critical-risk examples; this is an expected finding,
+not an installation failure. Verify passing behavior in a clean safe repository.
+To exercise the
 fixture gate directly, `actionscope-check-pins tests/fixtures/coverage_repo`
 should exit 1, not 0. Run installation checks in a clean checkout after committing
 the hooks, because pre-commit installs from Git rather than the working tree.

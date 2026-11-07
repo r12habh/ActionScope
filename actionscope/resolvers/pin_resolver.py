@@ -108,7 +108,7 @@ def resolve_pins_for_workflow(
     resolved: list[ResolvedPin] = []
     if cache is None:
         cache = {}
-    requested = False
+    requested = bool(cache)
     for uses_ref in refs:
         action_name, tag = uses_ref.rsplit("@", 1)
         action_name = _repo_name(action_name)
