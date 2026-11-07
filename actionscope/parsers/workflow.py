@@ -390,7 +390,7 @@ def scan_workflows(
         credential_sources.extend(delegated_sources)
         errors.extend(delegated_errors)
         token_permissions.extend(
-            analyze_workflow_permissions(workflow_data, workflow_file)
+            analyze_workflow_permissions(workflow_data, workflow_file, repo_path)
         )
         unpinned_actions.extend(
             UnpinnedActionFinding(**finding)

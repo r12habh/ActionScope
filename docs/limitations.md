@@ -95,6 +95,35 @@ them to a workflow credential source. An explicit `.actionscope.yml`
 
 ## Known blind spots
 
+### Expected OIDC consumers and local composites
+
+An `id-token: write` grant is INFO when ActionScope recognizes an expected
+OIDC consumer in that job, including AWS role assumption through a local
+composite. This is permission-use calibration, not proof that the job or
+its cloud trust configuration is safe. Secret-backed role references still
+have unknown IAM coverage until resolved through separate evidence.
+
+Local composite inspection reads metadata only; it never runs action code.
+It follows at most eight composite levels and reads at most 64 action files
+per job inspection, each capped at 256 KiB. Resolved paths,
+including symlinks, must stay within the scanned repository. Missing,
+cyclic, malformed, oversized, and out-of-repository actions do not establish
+an expected consumer. Whole-value composite input references in `with` and
+`env` are substituted from defaults and caller inputs; arbitrary expressions,
+external action implementations, and shell data flow are not evaluated.
+
+For workflow-level grants, every inheriting job must have a recognized
+consumer before the shared permission record is calibrated to INFO. A
+consumer in one job cannot downgrade an unrelated job's explicit grant.
+
+Simple keyless `cosign sign` and `cosign sign-blob` commands count as expected
+consumers. Explicit signing keys, explicit identity tokens or alternative
+OIDC providers, and a `SIGSTORE_ID_TOKEN` environment value do not establish
+GitHub OIDC use through this heuristic. Docker username/password login alone
+does not count. Complex shell commands can remain HIGH and need manual review.
+See [GitHub's OIDC reference](https://docs.github.com/en/actions/reference/security/oidc)
+and [Sigstore's signing overview](https://docs.sigstore.dev/cosign/signing/overview/).
+
 ### External reusable workflows
 
 When a workflow uses `uses: org/repo/.github/workflows/reusable.yml@ref`,
