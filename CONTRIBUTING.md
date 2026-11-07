@@ -127,6 +127,9 @@ maximum compatibility.
 
 ## Self-Scan
 
+See [local pre-commit checks](docs/pre-commit.md) for the offline security and
+pinning hooks, their default gates, and contributor verification commands.
+
 ActionScope scans itself in CI. This repo intentionally uses minimal
 permissions (contents: read only) to demonstrate good practice.
 

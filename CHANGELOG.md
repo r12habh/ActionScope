@@ -5,6 +5,8 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- Offline pre-commit hooks for a critical-risk scan and a focused workflow
+  pinning gate, also available as `actionscope-check-pins`.
 - `actionscope corpus scan` runs the static pipeline over a manifest of
   repositories pinned to commit SHAs and writes per-repository and
   per-credential-binding tables (CSV and JSON) with a run summary for empirical
@@ -25,6 +27,9 @@ All notable changes to ActionScope are documented here.
   environment variables, reusable-workflow inputs, and other expressions.
 
 ### Fixed
+- Pin suggestions require a commit target, safely peel nested annotated tags,
+  and reject malformed or cyclic tag chains. Shared per-scan caching avoids
+  repeated GitHub lookups for references used across workflows and subpaths.
 - Workflow counts now include analyzed workflow files that produce no findings,
   so a clean repository is no longer reported as having zero workflows.
 - AWS access keys inherited through workflow- or job-level `env` blocks, and

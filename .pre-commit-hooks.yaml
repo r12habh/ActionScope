@@ -1,0 +1,14 @@
+- id: actionscope
+  name: ActionScope security scan
+  entry: actionscope scan . --offline --fail-on critical
+  language: python
+  files: \.(ya?ml|tf|json)$
+  pass_filenames: false
+  require_serial: true
+- id: actionscope-pins
+  name: ActionScope workflow action pins
+  entry: actionscope-check-pins
+  language: python
+  files: ^\.github/workflows/.*\.ya?ml$
+  pass_filenames: false
+  require_serial: true
