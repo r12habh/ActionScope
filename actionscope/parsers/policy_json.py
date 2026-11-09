@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from copy import deepcopy
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,24 @@ def extract_actions_from_policy(
     )
     finding.privesc_paths = detect_privesc_paths(finding, source_file)
     finding.has_privilege_escalation = bool(finding.privesc_paths)
+    constraints = []
+    for statement in statements:
+        if not isinstance(statement, dict):
+            continue
+        if str(statement.get("Effect", "")).lower() == "deny":
+            constraints.append("Explicit Deny requires authorization evaluation")
+        if "Condition" in statement:
+            constraints.append("Condition requires request context")
+        for key in ("NotAction", "NotResource"):
+            if key in statement:
+                constraints.append(f"{key} is conservatively approximated")
+    finding.metadata["policy_statements"] = deepcopy(statements)
+    finding.metadata["authorization_evaluated"] = False
+    if constraints:
+        finding.metadata["uninspectable_policy_elements"] = list(
+            dict.fromkeys(constraints)
+        )
+        finding.metadata["policy_coverage_complete"] = False
     return finding
 
 

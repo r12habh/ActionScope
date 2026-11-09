@@ -168,6 +168,26 @@ def config_init(output_path: str, force: bool) -> None:
         "Default 800. Set to 0 to scan unlimited."
     ),
 )
+@click.option(
+    "--iam-path",
+    "iam_paths",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Additional local IAM/IaC evidence directory (repeatable)",
+)
+@click.option(
+    "--iam-snapshot",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Offline AWS GetAccountAuthorizationDetails JSON export",
+)
+@click.option(
+    "--role-map",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Explicit owner-supplied workflow/job/step role mapping JSON",
+)
+@click.option(
+    "--github-repo", help="owner/repo for potential snapshot OIDC trust matches"
+)
 def scan(
     path: str,
     output_format: str,
@@ -187,11 +207,17 @@ def scan(
     offline: bool,
     config_path: str | None,
     max_policy_files: int | None,
+    iam_paths: tuple[str, ...],
+    iam_snapshot: str | None,
+    role_map: str | None,
+    github_repo: str | None,
 ) -> None:
     """Scan a repository for AWS blast radius in GitHub Actions workflows."""
 
     if offline and aws_verify:
         raise click.UsageError("--offline cannot be combined with --aws-verify")
+    if iam_snapshot and aws_verify:
+        raise click.UsageError("--iam-snapshot cannot be combined with --aws-verify")
     if offline and resolve_pins:
         raise click.UsageError("--offline cannot be combined with --resolve-pins")
     if new_only and fail_on is None:
@@ -220,12 +246,21 @@ def scan(
 
     # Click sets max_policy_files=None when the user does not pass the flag;
     # the policy parser then applies its built-in default cap.
-    evidence = collect_static_evidence(
-        repo_path,
-        github_token=github_token,
-        offline=offline,
-        max_policy_files=max_policy_files,
-    )
+    from actionscope.evidence import EvidenceError
+
+    try:
+        evidence = collect_static_evidence(
+            repo_path,
+            github_token=github_token,
+            offline=offline,
+            max_policy_files=max_policy_files,
+            iam_paths=iam_paths,
+            iam_snapshot=iam_snapshot,
+            role_map=role_map,
+            github_repo=github_repo,
+        )
+    except (EvidenceError, OSError) as exc:
+        raise click.UsageError(str(exc)) from exc
 
     if aws_verify:
         try:

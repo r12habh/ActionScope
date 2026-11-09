@@ -75,6 +75,7 @@ def _extract_iam_policies_from_parsed_files(
     data_documents: dict[tuple[str, str], PolicyFinding] = {}
     managed_policies: dict[tuple[str, str], PolicyFinding] = {}
     role_names: dict[tuple[str, str], str] = {}
+    role_boundaries: dict[tuple[str, str], object] = {}
     attachments: list[tuple[str, str, str | None, str | None]] = []
 
     for source_file, tf_data in parsed_files:
@@ -100,6 +101,9 @@ def _extract_iam_policies_from_parsed_files(
                 role_name = _role_name_from_role_resource(resource_name, body)
                 if role_name:
                     role_names[_scoped_address(source_file, address)] = role_name
+                    if body.get("permissions_boundary") is not None:
+                        boundary_key = _scoped_address(source_file, role_name)
+                        role_boundaries[boundary_key] = body["permissions_boundary"]
                 role_reference = f"${{{address}.name}}"
                 for index, policy_reference in enumerate(
                     _string_list(body.get("managed_policy_arns"))
@@ -276,6 +280,17 @@ def _extract_iam_policies_from_parsed_files(
         if scoped_address not in attached_policy_addresses
     )
 
+    for finding in findings:
+        boundary = role_boundaries.get(_scoped_address(
+            finding.source_file, finding.role_name or "",
+        ))
+        if boundary is not None:
+            finding.metadata["permissions_boundaries"] = [{"reference": boundary}]
+            finding.metadata["policy_coverage_complete"] = False
+            existing = list(finding.metadata.get("uninspectable_policy_elements", []))
+            finding.metadata["uninspectable_policy_elements"] = list(dict.fromkeys(
+                existing + ["Terraform permissions boundary retained but not evaluated"]
+            ))
     return findings
 
 

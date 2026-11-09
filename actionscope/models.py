@@ -94,6 +94,7 @@ VALID_POLICY_SOURCE_TYPES = frozenset(
         "cloudformation",
         "json_policy",
         "aws_verified",
+        "aws_snapshot",
     }
 )
 
@@ -123,6 +124,9 @@ class AwsCredentialSource:
     aws_region: Optional[str]
     role_reference_kind: str = "absent"
     uses_session_token: bool = False
+    original_role_reference: Optional[str] = None
+    role_resolution: str = "workflow"
+    role_resolution_evidence: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -401,6 +405,18 @@ class ScanResult:
     delta: "ScanDelta | None" = None
     overall_risk: RiskLevel = RiskLevel.INFO
     errors: list[str] = field(default_factory=list)
+
+    @property
+    def configured_credential_sources(self) -> list[AwsCredentialSource]:
+        """Configured/owner-supplied identities, excluding potential reachability."""
+        return [
+            source for source in self.credential_sources
+            if source.role_resolution != "trust_candidate"
+        ]
+
+    @property
+    def trust_candidate_count(self) -> int:
+        return len(self.credential_sources) - len(self.configured_credential_sources)
 
     def __post_init__(self) -> None:
         """Compute the scan risk from bindings and GITHUB_TOKEN permissions."""

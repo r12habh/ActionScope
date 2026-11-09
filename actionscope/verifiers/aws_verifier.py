@@ -143,6 +143,8 @@ def fetch_role_policies(role_name: str, iam_client) -> dict:
             "managed_policies": managed_policies,
             "inline_policies": inline_policies,
             "all_statements": all_statements,
+            "permissions_boundary": role.get("PermissionsBoundary"),
+            "assume_role_policy": role.get("AssumeRolePolicyDocument"),
         }
     except botocore.exceptions.ClientError as exc:
         return _client_error_dict(exc, role_name)
@@ -181,6 +183,12 @@ def verify_credential_source(
             detail=str(fetched.get("detail", "")),
         )
 
+    if fetched.get("role_arn") != role_arn:
+        return _error_policy_finding(
+            source_file=f"aws://iam/role/{role_name}", role_arn=role_arn,
+            error="role_identity_mismatch",
+            detail="Returned role ARN differs from the requested account/role identity",
+        )
     policy_document = {
         "Version": "2012-10-17",
         "Statement": fetched.get("all_statements", []),
@@ -192,6 +200,17 @@ def verify_credential_source(
     finding.source_type = "aws_verified"
     finding.role_arn = role_arn
     finding.metadata["aws_verification_status"] = "success"
+    boundary = fetched.get("permissions_boundary")
+    finding.metadata["permissions_boundaries"] = [boundary] if boundary else []
+    finding.metadata["assume_role_policy"] = fetched.get("assume_role_policy")
+    unknown = list(finding.metadata.get("uninspectable_policy_elements", []))
+    unknown.append(
+        "Session, resource, organization policies and role chaining not evaluated"
+    )
+    if boundary:
+        unknown.append("Live permissions boundary retained but not evaluated")
+    finding.metadata["uninspectable_policy_elements"] = list(dict.fromkeys(unknown))
+    finding.metadata["policy_coverage_complete"] = False
     return finding
 
 

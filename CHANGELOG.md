@@ -5,6 +5,13 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- Explicit offline IAM evidence inputs: `--iam-snapshot` imports account
+  authorization exports, `--iam-path` joins separate IaC directories, and
+  `--role-map` records owner-supplied identities without reading GitHub secrets.
+- `--github-repo` optionally derives potential OIDC trust candidates from exact
+  snapshot audience/subject conditions, separately from configured credentials.
+- Reports retain evidence hashes, policy statements, boundaries, identity
+  provenance, and unsupported authorization constraints, including saved reports.
 - `actionscope corpus scan` runs the static pipeline over a manifest of
   repositories pinned to commit SHAs and writes per-repository and
   per-credential-binding tables (CSV and JSON) with a run summary for empirical
@@ -25,6 +32,10 @@ All notable changes to ActionScope are documented here.
   environment variables, reusable-workflow inputs, and other expressions.
 
 ### Fixed
+- Literal workflow/job/step environment references can resolve role ARNs without
+  evaluating secrets, arbitrary expressions, or shell code.
+- Explicit Deny, Condition, NotAction, and NotResource evidence is retained and
+  marked partial instead of being presented as evaluated effective permissions.
 - Workflow counts now include analyzed workflow files that produce no findings,
   so a clean repository is no longer reported as having zero workflows.
 - AWS access keys inherited through workflow- or job-level `env` blocks, and

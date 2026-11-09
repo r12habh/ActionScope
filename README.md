@@ -59,6 +59,12 @@ unknown permissions as safe.
 
 ## Common flags
 
+The development version can also join separate IAM directories or an
+owner-supplied offline IAM snapshot and identity map. See
+[Offline IAM Evidence](docs/offline-iam-evidence.md) for source-version setup,
+privacy precautions, and the distinction between configured roles and potential
+OIDC trust candidates. These inputs are not part of the existing PyPI 0.5.0 release.
+
 ```bash
 actionscope scan . --aws-verify        # fetch live IAM policies (read-only)
 actionscope scan . --resolve-pins      # suggest full-SHA pins for unpinned actions

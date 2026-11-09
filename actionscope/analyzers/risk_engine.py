@@ -83,6 +83,9 @@ def _match_role_to_policy_with_confidence(
     exact_arn_matches = [
         finding for finding in matchable_findings if finding.role_arn == role_arn
     ]
+    snapshot_matches = [f for f in exact_arn_matches if f.source_type == "aws_snapshot"]
+    if snapshot_matches:
+        exact_arn_matches = snapshot_matches
     if exact_arn_matches:
         return _policy_match(
             exact_arn_matches,
@@ -99,7 +102,8 @@ def _match_role_to_policy_with_confidence(
     repository_findings = [
         finding
         for finding in matchable_findings
-        if finding.source_type != "aws_verified"
+        if finding.source_type not in {"aws_verified", "aws_snapshot"}
+        and finding.role_arn is None
     ]
     relationship_matches = [
         finding
@@ -277,6 +281,7 @@ def build_scan_result(
     reusable_scan: ReusableWorkflowScan | None = None,
     offline: bool = False,
     config: ActionScopeConfig | None = None,
+    additional_oidc_trust_findings: list[OidcTrustFinding] | None = None,
 ) -> ScanResult:
     """Build the final correlated scan result."""
     if errors is None:
@@ -311,13 +316,19 @@ def build_scan_result(
             recompute_policy_risk(finding)
 
     oidc_trust_findings, oidc_errors = _safe_scan_oidc(repo_path)
+    oidc_trust_findings.extend(additional_oidc_trust_findings or [])
+    configured_sources = [
+        source
+        for source in credential_sources
+        if source.role_resolution != "trust_candidate"
+    ]
     script_injection_findings, script_errors = _safe_scan_script_injection(repo_path)
     artifact_poisoning_findings, artifact_errors = _safe_scan_artifact_poisoning(
         repo_path
     )
     ai_agent_injection_findings, ai_errors = _safe_scan_ai_agent_injection(
         repo_path,
-        credential_sources,
+        configured_sources,
         github_token_perms,
     )
     if offline:
@@ -330,7 +341,7 @@ def build_scan_result(
         )
     environment_findings, environment_errors = _safe_scan_environments(
         repo_path,
-        credential_sources,
+        configured_sources,
         oidc_trust_findings,
         deploy_job_patterns=(config.deploy_job_patterns if config else ()),
         non_deploy_job_patterns=(
@@ -370,7 +381,11 @@ def build_scan_result(
             add_custom_privesc_paths(binding.policy_finding, config)
             recompute_policy_risk(binding.policy_finding)
     exposure_paths = build_exposure_paths(
-        bindings,
+        [
+            b
+            for b in bindings
+            if b.credential_source.role_resolution != "trust_candidate"
+        ],
         normalized_unpinned,
         compromised_action_findings,
     )
@@ -601,6 +616,20 @@ def _policy_match(
     confidence: str,
     reason: str,
 ) -> _PolicyMatch:
+    if credential_source.role_resolution == "trust_candidate":
+        confidence = "medium"
+        reason = "potential OIDC trust match; configured role remains unverified"
+    elif credential_source.role_resolution == "owner_mapping":
+        confidence = "medium"
+        reason = "exact policy match conditional on owner-supplied identity mapping"
+    if any(
+        finding.role_arn is None and any(
+            item.get("kind") == "iam_root"
+            for item in finding.metadata.get("evidence_sources", [])
+        ) for finding in findings
+    ):
+        confidence = "medium" if confidence == "high" else confidence
+        reason += "; IAM-root account identity is unverified"
     matched = tuple(findings)
     finding = (
         findings[0]
@@ -671,6 +700,22 @@ def _aggregate_policy_findings(
             "policy_coverage_complete": policy_coverage_complete,
             "unresolved_policy_attachments": unresolved_policy_attachments,
             "uninspectable_policy_elements": uninspectable_policy_elements,
+            "authorization_evaluated": False,
+            "policy_statements": [
+                statement
+                for finding in findings
+                for statement in finding.metadata.get("policy_statements", [])
+            ],
+            "evidence_sources": [
+                item
+                for finding in findings
+                for item in finding.metadata.get("evidence_sources", [])
+            ],
+            "permissions_boundaries": [
+                item
+                for finding in findings
+                for item in finding.metadata.get("permissions_boundaries", [])
+            ],
         },
     )
 

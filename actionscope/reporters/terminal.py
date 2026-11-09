@@ -170,7 +170,8 @@ def _render_scan_result_impl(
         (f"Path: {result.scan_path}\n", ""),
         (
             f"Workflows: {result.workflow_count} | "
-            f"Credential Sources: {len(result.credential_sources)}\n",
+            f"Credential Sources: {len(result.configured_credential_sources)} | "
+            f"Potential OIDC Roles: {result.trust_candidate_count}\n",
             "",
         ),
         (
@@ -283,6 +284,22 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
         f"[dim]→[/] [bold]Step:[/] {src.step_name}"
     )
     c.print(f"[bold]AWS Role:[/] {role_arn}")
+    c.print(Text(f"Role Resolution: {src.role_resolution}"))
+    if src.role_resolution == "trust_candidate":
+        c.print(Text("Potential trust reachability, not a verified configured role."))
+    if binding.policy_finding is not None:
+        c.print(
+            Text(
+                "IAM policy-grant inventory; effective authorization is not evaluated."
+            )
+        )
+        for evidence in binding.policy_finding.metadata.get("evidence_sources", []):
+            c.print(
+                Text(
+                    f"Evidence: {evidence.get('kind')} {evidence.get('file')} "
+                    f"sha256:{evidence.get('sha256')}"
+                )
+            )
     if binding.policy_source == "aws_verified":
         c.print("[green]✅ Verified via AWS API (live)[/]")
     if binding.policy_finding is not None:
@@ -331,8 +348,8 @@ def _render_binding(c: Console, binding: WorkflowCredentialBinding) -> None:
             for element in elements:
                 c.print(f"[dim]    • {escape(str(element))}[/]")
         c.print(
-            "[dim]💡  Run with --aws-verify to inspect the role's complete "
-            "effective permissions.[/]"
+            "[dim]Fetch missing IAM evidence with --aws-verify where authorized; "
+            "this does not evaluate all authorization constraints.[/]"
         )
 
     if binding.policy_source == "not_found" and src.role_arn:
@@ -878,7 +895,7 @@ def _render_summary_panel(
         (f"Workflows scanned: {result.workflow_count}\n", ""),
         (f"Reusable workflow calls: {len(result.reusable_workflows)}\n", ""),
         (f"Correlated exposure paths: {len(result.exposure_paths)}\n", ""),
-        (f"AWS credential sources: {len(result.credential_sources)}\n", ""),
+        (f"AWS credential sources: {len(result.configured_credential_sources)}\n", ""),
         (f"Policies analyzed: {policies_analyzed}\n", ""),
         (f"Policies not found: {policies_not_found}\n", ""),
         (
@@ -1027,6 +1044,7 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
             (f"{observed_label}: {risk_label}\n", ""),
             (f"Coverage: {coverage_status} ({gap_count} unresolved item(s))\n", ""),
             (f"Gate: {gate_status}", ""),
+            (f"\nPotential OIDC Roles: {summary.get('trust_candidates', 0)}", ""),
         )
         c.print(Panel(body, box=box.ROUNDED, padding=(0, 2)))
 
@@ -1163,6 +1181,20 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
                     f"{finding.get('role_reference_kind')}"
                 )
             c.print(f"[bold]Policy Source:[/] {finding.get('policy_source')}")
+            c.print(
+                Text(f"Role Resolution: {finding.get('role_resolution', 'workflow')}")
+            )
+            if finding.get("role_resolution") == "trust_candidate":
+                c.print(
+                    Text(
+                        "Potential trust reachability, not a verified configured role."
+                    )
+                )
+            c.print(
+                Text(
+                    "Policy-grant inventory; effective authorization is not evaluated."
+                )
+            )
             if finding.get("match_confidence"):
                 c.print(
                     f"[bold]Match Confidence:[/] "

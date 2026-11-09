@@ -129,6 +129,7 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
 
     lines.append(f"| AWS Role | {role_cell} |")
     lines.append(f"| Role Reference | {src.role_reference_kind} |")
+    lines.append(f"| Role Resolution | {src.role_resolution} |")
     lines.append(f"| Auth Type | {_auth_display(src)} |")
     lines.append(f"| Policy Source | {binding.policy_source} |")
     lines.append(f"| Match Confidence | {binding.match_confidence} |")
@@ -158,11 +159,22 @@ def _binding_section(binding: WorkflowCredentialBinding) -> str:
         lines.append(
             "| Coverage | **PARTIAL** — some IAM policy evidence is unavailable "
             f"or dynamic: {evidence or 'unknown policy element'}. Run with "
-            "`--aws-verify` for complete effective permissions. |"
+            "`--aws-verify` for additional IAM evidence, "
+            "not complete effective permissions. |"
         )
 
     if binding.policy_finding is not None:
         pf = binding.policy_finding
+        lines.append("| Authorization | Not evaluated; policy-grant inventory only |")
+        if src.role_resolution == "trust_candidate":
+            lines.append(
+                "| Identity | Potential trust reachability, not verified role use |"
+            )
+        for evidence in pf.metadata.get("evidence_sources", []):
+            lines.append(
+                f"| Evidence | {_md_cell(evidence.get('kind'))}: "
+                f"{_md_cell(evidence.get('file'))} (sha256: {evidence.get('sha256')}) |"
+            )
         lines.append(
             f"| Risk | {RISK_DISPLAY[pf.overall_risk]} |",
         )
@@ -692,7 +704,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
 
         coverage_gaps = build_coverage_gaps(result)
     coverage_status = "partial" if coverage_gaps else result.coverage_status
-    cred_count = len(result.credential_sources)
+    cred_count = len(result.configured_credential_sources)
     overall = RISK_DISPLAY.get(result.overall_risk, result.overall_risk.name)
     gate_status = _gate_status(result.gate)
     risk_label = "Effective Risk" if result.config_applied else "Observed Risk"
@@ -704,6 +716,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
         f"**Gate:** {gate_status}\n\n"
         f"**Workflows:** {result.workflow_count} | "
         f"**Credential Sources:** {cred_count} | "
+        f"**Potential OIDC Roles:** {result.trust_candidate_count} | "
         f"**Unresolved Coverage Items:** {len(coverage_gaps)}\n\n"
         "---\n\n"
     )
@@ -792,6 +805,7 @@ def to_markdown_from_dict(data: dict) -> str:
         "",
         f"**Workflows:** {data.get('workflow_count', 0)} | "
         f"**Credential Sources:** {credential_count} | "
+        f"**Potential OIDC Roles:** {summary_data.get('trust_candidates', 0)} | "
         f"**Unresolved Coverage Items:** {gap_count}",
         "",
         "---",
@@ -976,6 +990,9 @@ def to_markdown_from_dict(data: dict) -> str:
                     "|-------|-------|",
                     f"| AWS Role | `{role}` |",
                     f"| Role Reference | {role_reference} |",
+                    "| Role Resolution | "
+                    f"{_md_cell(finding.get('role_resolution', 'workflow'))} |",
+                    "| Authorization | Not evaluated; policy-grant inventory only |",
                     f"| Auth Type | {auth_type} |",
                     f"| Policy Source | {policy_source} |",
                     f"| Match Confidence | {match_confidence} |",
@@ -1012,7 +1029,8 @@ def to_markdown_from_dict(data: dict) -> str:
                         "> **Coverage partial:** some IAM policy evidence is "
                         "unavailable or dynamic: "
                         f"{evidence or 'unknown policy element'}. Run with "
-                        "`--aws-verify` for complete effective permissions.",
+                        "`--aws-verify` for additional IAM evidence, "
+                        "not complete effective permissions.",
                         "",
                     ]
                 )
