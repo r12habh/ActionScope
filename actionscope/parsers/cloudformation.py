@@ -432,6 +432,14 @@ def extract_iam_policies_from_cloudformation(
             "policy_coverage_complete": not unresolved_attachments,
             "unresolved_policy_attachments": unresolved_attachments,
         }
+        if properties.get("PermissionsBoundary") is not None:
+            metadata["permissions_boundaries"] = [{
+                "reference": properties["PermissionsBoundary"],
+            }]
+            metadata["policy_coverage_complete"] = False
+            metadata["uninspectable_policy_elements"] = [
+                "CloudFormation permissions boundary retained but not evaluated"
+            ]
         role_name_value = properties.get("RoleName")
         if role_name_value is not None and role_names[logical_id] is None:
             metadata.update(
@@ -612,7 +620,14 @@ def _finding_from_documents(
     finding.role_name = role_name
     finding.role_arn = role_arn
     finding.policy_name = policy_name
-    finding.metadata = finding_metadata
+    constraints = finding.metadata.get("uninspectable_policy_elements", [])
+    existing = finding_metadata.get("uninspectable_policy_elements", [])
+    if constraints:
+        finding_metadata["uninspectable_policy_elements"] = list(
+            dict.fromkeys(list(existing) + list(constraints))
+        )
+        finding_metadata["policy_coverage_complete"] = False
+    finding.metadata.update(finding_metadata)
     return finding
 
 

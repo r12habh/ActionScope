@@ -429,6 +429,17 @@ def _credential_source_from_step(
         **extract_env_var_references(step),
     }
     role_arn = _optional_string(with_block.get("role-to-assume"))
+    original_role = role_arn
+    if isinstance(role_arn, str):
+        match = re.fullmatch(r"\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*}}", role_arn)
+    else:
+        match = None
+    if match:
+        value = env_vars.get(match[1])
+        if isinstance(value, str) and len(value) <= 8192:
+            value = value.strip()
+            if "${{" not in value and IAM_ROLE_ARN_PATTERN.fullmatch(value):
+                role_arn = value
     step_name = str(step.get("name") or uses)
     if step_name_prefix:
         step_name = f"{step_name_prefix} -> {step_name}"
@@ -446,6 +457,8 @@ def _credential_source_from_step(
         uses_oidc=bool(role_arn and has_oidc_permission),
         aws_region=_optional_string(with_block.get("aws-region")),
         role_reference_kind=classify_role_reference(role_arn),
+        original_role_reference=original_role if role_arn != original_role else None,
+        role_resolution="literal_env" if role_arn != original_role else "workflow",
         uses_session_token=_has_usable_session_credentials(
             with_block,
             env_vars,

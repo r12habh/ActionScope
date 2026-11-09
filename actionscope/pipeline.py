@@ -21,6 +21,7 @@ from actionscope.config import ActionScopeConfig
 from actionscope.models import (
     AwsCredentialSource,
     GitHubTokenPermission,
+    OidcTrustFinding,
     PolicyFinding,
     ScanResult,
     UnpinnedActionFinding,
@@ -42,9 +43,8 @@ class StaticEvidence:
     unpinned_actions: list[UnpinnedActionFinding] = field(default_factory=list)
     policy_findings: list[PolicyFinding] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    reusable_scan: ReusableWorkflowScan = field(
-        default_factory=ReusableWorkflowScan
-    )
+    oidc_trust_findings: list[OidcTrustFinding] = field(default_factory=list)
+    reusable_scan: ReusableWorkflowScan = field(default_factory=ReusableWorkflowScan)
 
 
 def collect_static_evidence(
@@ -53,6 +53,10 @@ def collect_static_evidence(
     github_token: str | None = None,
     offline: bool = False,
     max_policy_files: int | None = None,
+    iam_paths: tuple[str, ...] = (),
+    iam_snapshot: str | None = None,
+    role_map: str | None = None,
+    github_repo: str | None = None,
 ) -> StaticEvidence:
     """Run every static parser over ``repo_path``.
 
@@ -109,12 +113,63 @@ def collect_static_evidence(
     except Exception as exc:
         cloudformation_findings, cloudformation_errors = [], [str(exc)]
 
+    from actionscope.evidence import (
+        EvidenceError,
+        apply_role_map,
+        load_iam_roots,
+        load_iam_snapshot,
+        oidc_trust_candidates,
+    )
+
+    external, external_errors = load_iam_roots(iam_paths, repo_path, max_policy_files)
+    snapshots = load_iam_snapshot(iam_snapshot) if iam_snapshot else []
+    if role_map:
+        apply_role_map(credential_sources, role_map, repo_path)
+    if github_repo:
+        if not iam_snapshot:
+            raise EvidenceError("--github-repo requires --iam-snapshot")
+        credential_sources.extend(
+            oidc_trust_candidates(
+                repo_path,
+                github_repo,
+                snapshots,
+                credential_sources,
+            )
+        )
+    oidc_findings = []
+    if snapshots:
+        from actionscope.analyzers.oidc_trust import analyze_json_oidc_trust
+
+        referenced_arns = {source.role_arn for source in credential_sources}
+        for policy in snapshots:
+            if policy.role_arn not in referenced_arns:
+                continue
+            trust = policy.metadata.get("assume_role_policy")
+            if isinstance(trust, dict):
+                trust_findings = analyze_json_oidc_trust(
+                    trust,
+                    policy.source_file,
+                    policy.role_name or "unknown",
+                )
+                for finding in trust_findings:
+                    finding.role_arn = policy.role_arn
+                oidc_findings.extend(trust_findings)
+
     return StaticEvidence(
         credential_sources=credential_sources,
         github_token_permissions=github_token_perms,
         unpinned_actions=unpinned_actions,
-        policy_findings=json_findings + tf_findings + cloudformation_findings,
-        errors=workflow_errors + json_errors + tf_errors + cloudformation_errors,
+        policy_findings=json_findings
+        + tf_findings
+        + cloudformation_findings
+        + external
+        + snapshots,
+        errors=workflow_errors
+        + json_errors
+        + tf_errors
+        + cloudformation_errors
+        + external_errors,
+        oidc_trust_findings=oidc_findings,
         reusable_scan=reusable_scan,
     )
 
@@ -138,6 +193,7 @@ def correlate_evidence(
             reusable_scan=evidence.reusable_scan,
             offline=offline,
             config=config,
+            additional_oidc_trust_findings=evidence.oidc_trust_findings,
         )
     except Exception as exc:
         result = ScanResult(

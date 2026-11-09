@@ -12,6 +12,19 @@ def build_coverage_gaps(result: ScanResult) -> list[CoverageGap]:
     for binding in result.bindings:
         source = binding.credential_source
         policy = binding.policy_finding
+        if source.role_resolution == "trust_candidate":
+            gaps.append(
+                CoverageGap(
+                    gap_type="potential_oidc_identity",
+                    description=(
+                        "Exact snapshot subject/audience match is potential trust "
+                        "reachability, not proof of configured role use "
+                        "or an executable run."
+                    ),
+                    workflow_file=source.workflow_file,
+                    job_name=source.job_name,
+                )
+            )
         if (
             policy is not None
             and policy.metadata.get("policy_coverage_complete") is False

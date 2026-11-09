@@ -94,6 +94,7 @@ VALID_POLICY_SOURCE_TYPES = frozenset(
         "cloudformation",
         "json_policy",
         "aws_verified",
+        "aws_snapshot",
     }
 )
 
@@ -123,6 +124,9 @@ class AwsCredentialSource:
     aws_region: Optional[str]
     role_reference_kind: str = "absent"
     uses_session_token: bool = False
+    original_role_reference: Optional[str] = None
+    role_resolution: str = "workflow"
+    role_resolution_evidence: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

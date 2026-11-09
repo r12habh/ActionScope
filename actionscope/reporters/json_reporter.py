@@ -76,6 +76,27 @@ def _binding_to_finding_dict(binding: WorkflowCredentialBinding) -> dict[str, An
         "job_name": src.job_name,
         "role_arn": src.role_arn,
         "role_reference_kind": src.role_reference_kind,
+        "original_role_reference": src.original_role_reference,
+        "role_resolution": src.role_resolution,
+        "role_resolution_evidence": src.role_resolution_evidence,
+        "authorization_evaluated": False,
+        "policy_evidence": (
+            {
+                key: pf.metadata[key]
+                for key in (
+                    "evidence_sources",
+                    "policy_statements",
+                    "policy_documents",
+                    "permissions_boundaries",
+                    "assume_role_policy",
+                    "uninspectable_policy_elements",
+                    "unresolved_policy_attachments",
+                )
+                if key in pf.metadata
+            }
+            if pf is not None
+            else {}
+        ),
         "auth_type": _auth_type_for_binding(binding),
         "policy_source": binding.policy_source,
         "match_confidence": binding.match_confidence,
@@ -145,6 +166,10 @@ def _summary_dict(
     )
     return {
         "credential_sources": len(result.credential_sources),
+        "trust_candidates": sum(
+            source.role_resolution == "trust_candidate"
+            for source in result.credential_sources
+        ),
         "policies_found": policies_found,
         "policies_not_found": policies_not_found,
         "policies_partial": policies_partial,

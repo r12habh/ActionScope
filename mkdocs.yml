@@ -102,5 +102,6 @@ nav:
   - Research:
       - Corpus Scans: corpus.md
   - Operations:
+      - Offline IAM Evidence: offline-iam-evidence.md
       - AWS Verification Permissions: aws-verify-permissions.md
       - Release Runbook: release-runbook.md

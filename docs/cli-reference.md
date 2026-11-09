@@ -46,6 +46,10 @@ actionscope scan tests/fixtures/demo_repo --output-format json
 | `--offline` | none | `False` | Disable all scan-time network calls. Cannot be combined with `--aws-verify` or `--resolve-pins`. | `actionscope scan . --offline` |
 | `--config` | none | `PATH/.actionscope.yml` when present | Load a custom repository risk policy file. | `actionscope scan . --config security/actionscope.yml` |
 | `--max-policy-files` | none | `800` | Limit JSON policy candidates outside common policy directories. Set to `0` for unlimited. | `actionscope scan . --max-policy-files 2000` |
+| `--iam-path` | none | none | Additional local IAM/IaC directory; repeat for multiple directories. Symlinks are rejected. | `actionscope scan app --iam-path infra --offline` |
+| `--iam-snapshot` | none | none | Offline AWS GetAccountAuthorizationDetails JSON. Exact role ARNs take precedence over repository policies. Cannot combine with `--aws-verify`. | `actionscope scan app --iam-snapshot /private/iam.json --offline` |
+| `--role-map` | none | none | Explicit version-1 JSON mapping of workflow/job/optional step to role ARN. Does not read secret values. | `actionscope scan app --role-map /private/roles.json --offline` |
+| `--github-repo` | none | none | Explicit `owner/repo` identity for potential OIDC reachability derived from a snapshot. Requires `--iam-snapshot`. | `actionscope scan app --iam-snapshot /private/iam.json --github-repo org/app --offline` |
 
 ### Common Scan Examples
 

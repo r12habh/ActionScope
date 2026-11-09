@@ -95,6 +95,17 @@ them to a workflow credential source. An explicit `.actionscope.yml`
 
 ## Known blind spots
 
+### Offline evidence and authorization limits
+
+The development version accepts explicit local IAM roots, account-authorization
+exports, and owner-supplied role mappings. These can close an evidence-location
+or identity gap, but they do not turn policy-grant inventories into complete
+AWS authorization calculations. Denies, conditions, complement constructs, and
+boundary evidence remain visible with unsupported effects marked partial.
+Potential trust candidates remain separate from configured credential sources.
+See [Offline IAM Evidence](offline-iam-evidence.md) for the supported subset and
+the fully synthetic reference analysis. This is not live AWS or user validation.
+
 ### External reusable workflows
 
 When a workflow uses `uses: org/repo/.github/workflows/reusable.yml@ref`,

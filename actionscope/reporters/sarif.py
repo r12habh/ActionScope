@@ -52,6 +52,7 @@ def to_sarif(result: ScanResult) -> str:
     for binding in result.bindings:
         if binding.policy_finding is None:
             continue
+        result_start = len(results)
 
         workflow_file = binding.credential_source.workflow_file
         policy_finding = binding.policy_finding
@@ -107,6 +108,12 @@ def to_sarif(result: ScanResult) -> str:
                     additional_location_paths=related_locations,
                 )
             )
+
+        _annotate_iam_results(
+            results[result_start:],
+            binding.credential_source.role_resolution,
+            policy_finding.metadata,
+        )
 
     for permission in result.github_token_permissions:
         if permission.risk_level >= RiskLevel.HIGH:
@@ -347,6 +354,13 @@ def to_sarif(result: ScanResult) -> str:
                         "rules": rules,
                     }
                 },
+                "properties": {
+                    "authorizationEvaluated": False,
+                    "coverageStatus": result.coverage_status,
+                    "coverageGapTypes": sorted(
+                        {g.gap_type for g in result.coverage_gaps}
+                    ),
+                },
                 "results": results,
                 "invocations": [
                     {
@@ -373,6 +387,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
     _make_result = _make_result_for_root(str(data.get("scan_path", "")))
 
     for finding in data.get("findings", []):
+        result_start = len(results)
         workflow_file = str(finding.get("workflow_file", ""))
         location_path, origin, related_locations = _reusable_origin_from_dict(
             data,
@@ -428,6 +443,12 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                     additional_location_paths=related_locations,
                 )
             )
+
+        _annotate_iam_results(
+            results[result_start:],
+            str(finding.get("role_resolution", "workflow")),
+            finding.get("policy_evidence", {}),
+        )
 
     for permission in data.get("github_token_permissions", []):
         workflow_file = str(permission.get("workflow_file", ""))
@@ -689,6 +710,14 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                         "informationUri": "https://github.com/r12habh/ActionScope",
                         "rules": _build_rules(),
                     }
+                },
+                "properties": {
+                    "authorizationEvaluated": False,
+                    "coverageStatus": data.get("coverage_status", "unknown"),
+                    "coverageGapTypes": sorted({
+                        str(g.get("gap_type", "unknown"))
+                        for g in data.get("coverage_gaps", []) if isinstance(g, dict)
+                    }),
                 },
                 "results": results,
                 "invocations": [
@@ -1257,6 +1286,31 @@ def _build_rules() -> list[dict[str, Any]]:
     ]
 
 
+def _annotate_iam_results(results: list[dict], resolution: str, evidence: dict) -> None:
+    if not isinstance(evidence, dict):
+        evidence = {}
+    for result in results:
+        if result["ruleId"] not in {"AS001", "AS002", "AS003"}:
+            continue
+        result.setdefault("properties", {}).update(
+            {
+                "authorizationEvaluated": False,
+                "roleResolution": resolution,
+                "evidenceSources": evidence.get("evidence_sources", []),
+                "unsupportedConstraints": evidence.get(
+                    "uninspectable_policy_elements", []
+                ),
+            }
+        )
+        result["message"]["text"] += (
+            " Policy-grant inventory only; effective authorization is not evaluated."
+        )
+        if resolution == "trust_candidate":
+            result["message"]["text"] += (
+                " Potential trust reachability, not verified configured role use."
+            )
+
+
 def _blast_radius_message(binding: WorkflowCredentialBinding) -> str:
     credential_source = binding.credential_source
     policy_finding: PolicyFinding | None = binding.policy_finding
@@ -1273,7 +1327,7 @@ def _blast_radius_message(binding: WorkflowCredentialBinding) -> str:
 
     message = (
         f"[{risk_label}] Workflow '{credential_source.workflow_file}' "
-        f"(job: {credential_source.job_name}) assumes {role_info} with "
+        f"(job: {credential_source.job_name}) links to {role_info} with "
         f"{action_count} IAM action(s) analyzed."
     )
 
