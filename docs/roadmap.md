@@ -5,8 +5,8 @@ Open pull requests are not treated as shipped functionality.
 
 ## Focus
 
-The current focus is maintenance and owner-led validation, not feature
-expansion. Keep existing functionality reliable and describe its evidence limits
+The current focus is maintenance, a bounded offline-evidence improvement, and
+owner-led validation, not general feature expansion. Keep functionality reliable and describe its evidence limits
 accurately. Pause new generic detectors, additional cloud providers, and broad
 unsolicited adoption outreach.
 
@@ -17,12 +17,19 @@ establish that this correlation is useful in someone else's operating environmen
 
 ## Decision Gate: Owner Validation
 
-Before investing in a rewrite or a new feature phase, work with one willing
+The scoped exception is [PR #170](https://github.com/r12habh/ActionScope/pull/170):
+explicit IAM evidence directories, owner-supplied IAM snapshots and identity maps,
+and separately labeled potential OIDC trust candidates. This addresses a concrete
+input limitation without provisioning AWS resources or requiring account access.
+It remains in review, not shipped. Synthetic reference checks verify known
+behavior; they do not establish operational usefulness or complete authorization.
+
+Before investing beyond that bounded change or starting a new feature phase, work with one willing
 repository/account owner using the [owner validation protocol](owner-validation.md).
 They must control the workflow and IAM evidence and explicitly approve its use.
 An existing read-only AWS profile is optional; a private owner-supplied export can
-support manual comparison without making AWS calls. Export import is not an
-existing CLI feature.
+support manual comparison without making AWS calls. Snapshot import is proposed
+in PR #170 and is not available in the current PyPI release.
 
 Record what ActionScope recovers automatically, what requires manual identity
 mapping, and what remains unknown. Ask whether the result identifies a material
@@ -44,6 +51,7 @@ demand or comprehensive IAM correctness.
 | Conservative R2 credential classification | [PR #159](https://github.com/r12habh/ActionScope/pull/159) | In review |
 | Local-composite OIDC consumer calibration | [#160](https://github.com/r12habh/ActionScope/issues/160), [PR #168](https://github.com/r12habh/ActionScope/pull/168) | In review |
 | Verified pin resolution and offline pre-commit gates | [#93](https://github.com/r12habh/ActionScope/issues/93), [PR #164](https://github.com/r12habh/ActionScope/pull/164) | In review; release documentation still required |
+| Explicit offline IAM evidence and identity provenance | [#165](https://github.com/r12habh/ActionScope/issues/165), [#166](https://github.com/r12habh/ActionScope/issues/166), [PR #170](https://github.com/r12habh/ActionScope/pull/170) | In review; synthetic checks only |
 
 GitHub announced workflow dependency lockfiles generally available on
 [October 28, 2026](https://github.blog/changelog/2026-10-28-github-actions-workflow-lockfiles-are-generally-available/).
@@ -57,13 +65,14 @@ a valid protection; lack of a lockfile alone should not imply mutable execution.
 
 These are tracked possibilities, not work scheduled to start automatically.
 Correctness and honest coverage reporting remain maintenance priorities; new
-input modes and architecture changes require the owner-validation gate above.
+input modes beyond PR #170 and architecture changes require the owner-validation gate above.
 
 1. Join workflow checkouts with explicit local IAM evidence roots
    ([#165](https://github.com/r12habh/ActionScope/issues/165)), before
    adding organization-wide repository discovery ([#26](https://github.com/r12habh/ActionScope/issues/26)).
-   Preserve repository, revision, and file provenance; ambiguous identities must
-   remain unresolved. Proposed CLI syntax must not be documented as available.
+   PR #170 implements explicit local roots and content-hash provenance; ambiguous
+   identities remain unresolved. Organization-wide discovery is not implemented
+   by that PR. Development flags must not be described as released features.
 2. Audit conditions, explicit denies, permission boundaries, SCPs, session and
    resource policies, and role chaining. Expose unsupported constraints before
    attempting a partial effective-permissions evaluator
