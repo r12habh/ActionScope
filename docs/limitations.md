@@ -116,8 +116,13 @@ and use `--aws-verify` when the role policy lives outside the scanned repo. See
 
 ### IAM policy context ActionScope cannot read
 
-ActionScope can read inline policies and managed policies attached to
-the target role being inspected. It does not incorporate the effective limits of:
+ActionScope can read inline policies and managed policies attached to an
+inspected role. In the current release, `--aws-verify` queries the configured
+profile's account by role name without comparing the returned ARN with the
+workflow's target ARN. A same-name role in another account can therefore be
+misattributed. Compare the returned and expected ARNs before treating the evidence
+as verified for the target role. PR #170 adds an exact-ARN rejection guard; that
+fix is not yet released. ActionScope does not incorporate the effective limits of:
 
 - Permissions boundaries
 - Session policies applied at assume-role time

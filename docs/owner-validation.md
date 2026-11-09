@@ -87,10 +87,19 @@ Use an existing profile with the minimal
 credentials just to make a scan pass.
 
 ```bash
+pip install 'actionscope[aws]'
 AWS_PROFILE="existing-read-only-iam-profile" \
   actionscope scan "$REPO" --aws-verify \
   --output-format json --output-file "$EVIDENCE/live.json"
 ```
+
+Before comparing results, inspect report errors and each role's verification
+status, not just the existence of `live.json` or the command's exit code. Missing
+boto3 or failed IAM reads can leave repository-local evidence in that file without
+successful live verification. Confirm the returned role ARN matches the intended
+target account and role; the current release does not enforce that check.
+Discard a failed or identity-mismatched live result rather than counting it as
+validated policy recovery.
 
 Do not combine `--offline` and `--aws-verify`. The live command reads IAM policy
 state; it does not evaluate all AWS authorization constraints or establish

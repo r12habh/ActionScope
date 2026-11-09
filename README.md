@@ -117,8 +117,10 @@ deploy.yml → deploy → Configure AWS credentials
   │ s3:GetObject                │ Read               │ 🟢 LOW   │
   └─────────────────────────────┴────────────────────┴──────────┘
 
-  Review: iam:PassRole on *; check service permissions and role constraints.
 ```
+
+Review annotation (not CLI output): `iam:PassRole` on `*` warrants checking the
+service permissions and role constraints; it does not alone prove escalation.
 
 ## Use as a GitHub Action
 
@@ -371,8 +373,10 @@ as a comment.
 actionlint validates workflow YAML syntax. zizmor and Scorecard detect
 workflow security patterns. Checkov scans IAM policies independently.
 ActionScope correlates workflow credential sources with available IAM policy
-evidence and reports missing context explicitly. Other workflow and cloud
-security tools overlap; no exclusive capability or accuracy claim is made.
+evidence and reports detected gaps, including unresolved role policies and
+uninspected reusable workflows. `Coverage: COMPLETE` means no gaps were detected;
+it does not mean effective AWS permissions were fully evaluated. Other workflow
+and cloud security tools overlap; no exclusive capability or accuracy claim is made.
 
 ### Does ActionScope require AWS credentials?
 
