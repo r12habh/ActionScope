@@ -1,14 +1,39 @@
 # CI-to-Cloud Impact Roadmap
 
-Updated: November 6, 2026. This is a prioritized plan, not a release promise.
+Updated: November 8, 2026. This is a decision framework, not a release promise.
 Open pull requests are not treated as shipped functionality.
 
 ## Focus
 
-Stay AWS-deep: connect workflow execution, credential identity, role-policy
-evidence, and the limits of that evidence. Workflow linting and advisory checks
-support that analysis rather than define the product. Expand cloud providers
-when concrete user requests justify the maintenance cost.
+The current focus is maintenance and owner-led validation, not feature
+expansion. Keep existing functionality reliable and describe its evidence limits
+accurately. Pause new generic detectors, additional cloud providers, and broad
+unsolicited adoption outreach.
+
+The capability to validate is AWS workflow-to-identity-to-policy correlation.
+Workflow linting and advisory checks support it rather than define the product.
+A working demonstration, passing tests, and a research paper do not by themselves
+establish that this correlation is useful in someone else's operating environment.
+
+## Decision Gate: Owner Validation
+
+Before investing in a rewrite or a new feature phase, work with one willing
+repository/account owner using the [owner validation protocol](owner-validation.md).
+They must control the workflow and IAM evidence and explicitly approve its use.
+An existing read-only AWS profile is optional; a private owner-supplied export can
+support manual comparison without making AWS calls. Export import is not an
+existing CLI feature.
+
+Record what ActionScope recovers automatically, what requires manual identity
+mapping, and what remains unknown. Ask whether the result identifies a material
+remediation or improves an actual review task compared with the owner's existing
+approach. Report-only findings and synthetic examples are not deployment evidence.
+
+If the owner confirms incremental value, prioritize the smallest change needed
+for that workflow. If no owner is available, or the trial adds no value, stay in
+maintenance mode instead of expanding the backlog into another implementation
+cycle. A single positive trial would justify further testing, not prove broad
+demand or comprehensive IAM correctness.
 
 ## Now: Reliability and Positioning
 
@@ -17,7 +42,7 @@ when concrete user requests justify the maintenance cost.
 | Parallel/background workflow steps | [#154](https://github.com/r12habh/ActionScope/issues/154), [PR #155](https://github.com/r12habh/ActionScope/pull/155) | In review |
 | Dependency lock coverage and locked compromised dependencies | [#151](https://github.com/r12habh/ActionScope/issues/151), [PR #156](https://github.com/r12habh/ActionScope/pull/156) | In review |
 | Conservative R2 credential classification | [PR #159](https://github.com/r12habh/ActionScope/pull/159) | In review |
-| Local-composite OIDC consumer calibration | [#160](https://github.com/r12habh/ActionScope/issues/160) | Open |
+| Local-composite OIDC consumer calibration | [#160](https://github.com/r12habh/ActionScope/issues/160), [PR #168](https://github.com/r12habh/ActionScope/pull/168) | In review |
 | Verified pin resolution and offline pre-commit gates | [#93](https://github.com/r12habh/ActionScope/issues/93), [PR #164](https://github.com/r12habh/ActionScope/pull/164) | In review; release documentation still required |
 
 GitHub announced workflow dependency lockfiles generally available on
@@ -28,7 +53,11 @@ and inspect locked transitive dependencies for known-bad commits. Missing lockin
 is a hardening observation, not evidence of compromise. Explicit SHA pins remain
 a valid protection; lack of a lockfile alone should not imply mutable execution.
 
-## Next: Evidence and Coverage
+## Conditional Backlog
+
+These are tracked possibilities, not work scheduled to start automatically.
+Correctness and honest coverage reporting remain maintenance priorities; new
+input modes and architecture changes require the owner-validation gate above.
 
 1. Join workflow checkouts with explicit local IAM evidence roots
    ([#165](https://github.com/r12habh/ActionScope/issues/165)), before
@@ -94,6 +123,7 @@ promise a new feed command. Validate feed ecosystem/ref semantics and distinguis
 historical incidents from confirmed affected commits. Avoid introducing an
 automatic network dependency into offline scans.
 
-At a mid-2027 review, assess independent usage and the tool's distinct value
-against maintained alternatives. Consider narrowing or archiving if that value
-is absent; do not automatically archive based only on a date or star count.
+Reassess after an owner trial, or when available maintenance effort changes.
+Consider archiving if there is no distinct useful capability and maintenance is
+no longer justified. Do not automatically archive based on a date or star count,
+and do not keep adding features solely to defer that decision.

@@ -28,6 +28,11 @@ it reports unknown cloud impact rather than assuming the role is safe. Static
 mode needs no AWS credentials; `--aws-verify` optionally fetches policies using
 authorized read-only IAM calls.
 
+**Development focus:** reliability and owner-led validation. Broader feature
+expansion is on hold while the workflow-to-IAM capability is evaluated with
+owner-controlled evidence. See the [roadmap](docs/roadmap.md) and
+[validation protocol](docs/owner-validation.md).
+
 ![ActionScope mapping a workflow's AWS blast radius](docs/demo.gif)
 
 The workflow only says it *assumes a role*. This controlled example supplies
@@ -36,7 +41,7 @@ These are policy-derived exposure indicators, not a proof of exploitation or a
 complete calculation of effective AWS permissions.
 **[Reproduce this scan yourself »](examples/aws-blast-radius-demo/)**
 
-## Try it on your repo in 30 seconds
+## Run a Scan
 
 ```bash
 pip install actionscope
@@ -44,8 +49,8 @@ cd /path/to/your/repo-with-github-actions
 actionscope scan .
 ```
 
-That's it. No AWS credentials needed, no telemetry, no sign-up. Static
-analysis runs in under a second on a typical repo. If you have nothing
+No AWS credentials are needed for static mode, with no telemetry or sign-up.
+Analysis runs locally. If you have nothing
 relevant, you get `Observed Risk: ℹ️ INFO`. If an AWS role cannot be matched
 to a policy, ActionScope reports `Coverage: PARTIAL` instead of treating the
 unknown permissions as safe.
@@ -112,7 +117,7 @@ deploy.yml → deploy → Configure AWS credentials
   │ s3:GetObject                │ Read               │ 🟢 LOW   │
   └─────────────────────────────┴────────────────────┴──────────┘
 
-  🔴 Privilege Escalation Path: iam:PassRole on * — can escalate to any role
+  Review: iam:PassRole on *; check service permissions and role constraints.
 ```
 
 ## Use as a GitHub Action
@@ -402,10 +407,10 @@ New to the codebase? Start with a
 
 The most impactful contributions right now:
 
-1. **Add IAM actions to the risk database**
-2. **Add compromised action entries** when a new supply-chain attack happens
-3. **Add test fixtures** from real-world workflows, anonymized
-4. **Improve error messages** when policies are missing
+1. **Reproduce correctness bugs** with focused regression fixtures
+2. **Improve coverage reporting** when IAM evidence is missing or unsupported
+3. **Validate an owned workflow** using the [owner protocol](docs/owner-validation.md)
+4. **Maintain existing checks and documentation**, including sourced advisory updates
 
 ## Citation and Community
 
