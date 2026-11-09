@@ -103,4 +103,6 @@ nav:
       - Corpus Scans: corpus.md
   - Operations:
       - AWS Verification Permissions: aws-verify-permissions.md
+      - Owner Validation: owner-validation.md
       - Release Runbook: release-runbook.md
+      - Roadmap: roadmap.md
