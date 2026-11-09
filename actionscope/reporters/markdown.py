@@ -704,7 +704,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
 
         coverage_gaps = build_coverage_gaps(result)
     coverage_status = "partial" if coverage_gaps else result.coverage_status
-    cred_count = len(result.credential_sources)
+    cred_count = len(result.configured_credential_sources)
     overall = RISK_DISPLAY.get(result.overall_risk, result.overall_risk.name)
     gate_status = _gate_status(result.gate)
     risk_label = "Effective Risk" if result.config_applied else "Observed Risk"
@@ -716,6 +716,7 @@ def to_markdown(result: ScanResult, delta: object | None = None) -> str:
         f"**Gate:** {gate_status}\n\n"
         f"**Workflows:** {result.workflow_count} | "
         f"**Credential Sources:** {cred_count} | "
+        f"**Potential OIDC Roles:** {result.trust_candidate_count} | "
         f"**Unresolved Coverage Items:** {len(coverage_gaps)}\n\n"
         "---\n\n"
     )
@@ -804,6 +805,7 @@ def to_markdown_from_dict(data: dict) -> str:
         "",
         f"**Workflows:** {data.get('workflow_count', 0)} | "
         f"**Credential Sources:** {credential_count} | "
+        f"**Potential OIDC Roles:** {summary_data.get('trust_candidates', 0)} | "
         f"**Unresolved Coverage Items:** {gap_count}",
         "",
         "---",

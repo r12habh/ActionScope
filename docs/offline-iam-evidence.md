@@ -90,7 +90,9 @@ environments, and reusable-workflow caller contexts are not inferred. At most
 1,000 candidates are returned. This is deliberately a conservative subset, not a
 complete OIDC authorization solver; unsupported cases can be false negatives.
 
-Candidates are separate `trust_candidate` bindings at medium confidence. A job
+Candidates are separate `trust_candidate` bindings at medium confidence. Reports
+have separate `trust_candidates` and `candidate_policies_found` summary counts;
+these do not inflate `credential_sources` or `policies_found` recovery counts. A job
 must have `id-token: write` (or `write-all`). The original unknown configured role
 remains unknown. A candidate may also exist for a token-capable job with no AWS
 action, since compromise could permit a direct token request. Candidates are not

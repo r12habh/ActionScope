@@ -48,12 +48,15 @@ def evaluate() -> dict:
         observations[name] = {
             "bindings": len(data["findings"]),
             "policy_matches": data["summary"]["policies_found"],
+            "candidate_policy_matches": data["summary"]["candidate_policies_found"],
             "resolutions": [f["role_resolution"] for f in data["findings"]],
             "coverage": data["coverage_status"],
         }
     assert observations["original_workflow"]["policy_matches"] == 0
     assert observations["owner_mapping"]["resolutions"] == ["owner_mapping"]
     assert observations["owner_mapping"]["policy_matches"] == 1
+    assert observations["potential_trust"]["policy_matches"] == 0
+    assert observations["potential_trust"]["candidate_policy_matches"] == 1
     assert observations["potential_trust"]["resolutions"] == [
         "workflow",
         "trust_candidate",

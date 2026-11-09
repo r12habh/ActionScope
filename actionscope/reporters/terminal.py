@@ -170,7 +170,8 @@ def _render_scan_result_impl(
         (f"Path: {result.scan_path}\n", ""),
         (
             f"Workflows: {result.workflow_count} | "
-            f"Credential Sources: {len(result.credential_sources)}\n",
+            f"Credential Sources: {len(result.configured_credential_sources)} | "
+            f"Potential OIDC Roles: {result.trust_candidate_count}\n",
             "",
         ),
         (
@@ -894,7 +895,7 @@ def _render_summary_panel(
         (f"Workflows scanned: {result.workflow_count}\n", ""),
         (f"Reusable workflow calls: {len(result.reusable_workflows)}\n", ""),
         (f"Correlated exposure paths: {len(result.exposure_paths)}\n", ""),
-        (f"AWS credential sources: {len(result.credential_sources)}\n", ""),
+        (f"AWS credential sources: {len(result.configured_credential_sources)}\n", ""),
         (f"Policies analyzed: {policies_analyzed}\n", ""),
         (f"Policies not found: {policies_not_found}\n", ""),
         (
@@ -1043,6 +1044,7 @@ def render_from_dict(data: dict, console: Optional[Console] = None) -> None:
             (f"{observed_label}: {risk_label}\n", ""),
             (f"Coverage: {coverage_status} ({gap_count} unresolved item(s))\n", ""),
             (f"Gate: {gate_status}", ""),
+            (f"\nPotential OIDC Roles: {summary.get('trust_candidates', 0)}", ""),
         )
         c.print(Panel(body, box=box.ROUNDED, padding=(0, 2)))
 

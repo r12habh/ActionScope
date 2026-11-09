@@ -360,6 +360,9 @@ def test_cloud_first_candidates_do_not_resolve_configured_secret(tmp_path):
     assert candidate["role_resolution"] == "trust_candidate"
     assert candidate["match_confidence"] == "medium"
     assert data["summary"]["trust_candidates"] == 1
+    assert data["summary"]["credential_sources"] == 1
+    assert data["summary"]["policies_found"] == 0
+    assert data["summary"]["candidate_policies_found"] == 1
     assert any(
         g["gap_type"] == "potential_oidc_identity" for g in data["coverage_gaps"]
     )
@@ -377,6 +380,7 @@ def test_job_token_can_reach_candidate_without_an_aws_action(tmp_path):
         "example/app",
     )
     assert data["findings"][0]["role_resolution"] == "trust_candidate"
+    assert data["summary"]["credential_sources"] == 0
 
 
 @pytest.mark.parametrize(

@@ -406,6 +406,18 @@ class ScanResult:
     overall_risk: RiskLevel = RiskLevel.INFO
     errors: list[str] = field(default_factory=list)
 
+    @property
+    def configured_credential_sources(self) -> list[AwsCredentialSource]:
+        """Configured/owner-supplied identities, excluding potential reachability."""
+        return [
+            source for source in self.credential_sources
+            if source.role_resolution != "trust_candidate"
+        ]
+
+    @property
+    def trust_candidate_count(self) -> int:
+        return len(self.credential_sources) - len(self.configured_credential_sources)
+
     def __post_init__(self) -> None:
         """Compute the scan risk from bindings and GITHUB_TOKEN permissions."""
         binding_risks = [

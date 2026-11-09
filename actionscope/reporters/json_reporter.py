@@ -149,6 +149,7 @@ def _summary_dict(
 ) -> dict[str, Any]:
     policies_found = sum(
         1 for b in result.bindings if b.policy_finding is not None
+        and b.credential_source.role_resolution != "trust_candidate"
     )
     policies_not_found = sum(
         1 for b in result.bindings if b.policy_source == "not_found"
@@ -158,6 +159,7 @@ def _summary_dict(
         for binding in result.bindings
         if binding.policy_finding is not None
         and binding.policy_finding.metadata.get("policy_coverage_complete") is False
+        and binding.credential_source.role_resolution != "trust_candidate"
     )
     github_token_risks = sum(
         1
@@ -165,10 +167,12 @@ def _summary_dict(
         if p.risk_level >= RiskLevel.MEDIUM
     )
     return {
-        "credential_sources": len(result.credential_sources),
-        "trust_candidates": sum(
-            source.role_resolution == "trust_candidate"
-            for source in result.credential_sources
+        "credential_sources": len(result.configured_credential_sources),
+        "trust_candidates": result.trust_candidate_count,
+        "candidate_policies_found": sum(
+            b.policy_finding is not None
+            and b.credential_source.role_resolution == "trust_candidate"
+            for b in result.bindings
         ),
         "policies_found": policies_found,
         "policies_not_found": policies_not_found,
