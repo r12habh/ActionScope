@@ -617,11 +617,11 @@ def _policy_match(
     reason: str,
 ) -> _PolicyMatch:
     if credential_source.role_resolution == "trust_candidate":
-        confidence = "medium"
-        reason = "potential OIDC trust match; configured role remains unverified"
+        confidence = "medium" if confidence == "high" else confidence
+        reason += "; potential OIDC trust match; configured role remains unverified"
     elif credential_source.role_resolution == "owner_mapping":
-        confidence = "medium"
-        reason = "exact policy match conditional on owner-supplied identity mapping"
+        confidence = "medium" if confidence == "high" else confidence
+        reason += "; conditional on owner-supplied identity mapping"
     if any(
         finding.role_arn is None and any(
             item.get("kind") == "iam_root"

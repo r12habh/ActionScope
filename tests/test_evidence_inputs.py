@@ -731,3 +731,85 @@ def test_zero_iam_alerts_still_preserve_unknown_authorization_in_sarif(tmp_path)
         json.loads(result.stdout)["runs"][0]["properties"]["coverageStatus"]
         == "partial"
     )
+
+
+@pytest.mark.parametrize("role_name", ["ci-deploy", "unrelated"])
+def test_cloudformation_timestamp_evidence_serializes(tmp_path, role_name):
+    write_workflow(tmp_path)
+    template = tmp_path / "infra/role.yml"
+    template.parent.mkdir()
+    template.write_text(
+        "Resources:\n"
+        "  Deploy:\n"
+        "    Type: AWS::IAM::Role\n"
+        "    Properties:\n"
+        f"      RoleName: {role_name}\n"
+        "      Policies:\n"
+        "        - PolicyName: inline\n"
+        "          PolicyDocument:\n"
+        "            Statement:\n"
+        "              - Effect: Allow\n"
+        "                Action: s3:DeleteBucket\n"
+        "                Resource: '*'\n"
+        "                Condition:\n"
+        "                  DateLessThan:\n"
+        "                    aws:CurrentTime: 2027-01-01T00:00:00Z\n"
+        "                  DateGreaterThan:\n"
+        "                    aws:CurrentTime: 2026-01-01\n"
+    )
+    data = scan(tmp_path)
+    evidence = (
+        data["findings"][0]["policy_evidence"]
+        if role_name == "ci-deploy"
+        else data["unmatched_policies"][0]["metadata"]
+    )
+    condition = evidence["policy_statements"][0]["Condition"]
+    assert condition["DateLessThan"]["aws:CurrentTime"] == "2027-01-01T00:00:00+00:00"
+    assert condition["DateGreaterThan"]["aws:CurrentTime"] == "2026-01-01"
+
+
+@pytest.mark.parametrize("root_name", ["infra", "."])
+def test_single_workflow_scan_keeps_explicit_in_repository_root(tmp_path, root_name):
+    write_workflow(tmp_path)
+    write_json(tmp_path / "infra/ci-deploy.json", document(ALLOW))
+    result = scan(
+        tmp_path / ".github/workflows/deploy.yml",
+        "--iam-path", tmp_path / root_name,
+    )
+    assert result["summary"]["policies_found"] == 1
+    evidence = result["findings"][0]["policy_evidence"]["evidence_sources"]
+    assert evidence[0]["kind"] == "iam_root"
+
+
+def test_owner_mapping_does_not_promote_content_only_policy_match(tmp_path):
+    write_workflow(tmp_path)
+    write_json(
+        tmp_path / "policies/unrelated.json",
+        document({"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": ARN}),
+    )
+    literal = scan(tmp_path)["findings"][0]
+    write_workflow(tmp_path, "${{ secrets.ROLE }}")
+    role_map = write_json(tmp_path / "private/map.json", mapping())
+    mapped = scan(tmp_path, "--role-map", role_map)["findings"][0]
+    assert literal["match_confidence"] == mapped["match_confidence"] == "low"
+    assert literal["match_reason"] in mapped["match_reason"]
+    assert "exact" not in mapped["match_reason"]
+
+
+def test_saved_sarif_does_not_claim_candidate_is_configured(tmp_path):
+    app = tmp_path / "app"
+    write_workflow(app, None, environment="production")
+    export = write_json(tmp_path / "iam.json", snapshot())
+    data = scan(app, "--iam-snapshot", export, "--github-repo", "example/app")
+    saved = write_json(tmp_path / "saved.json", data)
+    result = CliRunner().invoke(main, ["report", str(saved), "--format", "sarif"])
+    assert result.exit_code == 0, result.output
+    messages = [
+        finding["message"]["text"]
+        for finding in json.loads(result.stdout)["runs"][0]["results"]
+        if finding["ruleId"] == "AS001"
+    ]
+    assert messages
+    assert all(
+        "links to" in message and " assumes " not in message for message in messages
+    )

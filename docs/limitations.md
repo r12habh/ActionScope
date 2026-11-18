@@ -122,12 +122,12 @@ repository or `--aws-verify`.
 and use `--aws-verify` when the role policy lives outside the scanned repo. See
 [Reusable Workflow Inspection](reusable-workflows.md).
 
-### IAM policy context ActionScope cannot read
+### IAM policy context and authorization limits
 
 ActionScope can read inline policies and managed policies attached to
-the calling role. It cannot read:
+the calling role. It retains permissions boundary references from supported
+sources, but does not evaluate their effects. It cannot read:
 
-- Permissions boundaries
 - Session policies applied at assume-role time
 - SCPs that restrict the role's effective permissions
 

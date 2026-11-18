@@ -296,6 +296,7 @@ def load_iam_roots(
 
     findings, errors = [], []
     repository = Path(repo_path).resolve()
+    repository_scanned = repository.is_dir()
     if repository.is_file():
         repository = (
             repository.parent.parent.parent
@@ -307,9 +308,11 @@ def load_iam_roots(
     for root in requested:
         if not root.is_dir():
             raise EvidenceError("--iam-path requires a directory")
-        if root == repository or root.is_relative_to(repository):
+        if repository_scanned and (
+            root == repository or root.is_relative_to(repository)
+        ):
             continue
-        if repository.is_relative_to(root):
+        if root != repository and repository.is_relative_to(root):
             raise EvidenceError("An IAM root must not contain the scanned repository")
         if not any(root != other and root.is_relative_to(other) for other in requested):
             roots.append(root)

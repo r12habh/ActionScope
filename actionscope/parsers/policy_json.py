@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from copy import deepcopy
+from datetime import date, datetime
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -218,7 +219,7 @@ def extract_actions_from_policy(
         for key in ("NotAction", "NotResource"):
             if key in statement:
                 constraints.append(f"{key} is conservatively approximated")
-    finding.metadata["policy_statements"] = deepcopy(statements)
+    finding.metadata["policy_statements"] = _copy_policy_evidence(statements)
     finding.metadata["authorization_evaluated"] = False
     if constraints:
         finding.metadata["uninspectable_policy_elements"] = list(
@@ -226,6 +227,17 @@ def extract_actions_from_policy(
         )
         finding.metadata["policy_coverage_complete"] = False
     return finding
+
+
+def _copy_policy_evidence(value: Any) -> Any:
+    """Keep YAML timestamps JSON-compatible without mutating parsed input."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _copy_policy_evidence(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_policy_evidence(item) for item in value]
+    return deepcopy(value)
 
 
 def _includes_privilege_escalation_action(excluded_actions: list[str]) -> bool:

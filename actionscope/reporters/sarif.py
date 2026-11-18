@@ -399,7 +399,7 @@ def to_sarif_from_dict(data: dict[str, Any]) -> str:
                 _make_result(
                     rule_id="AS001",
                     message=origin + (
-                        f"[{risk.name}] Workflow '{workflow_file}' assumes "
+                        f"[{risk.name}] Workflow '{workflow_file}' links to "
                         f"{finding.get('role_arn') or 'an AWS role'}."
                     ),
                     level=RISK_TO_SARIF_SEVERITY[risk],
