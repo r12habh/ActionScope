@@ -1,7 +1,7 @@
 # ActionScope
 
-> **Map the AWS blast radius of your GitHub Actions workflows.**
-> One command. No AWS credentials required. Instant plain-English results.
+> **Connect GitHub Actions exposure to AWS IAM policy evidence.**
+> CI-to-cloud impact analysis, with explicit gaps when permissions are unknown.
 
 [![PyPI version](https://img.shields.io/pypi/v/actionscope)](https://pypi.org/project/actionscope/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/actionscope)](https://pypi.org/project/actionscope/)
@@ -22,24 +22,26 @@ CloudFormation/SAM templates, and JSON IAM policies. It reports the AWS
 permissions recoverable from that evidence and marks missing policy context as
 a coverage gap instead of treating unknown permissions as safe.
 
-It also detects:
-- 🚨 **Known-compromised actions** (`actions-cool`, `tj-actions`, `trivy-action`)
-- 🔓 **OIDC trust policy misconfigurations** (wildcards, missing claims, unsafe set operators)
-- 💉 **Script injection** (PR titles, issue bodies in `run:` blocks)
-- 🎭 **Artifact poisoning** (`workflow_run` + untrusted artifact execution)
-- 🤖 **AI agent prompt injection surfaces** (Claude Code, Copilot in CI)
-- 📌 **Unpinned actions** with SHA resolution
-- 🔁 **Reusable workflow inspection** (local recursion and authenticated external fetches)
-- 🔗 **Correlated exposure paths** (risky action → AWS role → reachable IAM)
+The main report connects an action in a workflow job to its AWS credential
+source, then to available role-policy evidence. With no matching IAM evidence,
+it reports unknown cloud impact rather than assuming the role is safe. Static
+mode needs no AWS credentials; `--aws-verify` optionally fetches policies using
+authorized read-only IAM calls.
+
+**Development focus:** reliability and owner-led validation. Broader feature
+expansion is on hold while the workflow-to-IAM capability is evaluated with
+owner-controlled evidence. See the [roadmap](docs/roadmap.md) and
+[validation protocol](docs/owner-validation.md).
 
 ![ActionScope mapping a workflow's AWS blast radius](docs/demo.gif)
 
-The workflow only says it *assumes a role*. ActionScope joins it to the IAM
-behind it and shows what that role can actually do if CI is compromised — here:
-pass any IAM role (privilege escalation), wipe S3, and terminate EC2.
+The workflow only says it *assumes a role*. This controlled example supplies
+local IAM evidence with broad S3 access, instance termination, and `iam:PassRole`.
+These are policy-derived exposure indicators, not a proof of exploitation or a
+complete calculation of effective AWS permissions.
 **[Reproduce this scan yourself »](examples/aws-blast-radius-demo/)**
 
-## Try it on your repo in 30 seconds
+## Run a Scan
 
 ```bash
 pip install actionscope
@@ -47,8 +49,8 @@ cd /path/to/your/repo-with-github-actions
 actionscope scan .
 ```
 
-That's it. No AWS credentials needed, no telemetry, no sign-up. Static
-analysis runs in under a second on a typical repo. If you have nothing
+No AWS credentials are needed for static mode, with no telemetry or sign-up.
+Analysis runs locally. If you have nothing
 relevant, you get `Observed Risk: ℹ️ INFO`. If an AWS role cannot be matched
 to a policy, ActionScope reports `Coverage: PARTIAL` instead of treating the
 unknown permissions as safe.
@@ -115,8 +117,10 @@ deploy.yml → deploy → Configure AWS credentials
   │ s3:GetObject                │ Read               │ 🟢 LOW   │
   └─────────────────────────────┴────────────────────┴──────────┘
 
-  🔴 Privilege Escalation Path: iam:PassRole on * — can escalate to any role
 ```
+
+Review annotation (not CLI output): `iam:PassRole` on `*` warrants checking the
+service permissions and role constraints; it does not alone prove escalation.
 
 ## Use as a GitHub Action
 
@@ -151,27 +155,24 @@ Marketplace Action is report-only unless `fail-on` is explicitly set.
 
 ## What Makes ActionScope Different
 
-ActionScope answers a question no other tool answers:
+ActionScope focuses on the connection between workflow execution and AWS
+policy evidence:
 
 > "This workflow assumes **this IAM role**. If the workflow is compromised,
 > what can an attacker **actually do** in your AWS account?"
 
-| Capability | actionlint | zizmor | Scorecard | ActionScope |
-|---|---|---|---|---|
-| Workflow syntax validation | ✅ | Partial | ❌ | Partial |
-| Security pattern detection | ❌ | ✅ | ✅ | ✅ |
-| GITHUB_TOKEN permission review | ❌ | ✅ | ✅ | ✅ |
-| Unpinned action detection | ❌ | ✅ | ✅ | ✅ |
-| **Known-compromised action detection** | ❌ | ❌ | ❌ | **✅** |
-| **AWS credential source detection** | ❌ | ❌ | ❌ | **✅** |
-| **Workflow → IAM role correlation** | ❌ | ❌ | ❌ | **✅** |
-| **Action → AWS exposure-path correlation** | ❌ | ❌ | ❌ | **✅** |
-| **Live AWS IAM policy verification** | ❌ | ❌ | ❌ | **✅** |
-| **Blast radius in plain English** | ❌ | ❌ | ❌ | **✅** |
-| **OIDC trust policy analysis** | ❌ | ❌ | ❌ | **✅** |
-| **Script injection detection** | ❌ | Partial | ❌ | **✅** |
-| **Reusable workflow inspection** | ❌ | Partial | ❌ | **✅** |
-| SARIF / GitHub Security tab | ❌ | ✅ | ✅ | **✅** |
+Use it alongside workflow analyzers such as [zizmor](https://docs.zizmor.sh/),
+syntax validators such as [actionlint](https://github.com/rhysd/actionlint),
+and cloud-trust tools such as
+[gha-oidc-auditor](https://github.com/gamesapeca/gha-oidc-auditor).
+Their scopes overlap; this is not an exclusive-capability or comparative
+accuracy claim. ActionScope emphasizes inspectable workflow-to-role joins,
+policy provenance, and explicit unresolved evidence.
+
+Conditions, explicit denies, permissions boundaries, SCPs, session policies,
+resource policies, and role chains can change effective authority. Fetching
+attached policies does not fully evaluate these constraints. See
+[limitations](docs/limitations.md) and the [roadmap](docs/roadmap.md).
 
 ## How It Works
 
@@ -216,6 +217,10 @@ for the minimal required policy.
 
 ## Security Detectors
 
+These supporting checks help identify how workflow influence could reach cloud
+credentials. They complement the correlated impact report; they do not replace
+specialist workflow analyzers or establish exploitability by themselves.
+
 ### 🚨 Known-Compromised Actions
 
 Checks workflows against a curated database of GitHub Actions with documented
@@ -257,7 +262,8 @@ agents configured with write permissions in untrusted PR contexts.
 ### 📌 Action Pinning + SHA Resolution
 
 Detects unpinned actions and resolves tags to current SHAs via the GitHub API.
-Distinguishes full SHAs (safe) from short SHAs (still mutable) and tags.
+Distinguishes full SHAs (immutable references) from short SHAs and mutable tags.
+A SHA pin does not establish that the referenced code is trustworthy.
 
 ### 🔁 Reusable Workflow Inspection
 
@@ -366,8 +372,11 @@ as a comment.
 
 actionlint validates workflow YAML syntax. zizmor and Scorecard detect
 workflow security patterns. Checkov scans IAM policies independently.
-ActionScope is the only tool that **crosses the boundary** — it ties a
-specific workflow to a specific IAM role to a specific blast radius.
+ActionScope correlates workflow credential sources with available IAM policy
+evidence and reports detected gaps, including unresolved role policies and
+uninspected reusable workflows. `Coverage: COMPLETE` means no gaps were detected;
+it does not mean effective AWS permissions were fully evaluated. Other workflow
+and cloud security tools overlap; no exclusive capability or accuracy claim is made.
 
 ### Does ActionScope require AWS credentials?
 
@@ -391,6 +400,7 @@ exact permission set required.
 - [SARIF and GitHub Security tab](docs/sarif.md)
 - [AWS verification permissions](docs/aws-verify-permissions.md)
 - [Release runbook](docs/release-runbook.md)
+- [CI-to-cloud roadmap](docs/roadmap.md)
 
 ## Contributing
 
@@ -401,10 +411,10 @@ New to the codebase? Start with a
 
 The most impactful contributions right now:
 
-1. **Add IAM actions to the risk database**
-2. **Add compromised action entries** when a new supply-chain attack happens
-3. **Add test fixtures** from real-world workflows, anonymized
-4. **Improve error messages** when policies are missing
+1. **Reproduce correctness bugs** with focused regression fixtures
+2. **Improve coverage reporting** when IAM evidence is missing or unsupported
+3. **Validate an owned workflow** using the [owner protocol](docs/owner-validation.md)
+4. **Maintain existing checks and documentation**, including sourced advisory updates
 
 ## Citation and Community
 
