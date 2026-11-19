@@ -11,7 +11,7 @@ from pathlib import Path
 import click
 import yaml
 
-from actionscope.explain import Evidence, load_encoder, rank_rows
+from actionscope.explain import Evidence, action_description, load_encoder, rank_rows
 from actionscope.parsers.workflow import GitHubWorkflowLoader
 
 AGENT = "anthropics/claude-code-action"
@@ -78,7 +78,7 @@ def _policies(report, path, name, role):
             Fact(
                 "policy",
                 f"reported IAM action for {role}",
-                f"{act['action']} on {act.get('resource', 'unknown')}",
+                f"{action_description(act)} on {act.get('resource', 'unknown')}",
                 f"report#/findings/{i}/actions/{j}",
             )
         )
@@ -184,14 +184,18 @@ def _job_facts(flow, path, name, job, steps, idx, report):
                 loc,
             )
         )
+    setup_order = 0
     for n, step in enumerate(steps[:idx]):
         if _action(step) != AWS:
             continue
+        setup_order += 1
         settings = step.get("with") or {}
         role = settings.get("role-to-assume") if isinstance(settings, dict) else None
         role = role if isinstance(role, str) and ROLE.fullmatch(role) else "unresolved"
         at = f"{prefix}/steps/{n}"
-        facts.append(Fact("aws", "preceding AWS credential setup", role, at))
+        facts.append(
+            Fact("aws", f"preceding AWS credential setup #{setup_order}", role, at)
+        )
         policies = _policies(report, path, name, role)
         if policies:
             facts.extend(policies)

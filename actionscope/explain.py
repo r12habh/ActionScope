@@ -23,6 +23,16 @@ def _text(value: object) -> str:
     return " ".join("".join(c if c.isprintable() else " " for c in value).split())
 
 
+def action_description(action):
+    name = _text(action.get("action"))
+    excluded = action.get("excluded_actions", [])
+    if not isinstance(excluded, list) or not all(isinstance(a, str) for a in excluded):
+        raise ValueError("Expected a list of excluded IAM actions.")
+    if excluded:
+        name += " except " + ", ".join(sorted({_text(a) for a in excluded}))
+    return name
+
+
 def evidence_rows(scan: dict) -> list[Evidence]:
     if not isinstance(scan, dict) or not isinstance(scan.get("findings"), list):
         raise ValueError("Expected an ActionScope JSON report with a findings array.")
@@ -66,7 +76,7 @@ def evidence_rows(scan: dict) -> list[Evidence]:
                 for j, action in enumerate(actions):
                     if not isinstance(action, dict) or not _text(action.get("action")):
                         raise ValueError(f"Invalid action at {ptr}/actions/{j}.")
-                    name = _text(action["action"])
+                    name = action_description(action)
                     resource = _text(action.get("resource")) or "unspecified"
                     rows.append(
                         Evidence(

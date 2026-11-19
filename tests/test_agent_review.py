@@ -155,6 +155,43 @@ def test_ambiguous_policy_is_unknown(tmp_path):
     assert any("unknown" in f.value for f in facts)
 
 
+def test_swapping_credential_setups_changes_ordered_facts(tmp_path):
+    second = SETUP | {"with": {"role-to-assume": ROLE + "-second"}}
+    workflow(tmp_path, [SETUP, second, CLAUDE])
+    before = snapshot(tmp_path)
+    workflow(tmp_path, [second, SETUP, CLAUDE])
+    facts = compare(before, snapshot(tmp_path))["agents"][0]["facts"]
+    assert {(f["field"], f["value"]) for f in facts if f["status"] == "added"} == {
+        ("preceding AWS credential setup #1", ROLE + "-second"),
+        ("preceding AWS credential setup #2", ROLE),
+    }
+
+
+def test_changed_notaction_exclusion_is_not_unchanged(tmp_path):
+    workflow(tmp_path, [SETUP, CLAUDE])
+
+    def report(excluded):
+        return {
+            "findings": [
+                {
+                    "workflow_file": FILE,
+                    "job_name": "review",
+                    "role_arn": ROLE,
+                    "actions": [
+                        {"action": "*", "resource": "*", "excluded_actions": [excluded]}
+                    ],
+                }
+            ]
+        }
+
+    result = compare(
+        snapshot(tmp_path, report("iam:*")), snapshot(tmp_path, report("s3:*"))
+    )
+    facts = result["agents"][0]["facts"]
+    assert any(f["status"] == "added" and "except s3:*" in f["value"] for f in facts)
+    assert any(f["status"] == "removed" and "except iam:*" in f["value"] for f in facts)
+
+
 def test_empty_does_not_load_model(tmp_path):
     assert review(tmp_path, tmp_path, "--intent", "classify this").exit_code == 0
 
