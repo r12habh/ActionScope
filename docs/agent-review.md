@@ -68,6 +68,25 @@ temporary virtual environment; dependency installation needs network or a mirror
 Reports may contain role, policy and workflow identifiers. Do not post them
 publicly without review.
 
+After checking out the base and head as data into `base/` and `head/`, the
+calling workflow can use this step. Replace the placeholder with a trusted
+full commit SHA containing the action; do not take it from the PR under review.
+
+```yaml
+- name: Review agent access
+  id: access
+  uses: r12habh/ActionScope/agent-review@<trusted-full-commit-sha>
+  with:
+    base: base
+    head: head
+    intent: Review pull requests using Bedrock
+    download-model: 'true'
+```
+
+Use `${{ steps.access.outputs.report-path }}` as the input for an internal
+artifact upload if your retention and access policies allow it. No PR write
+permission is needed. Omit both optional inputs for the no-model baseline.
+
 Only direct `anthropics/claude-code-action@...` calls in top-level workflow YAML
 are recognized. Composite calls, reusable workflows, parallel wrappers, shell
 agents, runner credentials, env-only credentials, external agent settings and

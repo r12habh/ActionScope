@@ -92,6 +92,8 @@ include = [
 include = [
   "/actionscope",
   "/action.yml",
+  "/agent-review",
+  "/examples/agent-review",
   "/CHANGELOG.md",
   "/CITATION.cff",
   "/CODE_OF_CONDUCT.md",

@@ -28,7 +28,8 @@ These sources establish a real configuration, not demand for this tool.
 
 ## Next decisions, in order
 
-1. Evaluate the review on held-out positive, unchanged and ambiguous changes.
+1. [Evaluate the review](https://github.com/r12habh/ActionScope/issues/173)
+   on held-out positive, unchanged and ambiguous changes.
    Compare the same inputs against a deterministic diff and a coding agent.
    Track incorrect claims, missing changes, source accuracy and abstentions.
    Correct citations on a synthetic fixture are not field precision.

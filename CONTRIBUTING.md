@@ -5,6 +5,20 @@ the [Code of Conduct](CODE_OF_CONDUCT.md). The project's decision process and
 maintainer responsibilities are described in [GOVERNANCE.md](GOVERNANCE.md),
 and support channels are listed in [SUPPORT.md](SUPPORT.md).
 
+## Contributing an agent review case
+
+Start with the [agent review example](docs/agent-review.md). The most useful
+contribution is a small, synthetic base/head change plus the decision a
+maintainer needs to make. State what changed, point to the source, and name
+one conclusion the evidence does **not** support. Do not contribute production
+roles, tokens, prompts, or private incident reports.
+
+Test the deterministic comparison without AI installed. If changing ranking,
+also run the opt-in cached-model tests and check that the factual diff is
+identical. Use [the evaluation issue](https://github.com/r12habh/ActionScope/issues/173)
+for held-out cases rather than tuning on them. Existing CLI/Action integrations
+must continue to work without a model download.
+
 ## Adding a New IAM Risk Rule
 
 The easiest contribution is adding IAM action risk classifications.
