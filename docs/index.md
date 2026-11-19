@@ -1,5 +1,5 @@
 ---
-title: "ActionScope — Map the AWS Blast Radius of GitHub Actions Workflows"
+title: "ActionScope: AI workflow access reviews"
 description: >-
   Static-analysis CLI and GitHub Action that detects known-compromised
   actions, OIDC trust misconfigurations, script injection, IAM privilege
@@ -8,8 +8,11 @@ description: >-
 
 # ActionScope
 
-> **If a GitHub Actions workflow in your repo is compromised, what can an
-> attacker actually do in your AWS account?**
+> **What access changes when you add a coding agent to CI?**
+
+Start with the [agent access review](agent-review.md): compare two checkouts,
+inspect the evidence, and prioritize questions with a local model. The existing
+single-checkout scanner remains available without AI dependencies.
 
 ActionScope reads your `.github/workflows/` files, Terraform resources,
 CloudFormation/SAM templates, and JSON IAM policies. It reports the AWS

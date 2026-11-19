@@ -1,8 +1,7 @@
 site_name: ActionScope
 site_description: >-
-  Map the AWS blast radius of GitHub Actions workflows. Detects compromised
-  actions, OIDC trust misconfigurations, script injection, IAM privilege
-  escalation paths, and unpinned actions.
+  Review access changes in AI workflows, then inspect the underlying GitHub
+  Actions and IAM evidence. Local inference is optional.
 site_url: https://r12habh.github.io/ActionScope/
 site_author: Rishabh Singh
 repo_name: r12habh/ActionScope
@@ -80,6 +79,7 @@ exclude_docs: |
 
 nav:
   - Home: index.md
+  - Agent Access Review: agent-review.md
   - Getting Started:
       - Quick Start: getting-started.md
       - First Scan Tutorial: tutorials/first-scan.md

@@ -1,7 +1,8 @@
 # ActionScope
 
-> **Connect GitHub Actions exposure to AWS IAM policy evidence.**
-> CI-to-cloud impact analysis, with explicit gaps when permissions are unknown.
+> **Review what access changes when a pull request adds or modifies an AI agent.**
+> Compare two GitHub Actions checkouts. Use local AI to prioritize review questions;
+> inspect the cited configuration yourself. No AWS account or paid API needed.
 
 [![PyPI version](https://img.shields.io/pypi/v/actionscope)](https://pypi.org/project/actionscope/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/actionscope)](https://pypi.org/project/actionscope/)
@@ -15,7 +16,27 @@
 &nbsp;&middot;&nbsp;
 🛡️ **Compromised Actions Database:** <https://r12habh.github.io/ActionScope/compromised-actions-database/>
 
-**Your GitHub Actions workflows hold AWS credentials. Do you know what they can do?**
+## Review an AI workflow
+
+Suppose a PR switches Claude Code from an API key to Amazon Bedrock. Which job
+now requests an identity token? Which role does it configure? Is there evidence
+that the role is limited to inference? Try this example from the source checkout
+(new development CLI, not the published PyPI version):
+
+```sh
+pip install -e '.[ai]'
+actionscope agent-review --base examples/agent-review/base \
+  --head examples/agent-review/head --intent 'Review pull requests via Bedrock' \
+  --download-model
+```
+
+The example shows an added `id-token: write` declaration and a named role,
+but no evidence for that role's policy. AI ranks follow-up questions, **not
+permissions or merge decisions**. After the first model download, omit
+`--download-model` to work offline. Omit both AI options for the factual diff.
+Start with the [agent review guide](docs/agent-review.md) or [roadmap](docs/roadmap.md).
+
+## Existing CI-to-cloud scanner
 
 ActionScope reads your `.github/workflows/` files, Terraform IAM resources,
 CloudFormation/SAM templates, and JSON IAM policies. It reports the AWS
@@ -28,10 +49,8 @@ it reports unknown cloud impact rather than assuming the role is safe. Static
 mode needs no AWS credentials; `--aws-verify` optionally fetches policies using
 authorized read-only IAM calls.
 
-**Development focus:** reliability and owner-led validation. Broader feature
-expansion is on hold while the workflow-to-IAM capability is evaluated with
-owner-controlled evidence. See the [roadmap](docs/roadmap.md) and
-[validation protocol](docs/owner-validation.md).
+The existing scan, CI gates and SARIF output do not use a model.
+See the [owner validation protocol](docs/owner-validation.md).
 
 ![ActionScope mapping a workflow's AWS blast radius](docs/demo.gif)
 

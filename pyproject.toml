@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "actionscope"
 version = "0.5.0"
-description = "Map the AWS blast radius of GitHub Actions workflows"
+description = "Review access changes in AI workflows and map GitHub Actions to AWS IAM evidence"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Rishabh Singh", email = "rishabhsinghe@gmail.com"}]
@@ -58,6 +58,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ai = ["model2vec>=0.10,<0.11", "huggingface-hub>=0.30,<2"]
 aws = ["boto3>=1.26"]
 dev = [
   "pytest>=7.0",

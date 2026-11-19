@@ -4,6 +4,11 @@ This page documents the current ActionScope command-line interface.
 
 ## Global Options
 
+For the source-checkout AI commands, see [Agent access review](agent-review.md):
+`actionscope agent-review --base DIR --head DIR [--base-report FILE --head-report FILE]
+[--intent TEXT] [--download-model] [--format text|json]` and
+`actionscope explain JSON_FILE QUESTION [--limit 1..20] [--download-model]`.
+
 | Option | Default | Description | Example |
 |--------|---------|-------------|---------|
 | `--version` | n/a | Print the installed ActionScope version. | `actionscope --version` |
