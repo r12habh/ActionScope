@@ -86,3 +86,63 @@ def test_ambiguous_input_refused(tmp_path, bad):
     workflow(tmp_path, [CLAUDE]).write_text(bad)
     with pytest.raises(ValueError):
         snapshot(tmp_path)
+
+
+def test_auth_migration_has_both_citations_but_no_values(tmp_path):
+    workflow(tmp_path, [CLAUDE | {"with": {"anthropic_api_key": "private-old"}}])
+    before = snapshot(tmp_path)
+    workflow(
+        tmp_path,
+        [
+            CLAUDE
+            | {
+                "with": {
+                    "anthropic_federation_rule_id": "private-new",
+                    "anthropic_organization_id": "private-org",
+                }
+            }
+        ],
+    )
+    result = compare(before, snapshot(tmp_path))
+    assert "private-" not in json.dumps(result)
+    facts = [
+        f
+        for f in result["agents"][0]["facts"]
+        if f["field"] == "Claude authentication inputs"
+    ]
+    assert {
+        (f["status"], (f["base_source"] or f["head_source"]).split("/")[-1])
+        for f in facts
+    } == {
+        ("removed", "anthropic_api_key"),
+        ("added", "anthropic_federation_rule_id"),
+        ("added", "anthropic_organization_id"),
+    }
+
+
+@pytest.mark.parametrize("extension, readable", [("", True), (" || true", False)])
+def test_only_exact_same_repository_guard_is_described(tmp_path, extension, readable):
+    expr = "github.event.pull_request.head.repo.full_name == github.repository"
+    workflow(tmp_path, [CLAUDE], **{"if": "${{ " + expr + extension + " }}"})
+    facts = next(iter(snapshot(tmp_path).values()))
+    guard = next(f for f in facts if f.field == "job condition")
+    assert ("same repository" in guard.value) is readable
+    assert "github.event" not in guard.value
+
+
+@pytest.mark.parametrize(
+    "activities,readable",
+    [
+        (["opened", "synchronize"], True),
+        (["opened", "private-activity"], False),
+    ],
+)
+def test_activity_filters_keep_other_filters_opaque(tmp_path, activities, readable):
+    path = workflow(tmp_path, [CLAUDE])
+    flow = yaml.safe_load(path.read_text())
+    flow["on"] = {"pull_request": {"types": activities, "branches": ["private-branch"]}}
+    path.write_text(yaml.safe_dump(flow))
+    facts = next(iter(snapshot(tmp_path).values()))
+    assert any(f.source.endswith("/pull_request/types") for f in facts) is readable
+    assert any(f.field == "event filters" for f in facts)
+    assert all("private-" not in f.value for f in facts)

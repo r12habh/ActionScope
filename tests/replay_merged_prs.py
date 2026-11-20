@@ -1,4 +1,4 @@
-"""Replay four merged upstream changes, inspecting a single pinned YAML per revision.
+"""Replay merged upstream changes, inspecting a single pinned YAML per revision.
 
 Run with --fetch once. The default reads only cached blobs and model weights.
 """
@@ -58,19 +58,19 @@ CASES = [
 ]
 
 
-def read_snapshot(cache, revision, fetch):
-    blob = cache / f"{revision}.yml"
+def read_snapshot(cache, repo, file, revision, fetch):
+    blob = cache / f"{revision}-{file.name}"
     if not blob.exists():
         if not fetch:
             raise SystemExit(f"Missing {blob.name}; use --fetch first.")
-        url = f"https://raw.githubusercontent.com/{REPO}/{revision}/{FILE.as_posix()}"
+        url = f"https://raw.githubusercontent.com/{repo}/{revision}/{file.as_posix()}"
         with urlopen(url, timeout=15) as response:
             data = response.read(1024 * 1024 + 1)
         if len(data) > 1024 * 1024:
             raise ValueError("Workflow exceeds reviewer input limit.")
         blob.write_bytes(data)
     with TemporaryDirectory() as tmp:
-        path = Path(tmp) / FILE
+        path = Path(tmp) / file
         path.parent.mkdir(parents=True)
         shutil.copyfile(blob, path)
         return snapshot(Path(tmp))
@@ -94,8 +94,23 @@ def answers(facts, expected):
 def run(cache, fetch):
     cache.mkdir(parents=True, exist_ok=True)
     encoder = load_encoder(False)
-    for pr, base, head, question, expected in CASES:
-        result = compare(*[read_snapshot(cache, sha, fetch) for sha in (base, head)])
+    cases = [(REPO, FILE, *case) for case in CASES]
+    # Transfer case chosen after calibration. Do not tune on its outcome.
+    cases.append(
+        (
+            "anthropics/claude-agent-sdk-python",
+            Path(".github/workflows/claude-issue-triage.yml"),
+            884,
+            "9ee52dfd5c7372552fdab39b08a9777580e636dc",
+            "3600dd02d58da38c7957ed8978c59dc1d1b17840",
+            "How does the triage bot authenticate itself to Anthropic?",
+            [("added", "anthropic_api_key", "/with/anthropic_api_key")],
+        )
+    )
+    for repo, file, pr, base, head, question, expected in cases:
+        result = compare(
+            *[read_snapshot(cache, repo, file, sha, fetch) for sha in (base, head)]
+        )
         rows, sources = _changes(result)
         words = set(re.findall("[a-z0-9]+", question.lower()))
         keyword = sorted(
@@ -104,7 +119,7 @@ def run(cache, fetch):
             key=lambda r: len(words & set(re.findall("[a-z0-9]+", r.text.lower()))),
         )
         model = rank_rows(question, rows, encoder, 1) if rows else []
-        outcome = {"pr": pr, "changed_fields": len(rows)}
+        outcome = {"repo": repo, "pr": pr, "changed_fields": len(rows)}
         for label, ranked in [("keyword", keyword), ("model", model)]:
             best = ranked[0] if ranked else None
             outcome[label] = {

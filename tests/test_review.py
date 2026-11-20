@@ -54,7 +54,10 @@ def test_removed_fields_retained_and_changes_grouped():
     rows, sources = _changes(_demo())
     row = next(r for r in rows if r.check == "use_bedrock")
     assert {f["status"] for f in sources[row.pointer]} == {"added", "removed"}
-    assert any(r.check == "anthropic_api_key" for r in rows)
+    assert any(
+        r.check == "Claude authentication inputs" and "anthropic_api_key" in r.text
+        for r in rows
+    )
 
 
 def test_symlinked_base_refused_even_if_head_is_empty(tmp_path):

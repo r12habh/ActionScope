@@ -22,6 +22,19 @@ GitHubWorkflowLoader.yaml_implicit_resolvers = {
 
 AGENT = "anthropics/claude-code-action"
 AWS = "aws-actions/configure-aws-credentials"
+CLAUDE_AUTH_INPUTS = (
+    "anthropic_api_key",
+    "claude_code_oauth_token",
+    "anthropic_federation_rule_id",
+    "anthropic_organization_id",
+    "anthropic_service_account_id",
+)
+PR_ACTIVITIES = frozenset(
+    "assigned auto_merge_disabled auto_merge_enabled closed converted_to_draft "
+    "demilestoned dequeued edited enqueued labeled locked milestoned opened "
+    "ready_for_review reopened review_request_removed review_requested synchronize "
+    "unassigned unlabeled unlocked".split()
+)
 ROLE = re.compile(r"arn:aws(?:-[a-z0-9-]+)?:iam::\d{12}:role/[\w+=,.@/-]+", re.ASCII)
 SCOPE = (
     "Only direct Claude Code steps and declared configuration are compared. "
@@ -56,6 +69,54 @@ class ReviewLoader(GitHubWorkflowLoader):
         return result
 
 
+def _event_filters(events, path):
+    """Describe literal PR activity lists; leave other filters opaque."""
+    readable, opaque = [], {}
+    for event, config in events.items():
+        if not config:
+            continue
+        if event not in ("pull_request", "pull_request_target") or not isinstance(
+            config, dict
+        ):
+            opaque[event] = config
+            continue
+        types = config.get("types")
+        types = [types] if isinstance(types, str) else types
+        if (
+            not isinstance(types, list)
+            or not types
+            or not all(isinstance(t, str) and t in PR_ACTIVITIES for t in types)
+        ):
+            opaque[event] = config
+            continue
+        readable.append(
+            Fact(
+                "trigger",
+                f"{event} activity types",
+                ", ".join(sorted(set(types))),
+                f"{path}#/on/{event}/types",
+            )
+        )
+        remainder = {k: v for k, v in config.items() if k != "types"}
+        if remainder:
+            opaque[event] = remainder
+    return readable, opaque
+
+
+def _same_repo_condition(value):
+    if not isinstance(value, str):
+        return False
+    condition = value.strip()
+    if condition.startswith("${{") and condition.endswith("}}"):
+        condition = condition[3:-2].strip()
+    return bool(
+        re.fullmatch(
+            r"github\.event\.pull_request\.head\.repo\.full_name\s*==\s*github\.repository",
+            condition,
+        )
+    )
+
+
 def _job_facts(flow, path, name, job, steps, idx):
     prefix = f"{path}#/jobs/{_ptr(name)}"
     stepref = f"{prefix}/steps/{idx}"
@@ -68,13 +129,13 @@ def _job_facts(flow, path, name, job, steps, idx):
     if backend not in ("true", "false"):
         backend = "unknown"
     facts.append(Fact("agent", "use_bedrock", backend, stepref))
-    for key in ("anthropic_api_key", "claude_code_oauth_token"):
+    for key in CLAUDE_AUTH_INPUTS:
         if key in opts:
             facts.append(
                 Fact(
                     "agent",
-                    key,
-                    "configured; value not inspected",
+                    "Claude authentication inputs",
+                    f"{key} configured; value not inspected",
                     f"{stepref}/with/{key}",
                 )
             )
@@ -97,15 +158,28 @@ def _job_facts(flow, path, name, job, steps, idx):
         for key in events
         if isinstance(key, str)
     )
-    # Compare opaque expressions/config without emitting prompts, tokens or scripts.
+    filters, opaque = _event_filters(events if isinstance(events, dict) else {}, path)
+    facts.extend(filters)
+    condition = job.get("if")
+    if _same_repo_condition(condition):
+        facts.append(
+            Fact(
+                "trigger",
+                "job condition",
+                "PR head must be in the same repository as the workflow",
+                f"{prefix}/if",
+            )
+        )
+        condition = None
+    # Compare other expressions/config without emitting prompts, tokens or scripts.
     for category, key, val, at in [
         (
             "trigger",
             "event filters",
-            events if isinstance(events, dict) and any(events.values()) else None,
+            opaque or None,
             f"{path}#/on",
         ),
-        ("trigger", "job condition", job.get("if"), f"{prefix}/if"),
+        ("trigger", "job condition", condition, f"{prefix}/if"),
         ("agent", "step condition", agent.get("if"), f"{stepref}/if"),
         ("agent", "Claude CLI arguments", opts.get("claude_args"), f"{stepref}/with"),
         ("agent", "Claude settings", opts.get("settings"), f"{stepref}/with"),

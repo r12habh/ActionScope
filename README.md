@@ -51,5 +51,7 @@ as source history; its scanner, gates, action database, release automation,
 and docs are not installed. Existing PyPI releases and Marketplace tags have
 not been changed. This branch is a development preview.
 
-See [contributing and evaluation](CONTRIBUTING.md) for how to test the model
-rather than assume that AI improves a review.
+In a [replay of five merged upstream PRs](CONTRIBUTING.md#merged-pr-replay),
+the main improvement came from recognizing federated authentication and PR
+conditions, not from AI ranking. On these cases keyword search selected the
+same useful evidence. We have not measured time saved in maintainer reviews.

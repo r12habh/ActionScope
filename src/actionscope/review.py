@@ -117,6 +117,11 @@ def review(question, repo, base_ref, demo, limit, download_model):
         rows, sources = _changes(result)
         click.echo(label)
         click.echo(SCOPE)
+        if any(agent["presence"] != "both" for agent in result["agents"]):
+            click.echo(
+                "Some supported steps appear on only one side. Their declarations "
+                "are not proof of newly granted or revoked access."
+            )
         if not result["agents"]:
             click.echo("No supported direct Claude Code action found on either side.")
             return
