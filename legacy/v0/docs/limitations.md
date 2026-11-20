@@ -32,15 +32,18 @@ ActionScope has two analysis modes:
 ### When to use `--aws-verify`
 
 - You have read-only AWS credentials configured
-- You want to confirm that a detected exposure is actually exploitable
-- You need to present findings to a security team with confidence
+- You want policy evidence from AWS rather than only repository-local files
+- You can review the resulting exposure together with the constraints below
 
 ### What `--aws-verify` cannot do
 
 - It cannot read IAM policies that the verification role cannot access
   (requires read-only `iam:Get*`/`iam:List*` permissions)
-- It cannot inspect **organization-level SCPs** (Service Control Policies) unless the role has `organizations:Describe*`
-- It cannot verify **cross-account trust relationships** unless the role has access to the trusted account
+- It does not evaluate organization-level SCPs; adding Organizations permissions
+  to the scanning role does not enable that feature.
+- It does not compute complete cross-account or chained-role reachability.
+- It does not prove exploitability or compute full effective permissions from
+  all conditions, explicit denies, boundaries, resource policies, and sessions.
 
 ---
 
@@ -113,19 +116,25 @@ and use `--aws-verify` when the role policy lives outside the scanned repo. See
 
 ### IAM policy context ActionScope cannot read
 
-ActionScope can read inline policies and managed policies attached to
-the calling role. It cannot read:
+ActionScope can read inline policies and managed policies attached to an
+inspected role. In the current release, `--aws-verify` queries the configured
+profile's account by role name without comparing the returned ARN with the
+workflow's target ARN. A same-name role in another account can therefore be
+misattributed. Compare the returned and expected ARNs before treating the evidence
+as verified for the target role. PR #170 adds an exact-ARN rejection guard; that
+fix is not yet released. ActionScope does not incorporate the effective limits of:
 
 - Permissions boundaries
 - Session policies applied at assume-role time
 - SCPs that restrict the role's effective permissions
 
-**Mitigation:** Use `--aws-verify` with the read-only IAM permissions listed in
+`--aws-verify` fetches attached policy evidence using the permissions listed in
 [AWS Verify Permissions](aws-verify-permissions.md):
 `iam:GetRole`, `iam:ListAttachedRolePolicies`, `iam:GetPolicy`,
 `iam:GetPolicyVersion`, `iam:ListRolePolicies`, and `iam:GetRolePolicy`.
-To evaluate permissions boundaries or SCP effects, use AWS's
-`iam:SimulatePrincipalPolicy` separately as a manual follow-up.
+This does not resolve the missing constraints above. Review them separately,
+using AWS policy simulation only where its documented scope applies; a
+simulation is not a substitute for complete organization and runtime context.
 
 ### Infrastructure formats and dynamic values
 

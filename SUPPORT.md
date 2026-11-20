@@ -16,23 +16,25 @@ Use the channel that matches the request:
 | Security vulnerability | [Private security advisory](https://github.com/r12habh/ActionScope/security/advisories/new) |
 | Contribution | [Pull request](https://github.com/r12habh/ActionScope/pulls) |
 
-Please include the ActionScope version, command, relevant workflow or policy
-snippet, output format, expected behavior, and actual behavior. Remove account
+For AI review issues, include the version or branch commit, the question,
+a synthetic base/head workflow pair, the field you expected to find and what
+ranked instead. For the legacy scanner, include the command and output format.
+Remove account
 IDs, role ARNs, secrets, repository names, and other sensitive identifiers when
 they are not necessary to reproduce the problem.
 
 ## Supported Versions
 
-Security fixes and bug fixes target the latest released version. Before filing
-a bug, reproduce it with the latest release when possible:
+The AI edition is a development branch, not the currently released scanner.
+For this edition install from the trusted checkout:
 
 ```bash
-python -m pip install --upgrade actionscope
+python -m pip install .
 actionscope --version
 ```
 
-Python versions and optional dependency groups supported by the current
-release are listed in `pyproject.toml` and tested in CI.
+The published 0.x line can still be installed from PyPI; installing it will
+not reproduce AI edition issues.
 
 ## Response Expectations
 

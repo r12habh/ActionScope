@@ -5,6 +5,15 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- `actionscope review` answers a maintainer's question with ranked, cited
+  configuration changes between a local Git commit and the working tree.
+  `--demo` runs the bundled example without a Git checkout.
+- Local `agent-review` compares access declarations around Claude Code workflow
+  steps across two checkouts, optionally linking scan reports and using a
+  local model to rank cited follow-up questions. Includes a report-only
+  composite action and a reproducible Bedrock migration example.
+- `explain` searches saved scan records using the optional `ai` extra. Existing
+  scans and CI gates need no model and keep their existing behavior.
 - `actionscope corpus scan` runs the static pipeline over a manifest of
   repositories pinned to commit SHAs and writes per-repository and
   per-credential-binding tables (CSV and JSON) with a run summary for empirical

@@ -10,12 +10,14 @@ import click
 from rich.console import Console
 
 from actionscope import __version__
+from actionscope.agent_review import agent_review
 from actionscope.models import PolicyFinding, ScanResult
 from actionscope.parsers.workflow import find_workflow_files, parse_workflow_file
 from actionscope.pipeline import collect_static_evidence, correlate_evidence
 from actionscope.reporters.json_reporter import to_json, write_json
 from actionscope.reporters.markdown import to_markdown, write_markdown
 from actionscope.reporters.terminal import render_no_aws_found, render_scan_result
+from actionscope.review import review
 
 
 @click.group()
@@ -26,15 +28,59 @@ from actionscope.reporters.terminal import render_no_aws_found, render_scan_resu
     message="%(prog)s v%(version)s",
 )
 def main() -> None:
-    """ActionScope — Map the AWS blast radius of your GitHub Actions
-    workflows and AI agent configs."""
+    """Review AI workflow access changes and scan CI-to-cloud permission evidence."""
     pass
+
+
+main.add_command(agent_review)
+main.add_command(review)
 
 
 @main.command("version", hidden=True)
 def version_command() -> None:
     """Print ActionScope version."""
     click.echo(f"ActionScope v{__version__}")
+
+
+@main.command()
+@click.argument("json_file", type=click.File("r", encoding="utf-8"))
+@click.argument("question")
+@click.option("--limit", type=click.IntRange(1, 20), default=3, show_default=True)
+@click.option("--download-model", is_flag=True,
+              help="Allow downloading the pinned public embedding model.")
+def explain(json_file, question: str, limit: int, download_model: bool) -> None:
+    """Find scan evidence relevant to QUESTION using a local AI model."""
+    import json
+
+    from actionscope.explain import (
+        evidence_rows,
+        exact_action_rows,
+        load_encoder,
+        rank_rows,
+    )
+
+    if not question.strip():
+        raise click.UsageError("Provide a non-empty question.")
+    try:
+        scan = json.load(json_file)
+        rows = evidence_rows(scan)
+        if not rows:
+            click.echo("No searchable evidence records in this report.")
+            return
+        rows = exact_action_rows(question, rows)
+        if not rows:
+            click.echo("No record explicitly names that IAM action. Access is unknown.")
+            return
+        matches = rank_rows(question, rows, load_encoder(download_model), limit)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    coverage = scan.get("coverage_status")
+    coverage = coverage if coverage in ("partial", "complete") else "unknown"
+    click.echo(f"Scan coverage: {coverage}. Matches by relevance, not proof of access.")
+    if not matches:
+        click.echo("No matching evidence.")
+    for row in matches:
+        click.echo(f"\n[{row.pointer}] {row.location}\n{row.text}\nCheck: {row.check}")
 
 
 @main.group("config")

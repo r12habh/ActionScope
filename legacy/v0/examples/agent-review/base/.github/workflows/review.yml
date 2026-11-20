@@ -1,0 +1,12 @@
+name: Review changes
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.REVIEW_API_KEY }}
+          prompt: Summarize this change for the reviewer.

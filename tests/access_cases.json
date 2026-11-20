@@ -1,0 +1,58 @@
+[
+  {
+    "base": {
+      "permissions": {
+        "contents": "read"
+      }
+    },
+    "head": {
+      "permissions": {
+        "contents": "write"
+      },
+      "environment": "prod"
+    },
+    "q": "Can it now write the repository contents?",
+    "field": "GITHUB_TOKEN contents"
+  },
+  {
+    "base": {
+      "permissions": {
+        "pull-requests": "read"
+      }
+    },
+    "head": {
+      "permissions": {
+        "pull-requests": "write",
+        "id-token": "write"
+      }
+    },
+    "q": "Does it ask for an identity token now?",
+    "field": "GITHUB_TOKEN id-token"
+  },
+  {
+    "base": {
+      "if": "github.actor == 'review-bot'",
+      "permissions": {
+        "contents": "read"
+      }
+    },
+    "head": {
+      "permissions": {
+        "contents": "write"
+      }
+    },
+    "q": "Did we take away the condition about who starts the job?",
+    "field": "job condition"
+  },
+  {
+    "base": {},
+    "head": {
+      "permissions": {
+        "issues": "write",
+        "contents": "read"
+      }
+    },
+    "q": "What changed about issue permissions?",
+    "field": "GITHUB_TOKEN issues"
+  }
+]

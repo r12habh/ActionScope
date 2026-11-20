@@ -1,0 +1,45 @@
+name: ActionScope Agent Access Review
+description: Compare configured access around AI agents in two local checkouts
+inputs:
+  base:
+    description: Base checkout directory relative to the workspace
+    required: true
+  head:
+    description: Proposed checkout directory relative to the workspace
+    required: true
+  intent:
+    description: Optional maintainer-supplied task for local AI question ranking
+    default: ''
+  download-model:
+    description: Allow downloading the pinned public model when intent is set
+    default: 'false'
+outputs:
+  report-path:
+    description: Absolute path to the JSON review on this runner
+    value: ${{ steps.review.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - id: review
+      shell: bash
+      env:
+        BASE_PATH: ${{ inputs.base }}
+        HEAD_PATH: ${{ inputs.head }}
+        INTENT: ${{ inputs.intent }}
+        DOWNLOAD: ${{ inputs.download-model }}
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d "$RUNNER_TEMP/actionscope.XXXXXXXX")"
+        cd "$work"
+        python3 -I -m venv env
+        package="$GITHUB_ACTION_PATH/.."
+        options=()
+        if [[ -n "$INTENT" ]]; then
+          package+="[ai]"
+          options+=(--intent "$INTENT")
+        fi
+        if [[ "$DOWNLOAD" == "true" ]]; then options+=(--download-model); fi
+        env/bin/python -I -m pip install --quiet "$package"
+        env/bin/actionscope agent-review --base "$GITHUB_WORKSPACE/$BASE_PATH" \
+          --head "$GITHUB_WORKSPACE/$HEAD_PATH" --format json "${options[@]}" > review.json
+        printf 'path=%s/review.json\n' "$work" >> "$GITHUB_OUTPUT"
