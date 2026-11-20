@@ -88,6 +88,9 @@ include = [
   "/actionscope/data/compromised_actions.json",
 ]
 
+[tool.hatch.build.targets.wheel.force-include]
+"examples/agent-review" = "actionscope/data/agent-review-demo"
+
 [tool.hatch.build.targets.sdist]
 include = [
   "/actionscope",

@@ -17,6 +17,7 @@ from actionscope.pipeline import collect_static_evidence, correlate_evidence
 from actionscope.reporters.json_reporter import to_json, write_json
 from actionscope.reporters.markdown import to_markdown, write_markdown
 from actionscope.reporters.terminal import render_no_aws_found, render_scan_result
+from actionscope.review import review
 
 
 @click.group()
@@ -32,6 +33,7 @@ def main() -> None:
 
 
 main.add_command(agent_review)
+main.add_command(review)
 
 
 @main.command("version", hidden=True)

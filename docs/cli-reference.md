@@ -4,6 +4,12 @@ This page documents the current ActionScope command-line interface.
 
 ## Global Options
 
+`actionscope review QUESTION [--repo DIR] [--base-ref REF] [--limit N]
+[--download-model]` compares a local commit (default HEAD) to the working tree,
+including untracked workflow files. No checkout or fetch is performed.
+Use `--demo` instead of a repository for the bundled example. This mode
+reads workflow declarations, not external IAM reports.
+
 For the source-checkout AI commands, see [Agent access review](agent-review.md):
 `actionscope agent-review --base DIR --head DIR [--base-report FILE --head-report FILE]
 [--intent TEXT] [--download-model] [--format text|json]` and

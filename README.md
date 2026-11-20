@@ -25,15 +25,17 @@ that the role is limited to inference? Try this example from the source checkout
 
 ```sh
 pip install -e '.[ai]'
-actionscope agent-review --base examples/agent-review/base \
-  --head examples/agent-review/head --intent 'Review pull requests via Bedrock' \
-  --download-model
+actionscope review --demo 'What changed about the AWS role?' --download-model
 ```
 
+In your own checkout, run `actionscope review 'What changed about permissions?'`.
+It compares HEAD with the working tree without executing the workflow. Use
+`--base-ref main` to include changes already committed on a feature branch.
+
 The example shows an added `id-token: write` declaration and a named role,
-but no evidence for that role's policy. AI ranks follow-up questions, **not
+but no evidence for that role's policy. AI ranks changed fields, **not
 permissions or merge decisions**. After the first model download, omit
-`--download-model` to work offline. Omit both AI options for the factual diff.
+`--download-model` to work offline. Use `agent-review` for the complete diff.
 Start with the [agent review guide](docs/agent-review.md) or [roadmap](docs/roadmap.md).
 
 ## Existing CI-to-cloud scanner

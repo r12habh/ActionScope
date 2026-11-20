@@ -5,6 +5,9 @@ All notable changes to ActionScope are documented here.
 ## [Unreleased]
 
 ### Added
+- `actionscope review` answers a maintainer's question with ranked, cited
+  configuration changes between a local Git commit and the working tree.
+  `--demo` runs the bundled example without a Git checkout.
 - Local `agent-review` compares access declarations around Claude Code workflow
   steps across two checkouts, optionally linking scan reports and using a
   local model to rank cited follow-up questions. Includes a report-only
