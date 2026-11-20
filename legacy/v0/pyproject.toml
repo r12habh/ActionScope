@@ -1,0 +1,129 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "actionscope"
+version = "0.5.0"
+description = "Review access changes in AI workflows and map GitHub Actions to AWS IAM evidence"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Rishabh Singh", email = "rishabhsinghe@gmail.com"}]
+keywords = [
+  "aws",
+  "github-actions",
+  "security",
+  "iam",
+  "devops",
+  "cicd",
+  "blast-radius",
+  "devsecops",
+  "static-analysis",
+  "cloud-security",
+  "supply-chain",
+  "oidc",
+  "terraform",
+  "github-security",
+  "ci-cd-security",
+  "workflow-security",
+  "privilege-escalation",
+  "sarif",
+  "aws-iam",
+  "github-actions-security",
+  "secrets-scanning",
+  "infrastructure-security",
+  "devSecOps-tools",
+  "appsec",
+  "cloud-blast-radius",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "Topic :: Security",
+  "Topic :: Software Development :: Build Tools",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+dependencies = [
+  "click>=8.2",
+  "rich>=13.0",
+  "pyyaml>=6.0",
+  "python-hcl2>=4.0",
+  "policy-sentry>=0.12.0",
+]
+
+[project.optional-dependencies]
+ai = ["model2vec>=0.10,<0.11", "huggingface-hub>=0.30,<2"]
+aws = ["boto3>=1.26"]
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.1.0",
+  "moto[iam]>=5.0",
+  "build>=1.0",
+  "hatchling>=1.25",
+  "twine>=5.0",
+]
+docs = ["mkdocs-material>=9.5"]
+research = ["requests>=2.31", "tqdm>=4.66"]
+
+[project.urls]
+Homepage = "https://github.com/r12habh/ActionScope"
+Documentation = "https://r12habh.github.io/ActionScope/"
+Repository = "https://github.com/r12habh/ActionScope"
+Issues = "https://github.com/r12habh/ActionScope/issues"
+Changelog = "https://github.com/r12habh/ActionScope/blob/main/CHANGELOG.md"
+
+[project.scripts]
+actionscope = "actionscope.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["actionscope"]
+include = [
+  "/actionscope/data/compromised_actions.json",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"examples/agent-review" = "actionscope/data/agent-review-demo"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/actionscope",
+  "/action.yml",
+  "/agent-review",
+  "/examples/agent-review",
+  "/CHANGELOG.md",
+  "/CITATION.cff",
+  "/CODE_OF_CONDUCT.md",
+  "/CONTRIBUTING.md",
+  "/docs",
+  "/GOVERNANCE.md",
+  "/LICENSE",
+  "/pyproject.toml",
+  "/README.md",
+  "/research/FINDINGS.md",
+  "/research/README.md",
+  "/research/generate_report.py",
+  "/research/launch_posts.md",
+  "/research/methodology.md",
+  "/research/scan_public_repos.py",
+  "/scripts",
+  "/SECURITY.md",
+  "/SUPPORT.md",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"

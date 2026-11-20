@@ -1,0 +1,19 @@
+name: Review changes
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/bedrock-review
+          aws-region: us-east-1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          use_bedrock: "true"
+          prompt: Summarize this change for the reviewer.
